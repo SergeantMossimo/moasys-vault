@@ -206,3 +206,44 @@ export function buildCategoryQualityMap(cats: ResolvedCategory[]): Map<string, s
 export function isAcceptableCombo(qualities: Set<string>, combos: readonly string[][]): boolean {
   return combos.some(combo => combo.length === qualities.size && combo.every(q => qualities.has(q)))
 }
+
+// ─────────────────────────────────────────────
+// Episode code formatting (shows)
+// ─────────────────────────────────────────────
+
+/**
+ * Build the canonical season/episode code for a show file: the configured
+ * letter case, two-digit zero-padded numbers, and an explicit letter on the
+ * multi-episode suffix (`s01e01-e02`, never the bare `s01e01-02`, which reads
+ * as a range of two different things depending on who's looking).
+ *
+ * Shared by `warn_episode_code_case` in media/shows.ts and the `episode-code`
+ * fix mode in tools/rename-shows.ts, so the warning and the fix can never
+ * disagree about what "canonical" means.
+ */
+export function canonicalEpisodeCode(
+  parts: { seasonNumber: number; episodeStart: number; episodeEnd: number },
+  style: 'lower' | 'upper'
+): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const [s, e] = style === 'lower' ? ['s', 'e'] : ['S', 'E']
+  const base = `${s}${pad(parts.seasonNumber)}${e}${pad(parts.episodeStart)}`
+  return parts.episodeEnd > parts.episodeStart ? `${base}-${e}${pad(parts.episodeEnd)}` : base
+}
+
+/**
+ * Pull the season/episode code out of a filename stem as RAW TEXT, so callers
+ * can compare the casing the user actually wrote rather than a value that has
+ * already been normalized by parsing it into integers.
+ *
+ * Anchored on the `(<year>)` that precedes it, which keeps it correct for
+ * shows whose own title contains a " - S.." sequence. Returns null when the
+ * stem doesn't carry a recognizable code.
+ */
+export function extractEpisodeCode(stem: string, year: number): string | null {
+  const marker = `(${year})`
+  const markerIndex = stem.indexOf(marker)
+  if (markerIndex === -1) return null
+  const afterYear = stem.slice(markerIndex + marker.length)
+  return /^\s-\s(S\d{2}E\d{2}(?:-E?\d{2})?)/i.exec(afterYear)?.[1] ?? null
+}

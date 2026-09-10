@@ -99,6 +99,7 @@ checks:
   warn_empty_edition: true        # {edition-} with no value
   warn_suspicious_year: true      # Year outside year_range
   warn_title_mismatch: true       # File title vs folder title
+  warn_title_case: true           # File title matches folder except for capitalization
   warn_year_mismatch: true        # File year vs folder year
   warn_duplicate_edition: true    # Two files in same folder claim same edition
   warn_duplicate_quality: true    # Movie in two folders of the SAME quality tier (HD + Other HD) — not whitelistable

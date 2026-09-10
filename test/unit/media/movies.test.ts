@@ -183,6 +183,26 @@ describe('movies module — warnings', () => {
     ).toBe(true)
   })
 
+  it('warn_title_case: capitalization-only drift gets its own bucket', () => {
+    const result = runMoviesScan({
+      spec: {
+        UHD: { 'The Crow (1994)': { 'The crow (1994).mp4': '' } },
+      },
+    })
+    const types = result.warnings.map(w => w.type)
+    expect(types).toContain('warn_title_case')
+    expect(types).not.toContain('warn_title_mismatch')
+  })
+
+  it('warn_title_case: does not fire when the title matches exactly', () => {
+    const result = runMoviesScan({
+      spec: {
+        UHD: { 'The Crow (1994)': { 'The Crow (1994).mp4': '' } },
+      },
+    })
+    expect(result.warnings.map(w => w.type)).not.toContain('warn_title_case')
+  })
+
   it('warn_year_mismatch: file year differs from folder year', () => {
     const result = runMoviesScan({
       spec: {

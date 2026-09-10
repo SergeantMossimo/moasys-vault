@@ -100,6 +100,7 @@ checks:
   warn_quality_inconsistent: true     # Album mixes codecs or has a wide bitrate spread
   warn_compilation_detected: true     # Multiple distinct AlbumArtists in one album
   warn_folder_tag_mismatch: true      # Folder name disagrees with the embedded tag
+  warn_folder_tag_case: true          # Folder matches the embedded tag except for capitalization
   warn_missing_tags: true             # Required embedded tag fields are blank
   warn_track_number_mismatch: true    # Filename track number disagrees with the embedded tag
   warn_mono_audio: true               # Album has tracks encoded as mono (single channel)

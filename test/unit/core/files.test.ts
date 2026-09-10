@@ -97,6 +97,36 @@ describe('stripFilenameIllegalChars', () => {
     expect(stripFilenameIllegalChars('P.O.D.')).toBe('P.O.D.')
     expect(stripFilenameIllegalChars('Album ')).toBe('Album ')
   })
+
+  it('removes every one of the nine printable illegal characters', () => {
+    for (const ch of ['<', '>', ':', '"', '|', '?', '*', '\\', '/']) {
+      expect(stripFilenameIllegalChars(`A${ch}B`)).toBe('AB')
+    }
+  })
+
+  it('removes every ASCII control character and DEL', () => {
+    // Windows rejects 0-31 outright, so leaving one in makes a rename throw
+    // and abort the batch; DEL (127) it silently ACCEPTS, so leaving that one
+    // in embeds an invisible character in a filename. Both must go.
+    for (let code = 0; code <= 31; code++) {
+      expect(stripFilenameIllegalChars(`A${String.fromCharCode(code)}B`)).toBe('AB')
+    }
+    expect(stripFilenameIllegalChars(`A${String.fromCharCode(127)}B`)).toBe('AB')
+  })
+
+  it('leaves legal characters next to the control range alone', () => {
+    // Guards the boundary: space (32) and `~` (126) are both legal and must
+    // survive, or the range check is off by one.
+    expect(stripFilenameIllegalChars('A B')).toBe('A B')
+    expect(stripFilenameIllegalChars('A~B')).toBe('A~B')
+    expect(stripFilenameIllegalChars('A-B')).toBe('A-B')
+  })
+
+  it('preserves non-ASCII characters, including astral ones', () => {
+    expect(stripFilenameIllegalChars('Amélie')).toBe('Amélie')
+    expect(stripFilenameIllegalChars('Shōgun')).toBe('Shōgun')
+    expect(stripFilenameIllegalChars('A🎬B')).toBe('A🎬B')
+  })
 })
 
 describe('toComparableFolderName', () => {

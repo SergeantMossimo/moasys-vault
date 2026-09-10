@@ -331,6 +331,30 @@ ignored_season_names:
 
 ---
 
+### `episode_code_case`
+
+**Applies to:** shows only.
+
+**What it is:** The house style for the season/episode code in an episode filename — whether you write `s01e01` or `S01E01`. One of `lower`, `upper`, or `any` (the default).
+
+Plex reads either form, and `patterns.file` is case-insensitive, so this is purely about your library reading consistently. `any` means "no house style" and never warns.
+
+Whichever style you pick, the canonical multi-episode suffix spells the letter out — `s01e01-e02`, not the bare `s01e01-02`, which reads as a range of two different things depending on who's looking. The bare form is flagged under either `lower` or `upper`.
+
+**Why you'd change it:** You care that every episode file in your library writes its code the same way.
+
+**Related warnings:** `warn_episode_code_case`, summarised once per season.
+
+**Fixing it:** `npm run fix:shows -- --fix episode-code <drive>` previews the renames; add `--apply` to execute. See [Scans](SCANS.md#fixing-filenames--npm-run-fixshows).
+
+**Example:**
+
+```yaml
+episode_code_case: lower
+```
+
+---
+
 ### `quality_thresholds`
 
 **Applies to:** movies + shows. **Only useful if your `categories` are organized by quality** (see [shape A above](#a-quality-organized-categories-eg-movies--shows-by-uhdhdsd)). If you're using general-purpose tag categories or a flat library, leave this empty.

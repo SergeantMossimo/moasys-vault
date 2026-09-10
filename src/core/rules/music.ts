@@ -126,6 +126,12 @@ export const MusicRulesSchema = z.object({
      */
     warn_folder_tag_mismatch: z.boolean(),
     /**
+     * An artist or album folder matches its ID3 tag except for
+     * capitalization. Split out from `warn_folder_tag_mismatch`, which
+     * lowercases both sides — see shows' warn_show_title_case.
+     */
+    warn_folder_tag_case: z.boolean(),
+    /**
      * Tracks missing required tag fields (title, album, or album_artist /
      * artist). Plex falls back to filename parsing in this case, which
      * works but means you're not really benefiting from ID3.
@@ -201,6 +207,7 @@ export const defaultMusicRules: MusicRules = MusicRulesSchema.parse({
     warn_quality_inconsistent: true,
     warn_compilation_detected: true,
     warn_folder_tag_mismatch: true,
+    warn_folder_tag_case: true,
     warn_missing_tags: true,
     warn_track_number_mismatch: true,
     warn_mono_audio: true,

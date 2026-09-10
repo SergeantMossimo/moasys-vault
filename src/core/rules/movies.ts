@@ -109,6 +109,12 @@ export const MoviesRulesSchema = z.object({
     warn_empty_edition: z.boolean(),
     warn_suspicious_year: z.boolean(),
     warn_title_mismatch: z.boolean(),
+    /**
+     * The file title matches its folder except for capitalization. Split out
+     * from `warn_title_mismatch`, which lowercases both sides and so cannot
+     * see this at all — see the matching note on shows' warn_show_title_case.
+     */
+    warn_title_case: z.boolean(),
     warn_year_mismatch: z.boolean(),
     warn_duplicate_edition: z.boolean(),
     /**
@@ -211,6 +217,7 @@ export const defaultMoviesRules: MoviesRules = MoviesRulesSchema.parse({
     warn_empty_edition: true,
     warn_suspicious_year: true,
     warn_title_mismatch: true,
+    warn_title_case: true,
     warn_year_mismatch: true,
     warn_duplicate_edition: true,
     warn_duplicate_quality: true,

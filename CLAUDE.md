@@ -20,10 +20,37 @@ What this means for you when working in this repo:
 
 - Never write code that calls `fs.rename`, `fs.unlink`, `fs.rmdir`, `fs.cp`, `fs.writeFile`, etc. against any path derived from `config.<type>.root_path`.
 - Never suggest a "fix-up script" or "rename helper" that auto-corrects library issues. Even if it would be useful. Warnings only.
-- If a user asks for an auto-fix feature, decline with the rationale: the read-only constraint is a deliberate safety guarantee.
+- If a user asks for an auto-fix feature, decline with the rationale: the read-only constraint is a deliberate safety guarantee. The single exception below is already built — point them at it rather than writing a second one.
 - Reading is fine. `fs.readdir`, `fs.stat`, `fs.readFile` against media files (ffprobe metadata, ID3 tags, etc.) is the expected pattern.
 
 Project files (source code, rules YAMLs, `config.json`, README, etc.) are fair game — that constraint only applies to the user's media library.
+
+### The one sanctioned exception: `src/tools/rename-shows.ts`
+
+`npm run fix:shows` is the **only** code in this repo permitted to write to a media library, added deliberately for batches of thousands of files that are impractical to fix by hand. It is not a loophole in the rule above — it is a single, audited, opt-in tool, and the rule still holds everywhere else. **Do not add a second writer, and do not widen this one, without the user explicitly asking.** In particular the scanner, probe, and validate passes stay strictly read-only.
+
+Its guarantees, all of which must survive any change you make to it:
+
+- **Renames files, nothing else.** `fs.renameSync` file → file inside one directory. No `unlink`, `rmdir`, `cp`, or content write; folder names are never touched.
+- **The drive name is mandatory** — it reuses `resolveRoot()` but deliberately drops the default-to-first-root fallback the scan runners have, so a forgotten argument can't silently target the primary server.
+- **Dry run unless `--apply`.** Every run writes the full plan to `output/<drive>/shows/rename-plan.json` first.
+- **All-or-nothing on unsafe entries.** Collisions, illegal characters, or over-long paths abort before the first rename; a season is never left half-renamed. Files with no data are _skipped_, which is separate and non-blocking.
+- **An undo manifest is written before the first rename**, replayable with `--undo`.
+- **Case-only renames go through a two-step temporary name.** See `renameFile()` — a plain `fs.renameSync` is a silent no-op for these on case-insensitive filesystems, and the user's External drive is exFAT. This bit once: a run reported 726 successful renames while leaving 174 files untouched.
+
+After any `--apply`, verify against the filesystem rather than trusting the tool's own success count.
+
+### Naming warnings vs. capitalization warnings
+
+Several checks compare a filename or tag against its parent folder. These deliberately come in pairs — a strict check for genuinely different values and a separate, lower-severity check for capitalization-only drift, so cosmetic noise can't bury a real mismatch:
+
+| Type   | Different value            | Capitalization only    |
+| ------ | -------------------------- | ---------------------- |
+| Shows  | `warn_show_year_mismatch`  | `warn_show_title_case` |
+| Movies | `warn_title_mismatch`      | `warn_title_case`      |
+| Music  | `warn_folder_tag_mismatch` | `warn_folder_tag_case` |
+
+The precedent is `warn_tmdb_title_canonical`, which has always been case-sensitive and separate. If you add another folder-vs-file comparison, follow the same split — a bare `.toLowerCase()` comparison makes case drift permanently invisible, which is exactly how 174 files went unreported for months.
 
 ## What this project is
 
@@ -81,6 +108,11 @@ npm run scan:all external # ...for every type that has an "External" root
 npm run validate:movies            # TMDB validation (movies + shows only)
 npm run validate:movies external
 npm run validate:all
+
+# The one write-capable command. Dry run by default; drive name is required.
+npm run fix:shows -- --fix show-prefix external          # preview
+npm run fix:shows -- --fix episode-titles external --apply
+npm run fix:shows -- --undo output/external/shows/rename-undo-<ts>.json
 
 npm run typecheck     # tsc --noEmit
 npm run lint          # eslint

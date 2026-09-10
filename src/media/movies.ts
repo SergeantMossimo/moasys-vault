@@ -321,12 +321,26 @@ export function createMoviesModule(
           } else {
             const { title: folderTitle, year: folderYear } = parsedFolder
 
+            // Split by severity — see the matching comment in media/shows.ts.
+            // A different title is a real problem; a capitalization-only
+            // difference is cosmetic and gets its own check so it can't bury
+            // the former.
             if (fileTitle.toLowerCase() !== folderTitle.toLowerCase()) {
               if (rules.checks.warn_title_mismatch) {
                 warnings.add(
                   'warn_title_mismatch',
                   path.join(folderRel, f.name),
                   `File title '${fileTitle}' does not match folder title '${folderTitle}'`
+                )
+              }
+            } else if (fileTitle !== folderTitle) {
+              if (rules.checks.warn_title_case) {
+                warnings.add(
+                  'warn_title_case',
+                  path.join(folderRel, f.name),
+                  `File title '${fileTitle}' differs from folder title '${folderTitle}' only in capitalization. ` +
+                    `Plex catalogues it fine either way. Rename the file to match the folder ` +
+                    `(or the folder to match the file, whichever is correct).`
                 )
               }
             }
