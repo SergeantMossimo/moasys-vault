@@ -242,6 +242,97 @@ describe('shows module — warnings', () => {
     ).toBe(true)
   })
 
+  it('warn_show_title_case: capitalization-only drift gets its own bucket', () => {
+    // warn_show_year_mismatch lowercases both sides, so before this check
+    // existed a whole show could drift on capitalization invisibly.
+    const result = runShowsScan({
+      spec: {
+        HD: {
+          'My Name Is Earl (2005)': {
+            'Season 01': { 'My Name is Earl (2005) - s01e01.mp4': '' },
+          },
+        },
+      },
+    })
+    const types = result.warnings.map(w => w.type)
+    expect(types).toContain('warn_show_title_case')
+    expect(types).not.toContain('warn_show_year_mismatch')
+  })
+
+  it('warn_show_title_case: does not fire when the title matches exactly', () => {
+    const result = runShowsScan({
+      spec: {
+        HD: {
+          'My Name Is Earl (2005)': {
+            'Season 01': { 'My Name Is Earl (2005) - s01e01.mp4': '' },
+          },
+        },
+      },
+    })
+    expect(result.warnings.map(w => w.type)).not.toContain('warn_show_title_case')
+  })
+
+  it('warn_show_year_mismatch still wins for a genuinely different title', () => {
+    const result = runShowsScan({
+      spec: {
+        HD: {
+          'Show (2020)': { 'Season 01': { 'Other Show (2020) - S01E01.mp4': '' } },
+        },
+      },
+    })
+    const types = result.warnings.map(w => w.type)
+    expect(types).toContain('warn_show_year_mismatch')
+    expect(types).not.toContain('warn_show_title_case')
+  })
+
+  it('warn_episode_code_case: summarises off-style codes once per season', () => {
+    const result = runShowsScan({
+      rules: { episode_code_case: 'lower' },
+      spec: {
+        HD: {
+          'Show (2020)': {
+            'Season 01': {
+              'Show (2020) - S01E01.mp4': '',
+              'Show (2020) - S01e02.mp4': '',
+              'Show (2020) - s01e03.mp4': '',
+            },
+          },
+        },
+      },
+    })
+    const fired = result.warnings.filter(w => w.type === 'warn_episode_code_case')
+    expect(fired).toHaveLength(1)
+    expect(fired[0]!.issue).toMatch(/2 of 3 episode file\(s\)/)
+  })
+
+  it('warn_episode_code_case: flags the bare multi-episode suffix', () => {
+    const result = runShowsScan({
+      rules: { episode_code_case: 'lower' },
+      spec: {
+        HD: {
+          'Show (2020)': { 'Season 01': { 'Show (2020) - s01e01-02.mp4': '' } },
+        },
+      },
+    })
+    const fired = result.warnings.filter(w => w.type === 'warn_episode_code_case')
+    expect(fired).toHaveLength(1)
+    expect(fired[0]!.issue).toContain("'s01e01-02' should be 's01e01-e02'")
+  })
+
+  it('warn_episode_code_case: silent when episode_code_case is "any"', () => {
+    const result = runShowsScan({
+      rules: { episode_code_case: 'any' },
+      spec: {
+        HD: {
+          'Show (2020)': {
+            'Season 01': { 'Show (2020) - S01E01.mp4': '', 'Show (2020) - s01e02.mp4': '' },
+          },
+        },
+      },
+    })
+    expect(result.warnings.map(w => w.type)).not.toContain('warn_episode_code_case')
+  })
+
   it('warn_season_mismatch: file season number disagrees with season folder', () => {
     const result = runShowsScan({
       spec: {

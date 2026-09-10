@@ -1,0 +1,23 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# MOASYS-Vault — files Prettier must not touch
+# ─────────────────────────────────────────────────────────────────────────────
+# `npm run prettier` already scopes itself to src/, test/, and *.md, but a bare
+# `npx prettier --write .` ignores that scoping. This file is what actually
+# protects the paths below.
+
+node_modules/
+
+# Generated every run — reformatting them is pure churn and they're gitignored.
+output/
+cache/
+coverage/
+
+# Rules YAMLs are documentation as much as configuration: the `checks:` blocks
+# align their trailing comments into a readable column, and Prettier collapses
+# every one of them to a single space. The aligned form is deliberate — you read
+# a 20-line toggle list by scanning down the comment column, which is exactly
+# what the collapse destroys.
+#
+# Keep these hand-formatted, and match the surrounding alignment when you add a
+# key.
+rules/*.yaml

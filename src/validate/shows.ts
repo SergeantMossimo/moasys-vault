@@ -152,7 +152,11 @@ function compareSeasons(
  * For each EpisodeOutput in the season:
  *   - Skip if local title is null (handled separately by warn_missing_episode_title).
  *   - Single-episode files: compare local vs TMDB[episode_start] with strict
- *     filename-safe normalization.
+ *     filename-safe normalization, then with `normalizeTitleLoose` as a
+ *     fallback tier. The second tier exists because the strict form of a TMDB
+ *     title is sometimes unstorable: Windows drops trailing periods, so
+ *     `All Good Things...` can only ever land on disk as `All Good Things`.
+ *     Flagging that as a mismatch reports the filesystem, not the user.
  *   - Multi-episode files (S01E01-E02): only checked when the
  *     `warn_tmdb_episode_name_multi_episode` toggle is true. Accepted if the
  *     local title equals ANY single constituent TMDB title (filename names
@@ -203,7 +207,24 @@ function findEpisodeTitleMismatches(
     const matchesSingle = tmdbSafe.some(t => t === localSafe)
     const matchesCombined =
       isMultiEpisode && tmdbSafe.length > 1 && containsAllInOrder(localSafe, tmdbSafe)
-    if (!matchesSingle && !matchesCombined) {
+
+    // Second tier, mirroring how pickBestShowMatch and pickBestMovieMatch
+    // already pair strict and loose normalization. Needed because the strict
+    // tier compares against a title the filesystem may not be able to store:
+    // Windows silently drops trailing periods, so `All Good Things...` and
+    // `T.R.A.C.K.S.` CANNOT exist on disk in canonical form. Reporting a name
+    // the OS refuses to create as a user error is just noise.
+    const localLoose = normalizeTitleLoose(ep.title)
+    const matchesLoose = tmdbTitles.some(t => normalizeTitleLoose(t) === localLoose)
+    const matchesLooseCombined =
+      isMultiEpisode &&
+      tmdbTitles.length > 1 &&
+      containsAllInOrder(
+        localLoose,
+        tmdbTitles.map(t => normalizeTitleLoose(t))
+      )
+
+    if (!matchesSingle && !matchesCombined && !matchesLoose && !matchesLooseCombined) {
       mismatches.push({
         episode_start: ep.episode_start,
         episode_end: ep.episode_end,

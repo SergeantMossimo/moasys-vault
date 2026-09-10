@@ -3,8 +3,10 @@ import { describe, it, expect } from 'vitest'
 import {
   PatternSchema,
   CategorySchema,
+  canonicalEpisodeCode,
   compilePattern,
   detectQuality,
+  extractEpisodeCode,
   resolveCategories,
   qualitySortKey,
   sortQualities,
@@ -201,5 +203,60 @@ describe('qualitySortKey', () => {
     const input = ['SD', 'Kids', 'UHD', 'HD']
     const viaKey = [...input].sort((a, b) => qualitySortKey(a).localeCompare(qualitySortKey(b)))
     expect(viaKey).toEqual(sortQualities(input))
+  })
+})
+
+// ─────────────────────────────────────────────
+// Episode code formatting
+// ─────────────────────────────────────────────
+
+describe('canonicalEpisodeCode', () => {
+  const single = { seasonNumber: 1, episodeStart: 2, episodeEnd: 2 }
+  const multi = { seasonNumber: 3, episodeStart: 1, episodeEnd: 2 }
+
+  it('applies the configured letter case', () => {
+    expect(canonicalEpisodeCode(single, 'lower')).toBe('s01e02')
+    expect(canonicalEpisodeCode(single, 'upper')).toBe('S01E02')
+  })
+
+  it('spells out the letter on the multi-episode suffix', () => {
+    // The bare `-02` form is ambiguous, so canonical always writes `-e02`.
+    expect(canonicalEpisodeCode(multi, 'lower')).toBe('s03e01-e02')
+    expect(canonicalEpisodeCode(multi, 'upper')).toBe('S03E01-E02')
+  })
+
+  it('zero-pads single-digit numbers', () => {
+    expect(canonicalEpisodeCode({ seasonNumber: 0, episodeStart: 4, episodeEnd: 4 }, 'lower')).toBe(
+      's00e04'
+    )
+  })
+})
+
+describe('extractEpisodeCode', () => {
+  it('returns the code exactly as written, not a normalized form', () => {
+    // warn_episode_code_case compares what the user typed, so parsing to
+    // integers and back would defeat the entire check.
+    expect(extractEpisodeCode('Dune Prophecy (2024) - S01e02', 2024)).toBe('S01e02')
+    expect(extractEpisodeCode('MASH (1972) - s04e25', 1972)).toBe('s04e25')
+    expect(extractEpisodeCode('Abbott Elementary (2021) - S03E01-E02', 2021)).toBe('S03E01-E02')
+  })
+
+  it('captures both multi-episode suffix forms', () => {
+    expect(extractEpisodeCode('Show (2020) - s01e01-e02', 2020)).toBe('s01e01-e02')
+    expect(extractEpisodeCode('Show (2020) - s01e01-02', 2020)).toBe('s01e01-02')
+  })
+
+  it('anchors on the year so a " - S.." inside the show title is not mistaken for the code', () => {
+    expect(extractEpisodeCode('Star Trek - Voyager (1995) - s07e09-e10', 1995)).toBe('s07e09-e10')
+  })
+
+  it('ignores a trailing episode title', () => {
+    expect(extractEpisodeCode('Barry (2018) - s02e05 - ronny lily', 2018)).toBe('s02e05')
+  })
+
+  it('returns null when there is no recognizable code', () => {
+    expect(extractEpisodeCode('Barry (2018)', 2018)).toBeNull()
+    expect(extractEpisodeCode('Barry (2018) - 205', 2018)).toBeNull()
+    expect(extractEpisodeCode('Barry (2018) - s02e05', 1999)).toBeNull()
   })
 })

@@ -210,7 +210,7 @@ export async function probeAudiobooks(
   config: AudiobooksConfig,
   rules: AudiobooksRules,
   cache: ProbeCache,
-  _warnings: WarningCollector
+  warnings: WarningCollector
 ): Promise<ProbeResult<BookProbeOutput[]>> {
   const collected = collectTasks(config, rules)
   console.log(`    [PROBE] ${collected.length} primary files to probe`)
@@ -219,11 +219,17 @@ export async function probeAudiobooks(
   for (const { task, identity } of collected) identities.set(task.relativePath, identity)
 
   const tasks = collected.map(c => c.task)
-  const probed = await probeBatch(tasks, cache, (done, total, cached) => {
-    if (done === total || done % 50 === 0) {
-      console.log(`    [PROBE] ${done}/${total} (${cached} cached)`)
-    }
-  })
+  const probed = await probeBatch(
+    tasks,
+    cache,
+    (done, total, cached) => {
+      if (done === total || done % 50 === 0) {
+        console.log(`    [PROBE] ${done}/${total} (${cached} cached)`)
+      }
+    },
+    undefined,
+    warnings
+  )
 
   const mediaTypeOrder = resolveCategories(rules.categories).map(c => c.name)
   const byPath = new Map<string, ProbeData>()

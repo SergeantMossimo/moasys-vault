@@ -228,11 +228,17 @@ export async function probeMovies(
   for (const { task, identity } of collected) identities.set(task.relativePath, identity)
 
   const tasks = collected.map(c => c.task)
-  const probed = await probeBatch(tasks, cache, (done, total, cached) => {
-    if (done === total || done % 100 === 0) {
-      console.log(`    [PROBE] ${done}/${total} (${cached} cached)`)
-    }
-  })
+  const probed = await probeBatch(
+    tasks,
+    cache,
+    (done, total, cached) => {
+      if (done === total || done % 100 === 0) {
+        console.log(`    [PROBE] ${done}/${total} (${cached} cached)`)
+      }
+    },
+    undefined,
+    warnings
+  )
 
   // Quality mismatch check — runs after probing so we have real dimensions.
   if (rules.checks.warn_quality_mismatch) {

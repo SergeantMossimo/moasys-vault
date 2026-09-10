@@ -185,7 +185,7 @@ See [Configuration](CONFIG.md#secretsjson) for details.
 **For shows (everything above plus):**
 
 - **Missing episode counts** — your local gap detection only catches missing-in-the-middle episodes. TMDB validation catches "TMDB says season 5 has 23 episodes; you have 22." That trailing missing episode finally gets flagged.
-- **Episode title mismatches** — each episode file's trailing `- Episode Title` is compared (strict, filename-safe) against TMDB's episode title for that S/E number. Multi-episode files (`S01E01-E02`) are skipped by default because their combined titles rarely match strictly; enable `warn_tmdb_episode_name_multi_episode` if you want them checked too. Costs one extra TMDB call per season — cached in `cache/tmdb-show-seasons.json`.
+- **Episode title mismatches** — each episode file's trailing `- Episode Title` is compared against TMDB's episode title for that S/E number, using the same strict-then-loose two-tier comparison described below. The loose tier matters here: Windows silently drops trailing periods, so `All Good Things...` and `T.R.A.C.K.S.` _cannot_ exist on disk in canonical form, and a strict-only comparison would flag them forever. Multi-episode files (`S01E01-E02`) are skipped by default because their combined titles rarely match strictly; enable `warn_tmdb_episode_name_multi_episode` if you want them checked too. Costs one extra TMDB call per season — cached in `cache/tmdb-show-seasons.json`.
 
 ### How matching works
 
@@ -256,3 +256,85 @@ The flag accepts a number of days with optional `d` suffix (`30` and `30d` are e
 ### Rate limiting
 
 The scanner throttles to 4 requests per second (TMDB allows 40 per 10 seconds). Well under the limit, so no tuning needed. If TMDB ever returns a 429, the throttle honors the `Retry-After` header automatically.
+
+---
+
+## Fixing filenames — `npm run fix:shows`
+
+Everything else in MOASYS-Vault is read-only: it tells you what's wrong and you fix it. This one command is the exception, for the cases where "fix it yourself" means renaming thousands of files by hand.
+
+It **only ever renames files**. No deletes, no moves between folders, no folder renames, no writes to file contents.
+
+### Safety model
+
+- **The drive name is required.** Unlike `npm run shows`, there is no default-to-first-root — a forgotten argument is an error, not a silent run against your main server.
+- **Dry run unless you pass `--apply`.** Every run writes the complete plan to `output/<drive>/shows/rename-plan.json` for review.
+- **Unsafe entries abort the whole run.** A name collision, an illegal character, or an over-long path stops everything before the first rename, so a season is never left half-done.
+- **Missing data is not a failure.** Files the tool has no title for are listed as _skipped_ and left alone; the rest of the batch proceeds.
+- **Every run writes an undo manifest** to `output/<drive>/shows/rename-undo-<timestamp>.json` before touching anything.
+
+### Modes
+
+| Mode             | What it does                                                                                                 | Fixes                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
+| `show-prefix`    | Rewrites each file's `<Title> (<Year>)` prefix to match its show folder exactly                              | `warn_show_year_mismatch`, `warn_show_title_case` |
+| `episode-titles` | Appends the trailing `- <Episode Title>` from the TMDB cache                                                 | `warn_missing_episode_title`                      |
+| `episode-code`   | Normalizes the season/episode code to your `episode_code_case` and the canonical `-e02` multi-episode suffix | `warn_episode_code_case`                          |
+
+`episode-titles` reads `output/<drive>/shows/validation.json` and `cache/tmdb-show-seasons.json`, so **run `npm run validate:shows <drive>` first**. It makes no network calls of its own.
+
+### Workflow
+
+```bash
+npm run fix:shows -- --fix show-prefix external            # 1. preview
+npm run fix:shows -- --fix show-prefix external --apply    # 2. execute
+npm run shows external                                     # 3. re-scan and confirm
+```
+
+Scope a run to one show while you build confidence:
+
+```bash
+npm run fix:shows -- --fix episode-titles external --show "Barry (2018)"
+```
+
+To reverse a run:
+
+```bash
+npm run fix:shows -- --undo output/external/shows/rename-undo-2026-09-07T21-57-53-887Z.json
+```
+
+### The season guard on `episode-titles`
+
+Episode titles are looked up by **episode number**, so the mapping is only trustworthy while your season and TMDB's agree about which episodes the season contains. If they disagree, the numbering may be offset and every title in that season is suspect — not just the ones that fail to resolve.
+
+So `episode-titles` skips a season entirely unless both hold:
+
+1. **Every file resolves to a TMDB episode.** One file pointing at a number TMDB doesn't list — a recap episode, a web short — means the season carries content TMDB doesn't know about.
+2. **The season's files cover exactly as many TMDB episodes as TMDB lists.** Catches seasons that are missing episodes locally.
+
+The guard is all-or-nothing: a skipped season keeps _every_ file untouched, including ones that would have resolved fine. That's deliberate — a partially-named season with one wrong title is worse than an unnamed one.
+
+What's counted is the number of **TMDB episodes resolved**, not local files, which makes multi-episode files come out right in both directions: one file spanning `E01-E02` counts as two episodes, and a file spanning a two-parter that TMDB merged into a single entry counts as one.
+
+Seasons with no cached TMDB data (most `Specials` folders) are skipped for the same reason.
+
+### Illegal characters in titles
+
+TMDB titles routinely contain characters Windows forbids in a filename (`< > : " | ? * \ /`). These are **deleted**, never substituted — the same rule `stripFilenameIllegalChars` applies everywhere else in the codebase:
+
+| TMDB title                   | On disk                     |
+| ---------------------------- | --------------------------- |
+| `Chapter Two: The Vanishing` | `Chapter Two The Vanishing` |
+| `East/West`                  | `EastWest`                  |
+| `ronny/lily`                 | `ronnylily`                 |
+| `All Good Things...`         | `All Good Things`           |
+
+Trailing periods go too, because Windows silently drops them. Deleting rather than substituting keeps the on-disk name matching TMDB under the validator's strict tier, which deletes the same characters from the other side — so these don't turn into `warn_tmdb_episode_name_mismatch` noise.
+
+### Renaming invalidates the probe cache
+
+The ffprobe cache is keyed on each file's path, so renamed files re-probe on the next scan. That's expected — budget a few minutes after a large batch. Nothing else in the cache is affected.
+
+### Verify against the filesystem, not the success count
+
+After an `--apply`, confirm the result on disk rather than trusting the reported number. A case-only rename (`talespin.mp4` → `TaleSpin.mp4`) is a **silent no-op** through a plain rename on case-insensitive filesystems — exFAT external drives especially. The tool handles this with a two-step rename through a temporary name, but the general habit is worth keeping: this exact failure once reported 726 successful renames while leaving 174 files untouched.

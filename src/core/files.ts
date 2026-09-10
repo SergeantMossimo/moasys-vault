@@ -9,9 +9,21 @@
 import fs from 'fs'
 import path from 'path'
 
+/** The nine printable characters Windows rejects anywhere in a filename. */
+const PRINTABLE_ILLEGAL_CHARS = /[<>:"|?*\\/]/
+
+/** Highest code point in the C0 control range; DEL sits at 127, just past it. */
+const LAST_CONTROL_CODE = 31
+const DEL_CODE = 127
+
 /**
- * Strip Windows-illegal filename characters (`< > : " | ? * \ /`) from a
- * string without replacement. Used in two distinct places:
+ * Strip Windows-illegal filename characters from a string without
+ * replacement. Two groups go:
+ *
+ *   - the nine printable ones: `< > : " | ? * \ /`
+ *   - every ASCII control character (0-31) plus DEL (127)
+ *
+ * Used in three distinct places:
  *
  *   1. TMDB validation — derive a copy-pasteable rename target when TMDB's
  *      canonical title contains chars the user can't put in a folder name
@@ -19,13 +31,38 @@ import path from 'path'
  *   2. Music ID3 comparison — when a track's `AlbumArtist` tag is `AC/DC`
  *      but the folder must be `ACDC` (slash isn't legal in folder names),
  *      both forms should compare equal.
+ *   3. `tools/rename-shows.ts` — building a real on-disk filename out of a
+ *      TMDB episode title. That's the caller that makes the control range
+ *      worth handling: Windows rejects 0-31 outright, so one stray character
+ *      in upstream metadata would fail the rename and abort the whole batch,
+ *      while DEL it silently accepts, which is worse — it would end up
+ *      embedded in a filename nobody can see is wrong.
+ *
+ * Whitespace control characters (tab, newline, CR) go with the rest; callers
+ * that care about readability collapse the remaining whitespace runs.
  *
  * Diacritics are left alone (they're legal in filenames); only the strict
  * Windows-illegal set is removed. No replacement character is substituted —
  * this matches how users typically name their folders in practice.
+ *
+ * Windows also reserves the device names CON, PRN, AUX, NUL, COM1-9 and
+ * LPT1-9, but that's a whole-basename rule rather than a character rule, so
+ * it isn't handled here: `findSuspiciousPathChars` reports those, and an
+ * episode title only ever lands mid-filename where the rule doesn't apply.
+ *
+ * Written as an explicit scan rather than one regex so the control range
+ * needs no `\x` escapes — those are easy to mangle and impossible to review
+ * once they become literal bytes in the source.
  */
 export function stripFilenameIllegalChars(s: string): string {
-  return s.replace(/[<>:"|?*\\/]/g, '')
+  let out = ''
+  for (const ch of s) {
+    const code = ch.codePointAt(0)
+    if (code !== undefined && (code <= LAST_CONTROL_CODE || code === DEL_CODE)) continue
+    if (PRINTABLE_ILLEGAL_CHARS.test(ch)) continue
+    out += ch
+  }
+  return out
 }
 
 /**

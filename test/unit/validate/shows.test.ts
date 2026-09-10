@@ -795,6 +795,82 @@ describe('validateShows — TMDB episode-name validation', () => {
     expect(warnings.all().filter(w => w.type === 'warn_tmdb_episode_name_mismatch')).toEqual([])
   })
 
+  it('accepts a title whose trailing period Windows will not store', async () => {
+    // `All Good Things...` and `T.R.A.C.K.S.` cannot exist on disk with the
+    // trailing period — Windows silently drops it. The strict tier compares
+    // against a form the filesystem refuses to create, so the loose tier has
+    // to catch these or every such episode is a permanent false positive.
+    const client = mockClient({
+      searchResults: baseSearch,
+      details: { 100: baseDetails },
+      seasons: {
+        '100:1': {
+          season_number: 1,
+          episodes: [
+            { episode_number: 1, name: 'All Good Things...' },
+            { episode_number: 2, name: 'T.R.A.C.K.S.' },
+          ],
+        },
+      },
+    })
+
+    await validateShows(
+      [
+        show('Show', 2020, [
+          {
+            season: '1',
+            episode_count: 2,
+            versions: [{ category: 'default', quality: null }],
+            episodes: [
+              { episode_start: 1, episode_end: 1, title: 'All Good Things' },
+              { episode_start: 2, episode_end: 2, title: 'T.R.A.C.K.S' },
+            ],
+          },
+        ]),
+      ],
+      defaultShowsRules,
+      client,
+      memoryCache(),
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+
+    expect(warnings.all().filter(w => w.type === 'warn_tmdb_episode_name_mismatch')).toEqual([])
+  })
+
+  it('still reports a genuinely different episode title', async () => {
+    // The loose tier must not be so permissive that real mismatches vanish.
+    const client = mockClient({
+      searchResults: baseSearch,
+      details: { 100: baseDetails },
+      seasons: {
+        '100:1': { season_number: 1, episodes: [{ episode_number: 1, name: 'Pilot' }] },
+      },
+    })
+
+    await validateShows(
+      [
+        show('Show', 2020, [
+          {
+            season: '1',
+            episode_count: 1,
+            versions: [{ category: 'default', quality: null }],
+            episodes: [{ episode_start: 1, episode_end: 1, title: 'Something Else Entirely' }],
+          },
+        ]),
+      ],
+      defaultShowsRules,
+      client,
+      memoryCache(),
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+
+    expect(warnings.all().filter(w => w.type === 'warn_tmdb_episode_name_mismatch')).toHaveLength(1)
+  })
+
   it('skips multi-episode files by default', async () => {
     const client = mockClient({
       searchResults: baseSearch,

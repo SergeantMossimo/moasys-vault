@@ -32,7 +32,9 @@ import { findNumericGaps } from '../core/gaps'
 import { ShowsRules } from '../core/rules/shows'
 import {
   buildCategoryQualityMap,
+  canonicalEpisodeCode,
   compilePattern,
+  extractEpisodeCode,
   isAcceptableCombo,
   qualitySortKey,
   resolveCategories,
@@ -366,6 +368,8 @@ export function createShowsModule(
           let seasonEpCount = 0
           let parsedFilesInSeason = 0
           let filesMissingTitleInSeason = 0
+          let filesOffStyleCodeInSeason = 0
+          let offStyleCodeSample: string | null = null
 
           for (const f of primaryFiles) {
             const stem = path.basename(f.name, path.extname(f.name))
@@ -391,12 +395,29 @@ export function createShowsModule(
               episodeTitle,
             } = parsed
 
-            if (fileTitle.toLowerCase() !== showTitle.toLowerCase() || fileYear !== showYear) {
+            // Three outcomes, deliberately split. A file naming a different
+            // show (or year) is a real problem; one that differs only in
+            // capitalization is cosmetic. Folding them into one bucket buries
+            // the former under the latter, so capitalization gets its own
+            // low-severity check — the same split `warn_tmdb_title_canonical`
+            // already makes against TMDB's canonical title.
+            const titlesMatchLoosely = fileTitle.toLowerCase() === showTitle.toLowerCase()
+            if (!titlesMatchLoosely || fileYear !== showYear) {
               if (rules.checks.warn_show_year_mismatch) {
                 warnings.add(
                   'warn_show_year_mismatch',
                   path.join(seasonRel, f.name),
                   `File show/year '${fileTitle} (${fileYear})' does not match show folder '${showEntry.name}'`
+                )
+              }
+            } else if (fileTitle !== showTitle) {
+              if (rules.checks.warn_show_title_case) {
+                warnings.add(
+                  'warn_show_title_case',
+                  path.join(seasonRel, f.name),
+                  `File show title '${fileTitle}' differs from show folder '${showTitle}' only in capitalization. ` +
+                    `Plex catalogues it fine either way. Rename the file to match the folder ` +
+                    `(or the folder to match the file, whichever is correct).`
                 )
               }
             }
@@ -413,6 +434,24 @@ export function createShowsModule(
 
             parsedFilesInSeason++
             if (episodeTitle === null) filesMissingTitleInSeason++
+
+            // Episode-code house style. Compares the RAW code text, since the
+            // parsed values above have already lost the casing the user wrote.
+            if (rules.episode_code_case !== 'any') {
+              const rawCode = extractEpisodeCode(stem, fileYear)
+              const wantCode = canonicalEpisodeCode(
+                {
+                  seasonNumber: fileSeason,
+                  episodeStart: firstEpisode,
+                  episodeEnd: lastEpisode,
+                },
+                rules.episode_code_case
+              )
+              if (rawCode !== null && rawCode !== wantCode) {
+                filesOffStyleCodeInSeason++
+                offStyleCodeSample ??= `'${rawCode}' should be '${wantCode}'`
+              }
+            }
 
             episodes.push({
               episode_start: firstEpisode,
@@ -448,6 +487,19 @@ export function createShowsModule(
               seasonRel,
               `${filesMissingTitleInSeason} of ${parsedFilesInSeason} episode file(s) are missing the trailing " - Episode Title" portion of their filename. ` +
                 `Plex catalogues them fine, but rename them to include the title (e.g. 'Show (2020) - S01E01 - Pilot.mp4') for a cleaner library.`
+            )
+          }
+
+          // Per-season summary, same shape as warn_missing_episode_title
+          // above — one line per season rather than one per file, since a
+          // library that drifted on casing usually drifted wholesale.
+          if (rules.checks.warn_episode_code_case && filesOffStyleCodeInSeason > 0) {
+            warnings.add(
+              'warn_episode_code_case',
+              seasonRel,
+              `${filesOffStyleCodeInSeason} of ${parsedFilesInSeason} episode file(s) don't match the ` +
+                `'${rules.episode_code_case}' episode_code_case house style — e.g. ${offStyleCodeSample}. ` +
+                `Plex reads either form fine. Fix with: npm run fix:shows -- --fix episode-code <drive> --apply`
             )
           }
 

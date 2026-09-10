@@ -284,7 +284,8 @@ export async function probeMusic(
         console.log(`    [PROBE] ${done}/${total} (${cached} cached)`)
       }
     },
-    readTags
+    readTags,
+    warnings
   )
 
   const mediaTypeOrder = resolveCategories(rules.categories).map(c => c.name)
@@ -362,7 +363,7 @@ export async function probeMusic(
 // ─────────────────────────────────────────────
 
 /**
- * Match a tag value against a folder name, allowing for Windows-illegal
+ * Compare a tag value against a folder name, allowing for Windows-illegal
  * characters in the tag that the user had to drop from the folder.
  *
  * Example: ID3 `AlbumArtist` is `AC/DC` but the folder is `ACDC` because
@@ -370,12 +371,24 @@ export async function probeMusic(
  * from the tag side before comparing — the folder is the filename-safe
  * form of the tag, and that's a legitimate match.
  *
- * Comparison is case-insensitive and trim-tolerant.
+ * Returns which of three things is true, rather than a boolean, because
+ * capitalization-only drift ('Talespin' vs 'TaleSpin') deserves its own
+ * lower-severity warning: it fragments a Plex library exactly the way a real
+ * mismatch does, but the fix is trivial and it shouldn't crowd out genuine
+ * mismatches. Same split as `warn_show_title_case` in media/shows.ts.
+ *
+ *   'match'      — identical once illegal chars and surrounding space are gone
+ *   'case-only'  — equal ignoring case, different byte-for-byte
+ *   'mismatch'   — genuinely different values
  */
-function tagMatchesFolder(tagValue: string, folderName: string): boolean {
-  const tagSafe = toComparableFolderName(tagValue).toLowerCase()
-  const folder = folderName.trim().toLowerCase()
-  return tagSafe === folder
+type TagFolderComparison = 'match' | 'case-only' | 'mismatch'
+
+function compareTagToFolder(tagValue: string, folderName: string): TagFolderComparison {
+  const tagSafe = toComparableFolderName(tagValue)
+  const folder = folderName.trim()
+  if (tagSafe === folder) return 'match'
+  if (tagSafe.toLowerCase() === folder.toLowerCase()) return 'case-only'
+  return 'mismatch'
 }
 
 /**
@@ -469,9 +482,10 @@ function analyzeTags(
       // ── Folder/tag mismatch ──────────────────────────────────────────
       // Single consistent album_artist that disagrees with the artist
       // folder name. Common Plex library fragmentation cause.
-      if (rules.checks.warn_folder_tag_mismatch && albumArtistSet.size === 1) {
+      if (albumArtistSet.size === 1) {
         const tagValue = [...albumArtistSet][0]!
-        if (!tagMatchesFolder(tagValue, artist.artist)) {
+        const comparison = compareTagToFolder(tagValue, artist.artist)
+        if (comparison === 'mismatch' && rules.checks.warn_folder_tag_mismatch) {
           warnings.add(
             'warn_folder_tag_mismatch',
             albumPath,
@@ -479,18 +493,33 @@ function analyzeTags(
               `Recommended fix: rename folder to '${suggestedFolderName(tagValue)}' (or update the tag if the folder is correct). ` +
               `Without this, Plex may catalog the album under one name while users browse under the other.`
           )
+        } else if (comparison === 'case-only' && rules.checks.warn_folder_tag_case) {
+          warnings.add(
+            'warn_folder_tag_case',
+            albumPath,
+            `Folder/tag capitalization differs: artist folder is '${artist.artist}' but AlbumArtist tag is '${tagValue}'. ` +
+              `Only the capitalization differs. Make them agree so Plex and your filesystem present the artist identically.`
+          )
         }
       }
 
       // Album name mismatch — same idea, different field.
-      if (rules.checks.warn_folder_tag_mismatch && albumNameSet.size === 1) {
+      if (albumNameSet.size === 1) {
         const tagValue = [...albumNameSet][0]!
-        if (!tagMatchesFolder(tagValue, album.album)) {
+        const comparison = compareTagToFolder(tagValue, album.album)
+        if (comparison === 'mismatch' && rules.checks.warn_folder_tag_mismatch) {
           warnings.add(
             'warn_folder_tag_mismatch',
             albumPath,
             `Folder/tag mismatch: album folder is '${album.album}' but Album tag is '${tagValue}'. ` +
               `Recommended fix: rename folder to '${suggestedFolderName(tagValue)}' or update the tag.`
+          )
+        } else if (comparison === 'case-only' && rules.checks.warn_folder_tag_case) {
+          warnings.add(
+            'warn_folder_tag_case',
+            albumPath,
+            `Folder/tag capitalization differs: album folder is '${album.album}' but Album tag is '${tagValue}'. ` +
+              `Only the capitalization differs. Make them agree so Plex and your filesystem present the album identically.`
           )
         }
       }

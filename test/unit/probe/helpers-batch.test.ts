@@ -5,6 +5,7 @@ import path from 'path'
 
 import { probeOrCache, probeBatch, type ProbeTask } from '../../../src/probe/helpers'
 import { ProbeCache } from '../../../src/probe/cache'
+import { WarningCollector } from '../../../src/core/types'
 import type { ProbeData, TagData } from '../../../src/probe/types'
 
 const sampleData = (overrides: Partial<ProbeData> = {}): ProbeData => ({
@@ -165,6 +166,45 @@ describe('probeBatch', () => {
     // Only the successful one is returned.
     expect(probed.length).toBe(1)
     expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/Failed: .* mock failure/))
+
+    errorSpy.mockRestore()
+  })
+
+  it('emits warn_probe_failed so failures reach warnings.json, not just the console', async () => {
+    // Console-only reporting meant an unplayable file (broken moov atom,
+    // 81% zero-fill) was absent from probe.json, still listed as a normal
+    // episode in the catalog, and completely absent from warnings.json.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const ffprobeMod = await import('../../../src/probe/ffprobe')
+    const probeFile = ffprobeMod.probeFile as ReturnType<typeof vi.fn>
+    probeFile.mockImplementationOnce(async () => {
+      throw new Error('moov atom not found')
+    })
+
+    const cache = new ProbeCache(cachePath)
+    const warnings = new WarningCollector()
+    await probeBatch([task(10), task(11)], cache, undefined, undefined, warnings)
+
+    const fired = warnings.all().filter(w => w.type === 'warn_probe_failed')
+    expect(fired).toHaveLength(1)
+    expect(fired[0]!.issue).toContain('moov atom not found')
+    expect(fired[0]!.path).toBe(task(10).relativePath)
+
+    errorSpy.mockRestore()
+  })
+
+  it('still works without a collector — the parameter is optional', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const ffprobeMod = await import('../../../src/probe/ffprobe')
+    const probeFile = ffprobeMod.probeFile as ReturnType<typeof vi.fn>
+    probeFile.mockImplementationOnce(async () => {
+      throw new Error('mock failure')
+    })
+
+    const cache = new ProbeCache(cachePath)
+    await expect(probeBatch([task(10), task(11)], cache)).resolves.toHaveLength(1)
 
     errorSpy.mockRestore()
   })

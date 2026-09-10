@@ -398,6 +398,32 @@ describe('probeMusic', () => {
     expect(warnings.all().some(w => w.issue.match(/Folder\/tag mismatch.*album/i))).toBe(true)
   })
 
+  it('emits warn_folder_tag_case, not mismatch, when only capitalization differs', async () => {
+    // compareTagToFolder used to lowercase both sides, so this drift was
+    // completely invisible — it fragments a Plex library the same way a real
+    // mismatch does, but deserves its own lower-severity bucket.
+    const { rules, root, cache, warnings } = setup({
+      spec: {
+        Music: {
+          // Album folder matches its tag exactly; only the artist drifts, so
+          // the assertion below isolates the artist comparison.
+          'Talespin Soundtrack': { 'The Wall': { '01 - One.flac': '' } },
+        },
+      },
+      probes: {
+        'Music/Talespin Soundtrack/The Wall/01 - One.flac': fakeProbe({
+          audio: flacAudio(),
+          tags: tags({ album_artist: 'TaleSpin Soundtrack' }),
+        }),
+      },
+    })
+
+    await probeMusic({ root_path: root }, rules, cache, warnings)
+    const types = warnings.all().map(w => w.type)
+    expect(types).toContain('warn_folder_tag_case')
+    expect(types).not.toContain('warn_folder_tag_mismatch')
+  })
+
   it('does NOT fire folder/tag mismatch when tag has illegal chars matching folder', async () => {
     // ID3 tag "AC/DC" must be folder "ACDC" (slash is filename-illegal).
     // After stripping illegal chars, both match — no warning should fire.

@@ -66,6 +66,21 @@ video_extensions:
 ignored_season_names:
   - Specials
 
+# ── Episode code house style ────────────────────────────────────────────────
+# Whether you write `s01e01` or `S01E01`. Plex accepts either and the file
+# pattern above is case-insensitive, so this is purely about your library
+# reading consistently.
+#
+#   lower  ->  s01e01   (multi-episode: s01e01-e02)
+#   upper  ->  S01E01   (multi-episode: S01E01-E02)
+#   any    ->  no house style, never warn (the default)
+#
+# Either way the canonical multi-episode suffix spells the letter out —
+# `s01e01-e02`, not the bare `s01e01-02`. Drives warn_episode_code_case and
+# the `episode-code` mode of `npm run fix:shows`. Set yours in
+# shows.local.yaml.
+episode_code_case: any
+
 # Sidecar = silently allowed alongside episodes (poster art, subtitles, NFOs).
 sidecar_extensions:
   - .jpg
@@ -100,6 +115,8 @@ checks:
   warn_bad_season_folder: true                  # Season folder doesn't match (and isn't in ignored_season_names)
   warn_bad_file_name: true                      # File doesn't match patterns.file
   warn_show_year_mismatch: true                 # File's show/year vs parent show folder
+  warn_show_title_case: true                    # File show title matches folder except for capitalization
+  warn_episode_code_case: true                  # Episode code isn't the episode_code_case style (summary per season)
   warn_season_mismatch: true                    # File's season number vs parent season folder
   warn_episode_gaps: true                       # Gap detected in episode numbers
   warn_quality_mismatch: true                   # File dimensions don't fit its category's quality bucket

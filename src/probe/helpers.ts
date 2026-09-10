@@ -15,6 +15,8 @@
  * runs are basically instant, so the slow case is only the first scan.
  */
 
+import { WarningCollector } from '../core/types'
+
 import { probeFile } from './ffprobe'
 import { ProbeCache } from './cache'
 import { ProbeData, TagData } from './types'
@@ -94,12 +96,26 @@ export async function probeOrCache(
  *
  * Pass a `readTags` callback when the caller wants embedded metadata
  * captured alongside the ffprobe data (music probe uses this).
+ *
+ * Pass `warnings` so failures reach warnings.json as `warn_probe_failed`
+ * rather than only the console. A file ffprobe can't read is usually a file
+ * a PLAYER can't read either — the failure that prompted this check was an
+ * .mp4 whose moov atom was never written and whose data was 81% zero-fill,
+ * so it was unplayable in Plex too. Console-only reporting meant the catalog
+ * still listed it as a normal episode and warnings.json said nothing, so the
+ * one genuinely broken file in a library was the one the hygiene scanner was
+ * silent about.
+ *
+ * Like `permission_denied`, this has no rules toggle: it reports a file the
+ * scanner physically could not read, not a naming preference. Silence it per
+ * path via `ignored/<drive>/<type>.yaml` if a known-bad file is intentional.
  */
 export async function probeBatch(
   tasks: ProbeTask[],
   cache: ProbeCache,
   onProgress?: (done: number, total: number, cached: number) => void,
-  readTags?: TagReader
+  readTags?: TagReader,
+  warnings?: WarningCollector
 ): Promise<ProbedFile[]> {
   const results: ProbedFile[] = []
   let cachedCount = 0
@@ -113,7 +129,16 @@ export async function probeBatch(
       if (wasCached) cachedCount++
       results.push({ task, data })
     } catch (err) {
-      console.error(`    [PROBE] Failed: ${task.relativePath} — ${(err as Error).message}`)
+      const message = (err as Error).message
+      console.error(`    [PROBE] Failed: ${task.relativePath} — ${message}`)
+      warnings?.add(
+        'warn_probe_failed',
+        task.relativePath,
+        `ffprobe could not read this file: ${message.trim()} ` +
+          `The file is excluded from probe output and has no quality data. ` +
+          `A file ffprobe rejects is usually unplayable in Plex too — verify it plays, ` +
+          `and re-copy it from your source if it doesn't.`
+      )
     }
     onProgress?.(i + 1, tasks.length, cachedCount)
   }

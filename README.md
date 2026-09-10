@@ -56,6 +56,11 @@ npm run scan:all
 npm run validate:movies
 npm run validate:shows
 npm run validate:all
+
+# Repair show filenames the scanner flagged. The one write-capable command —
+# dry run by default, and the drive name is required.
+npm run fix:shows -- --fix show-prefix external
+npm run fix:shows -- --fix episode-titles external --apply
 ```
 
 If a media type spans several drives, add the drive's name from `config.json`. Leaving it off uses the first root configured for that type:
@@ -196,7 +201,7 @@ The rest is for contributors:
 
 - **`schemas/`** — JSON Schema (Draft 2020-12) definitions for every output file. Useful when building a downstream consumer (e.g. a personal website). See [`schemas/README.md`](schemas/README.md).
 - **`docs/`** — detailed reference for each topic (see [Documentation](#documentation) above).
-- **`src/`** — TypeScript source. Organized as `core/` (shared scaffolding), `media/` (scan logic per type), `probe/` (ffprobe + ID3), `validate/` (TMDB), plus `scan.ts` as the entry point.
+- **`src/`** — TypeScript source. Organized as `core/` (shared scaffolding), `media/` (scan logic per type), `probe/` (ffprobe + ID3), `validate/` (TMDB), `tools/` (the one write-capable utility), plus `scan.ts` as the entry point.
 
 ---
 

@@ -45,6 +45,25 @@ export const ShowsRulesSchema = z.object({
   ignored_season_names: z.array(z.string()),
 
   /**
+   * House style for the season/episode code in a filename — whether you write
+   * `s01e01` or `S01E01`. Plex accepts either, and `patterns.file` is
+   * case-insensitive, so this is purely about a library reading consistently.
+   *
+   *   'lower'  — s01e01, and s01e01-e02 for multi-episode files
+   *   'upper'  — S01E01, and S01E01-E02
+   *   'any'    — no house style; never warn (the neutral default)
+   *
+   * Whichever style is set, the multi-episode suffix must spell the letter
+   * out (`s01e01-e02`, not the bare `s01e01-02`), since the bare form reads
+   * as a range of two different things depending on who's looking.
+   *
+   * Drives `warn_episode_code_case` and the `episode-code` fix mode in
+   * `src/tools/rename-shows.ts`, which share `canonicalEpisodeCode()` so the
+   * warning and the fix can never disagree.
+   */
+  episode_code_case: z.enum(['lower', 'upper', 'any']),
+
+  /**
    * File extensions for Plex sidecar files (NFO metadata, posters,
    * subtitles, etc.). Silently allowed anywhere in the shows hierarchy
    * and never flagged as "unexpected".
@@ -86,6 +105,21 @@ export const ShowsRulesSchema = z.object({
     warn_bad_season_folder: z.boolean(),
     warn_bad_file_name: z.boolean(),
     warn_show_year_mismatch: z.boolean(),
+    /**
+     * The file's show title matches its folder except for capitalization
+     * ('My Name is Earl' in a 'My Name Is Earl (2005)' folder). Split out
+     * from `warn_show_year_mismatch`, which lowercases both sides and so
+     * cannot see this at all, because a cosmetic difference shouldn't share
+     * a bucket with a file naming the wrong show.
+     */
+    warn_show_title_case: z.boolean(),
+    /**
+     * The season/episode code doesn't match the `episode_code_case` house
+     * style, or a multi-episode file uses the bare `-02` suffix instead of
+     * the canonical `-e02`. Never fires when `episode_code_case` is 'any'.
+     * Summarised once per season.
+     */
+    warn_episode_code_case: z.boolean(),
     warn_season_mismatch: z.boolean(),
     warn_episode_gaps: z.boolean(),
     warn_quality_mismatch: z.boolean(),
@@ -187,6 +221,9 @@ export const defaultShowsRules: ShowsRules = ShowsRulesSchema.parse({
   primary_extension: ['.mp4'],
   video_extensions: ['.mp4', '.mkv', '.avi', '.m4v', '.mov', '.wmv', '.ts', '.m2ts'],
   ignored_season_names: ['Specials'],
+  // Neutral: no house style, so no warnings. Libraries pick one in
+  // shows.local.yaml.
+  episode_code_case: 'any',
   sidecar_extensions: [
     '.nfo',
     '.jpg',
@@ -213,6 +250,8 @@ export const defaultShowsRules: ShowsRules = ShowsRulesSchema.parse({
     warn_bad_season_folder: true,
     warn_bad_file_name: true,
     warn_show_year_mismatch: true,
+    warn_show_title_case: true,
+    warn_episode_code_case: true,
     warn_season_mismatch: true,
     warn_episode_gaps: true,
     warn_quality_mismatch: true,
