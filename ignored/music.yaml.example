@@ -2,74 +2,87 @@
 # MOASYS-Vault — Music ignore list (EXAMPLE)
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# A "do not warn me about this" list for your music library. Anything you put
-# here gets silently dropped from output/<drive>/music/warnings.json on every
-# run.
+# A "do not warn me about this" list for your music library. Anything listed
+# here is silently dropped from output/<drive>/music/warnings.json on every
+# run, and counted in the run summary.
 #
-# Ignore lists are per DRIVE as well as per type, because the paths below are
-# relative to that drive's root_path. `<drive>` is the lowercased `name` of a
-# root in config.json — e.g. `server`, `external`.
+# Ignore lists are per DRIVE as well as per type, because warning paths are
+# relative to that drive's root_path. `ignored/server/music.yaml` only affects
+# runs against the root named "Server".
 #
 # How to use this file:
-#   1. Copy this file to `ignored/<drive>/music.yaml` (create the drive
-#      folder, drop the `.example` suffix). The real per-drive files are
-#      gitignored so your personal decisions don't end up in version control.
-#   2. Add path prefixes below — one per line.
-#   3. Re-run `npm run music <drive>`. Matching warnings disappear from the
-#      output.
+#   1. Copy it to `ignored/<drive>/music.yaml` (drop the `.example` suffix).
+#      The real file is gitignored so your personal decisions stay out of
+#      version control.
+#   2. Add names under the level they belong to.
+#   3. Re-run `npm run music <drive>`. Matching warnings disappear.
 #
-# Two entry shapes — pick whichever fits each case:
+# ── Levels ───────────────────────────────────────────────────────────────────
 #
-#   # 1. Path-only (a bare string) — silences EVERY warning under this path.
-#   - Music/2Pac/All Eyez on Me
+#   folders   a category folder      - Other Music
+#   artists   one artist folder      - Pink Floyd
+#   albums    one album              - The Wall   (or  Pink Floyd/The Wall)
+#   songs     one track, qualified   - The Wall/01 - In the Flesh.flac
 #
-#   # 2. Type-scoped (an object) — silences only the listed warning types
-#   #    under this path. Other warnings on the same path stay visible.
-#   - path: Music/2Pac/All Eyez on Me
-#     types:
-#       - warn_compilation_detected
+# Names are matched at their own level and are CATEGORY-INDEPENDENT: an album
+# listed here is silenced whether it sits in Music/, Other Music/, or both.
+# That is also what lets an entry reach warn_duplicate_album, which reports
+# `Artist/Album` with no category to anchor to.
 #
-# Matching is case-insensitive and forward-slash-normalized, so the same
-# file works on Windows (backslashes) and macOS/Linux (forward slashes).
+# ── Qualifiers ───────────────────────────────────────────────────────────────
 #
-# Get the paths to add from output/<drive>/music/warnings.json — paths live under
-# each `by_type` bucket. Most music warnings use a `<Category>/<Artist>/<Album>`
-# path shape (or `<Artist>/<Album>` if you don't use category subfolders).
-# The bucket key (e.g. `warn_quality_inconsistent`) is the warning type;
-# you can also find every type listed in rules/music.yaml under `checks`.
+# `songs:` entries must name their album — a bare `01 - Intro.flac` would
+# match in every album in the library. `albums:` may be bare or qualified with
+# the artist; qualify it whenever the album name isn't distinctive (all the
+# soundtracks under a shared `Soundtrack` artist folder, for instance). A `/`
+# means "somewhere above", not "immediately above".
+#
+# ── Scope ────────────────────────────────────────────────────────────────────
+#
+# An entry silences EVERY warning at or below its level — tag mismatches,
+# missing tags, track gaps, quality inconsistency, all of them. There is no
+# per-warning-type scoping. To turn off a whole warning type instead, set
+# `checks.warn_*: false` in rules/music.yaml.
+#
+# ── Matching ─────────────────────────────────────────────────────────────────
+#
+# Exact per level (not a prefix), case-insensitive, and either slash works.
+#
+# ── Finding names ────────────────────────────────────────────────────────────
+#
+# Take them from the `path` values in output/<drive>/music/warnings.json. Most
+# music warnings use `<Category>/<Artist>/<Album>`, so drop the leading
+# category and keep the last one or two segments.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+# Silence everything under a category folder
+# folders:
+#   - Other Music
+#   - Other Soundtracks
+
+
 # Silence a whole artist
-# (Useful when an artist's catalog has a known issue you've decided to keep —
-# e.g. a folder/tag mismatch you can't fix because the tag was set by the
-# original publisher.)
-# - Some Artist
-# - Various Artists
+# (Useful when an artist's catalog has a known issue you can't fix — a
+# folder/tag mismatch set by the original publisher, say.)
+# artists:
+#   - Some Artist
+#   - Various Artists
 
 
 # Silence one album
-# (Drops every warning under this album folder — compilation_detected,
-# folder_tag_mismatch, missing_tags, track_number_mismatch, etc.)
-# - Pink Floyd/The Wall
-# - 2Pac/All Eyez on Me
+# (Drops every warning on it: compilation_detected, folder_tag_mismatch,
+# missing_tags, track_number_mismatch, quality_inconsistent, mono_audio.
+# If you only want to drop one check across the whole library, use
+# `checks.warn_*: false` in rules/music.yaml instead.)
+# albums:
+#   - Pink Floyd/The Wall
+#   - 2Pac/All Eyez on Me
+#   # Bare is fine when the album name is distinctive on its own:
+#   - Kid A
 
 
 # Silence one track
-# (Pin-point: just one file.)
-# - Pink Floyd/The Wall/01 - In the Flesh.flac
-
-
-# Silence a whole category folder
-# (Drops EVERY warning under this folder.)
-# - Other Music
-# - Other Soundtracks
-
-
-# Silence one warning type for a specific path
-# (Most precise option. The example below acknowledges a known hip-hop
-# false-positive on compilation detection without silencing other warnings
-# on the same album.)
-# - path: Music/2Pac/All Eyez on Me
-#   types:
-#     - warn_compilation_detected
+# songs:
+#   - The Wall/01 - In the Flesh.flac
+#   - Pink Floyd/The Wall/01 - In the Flesh.flac

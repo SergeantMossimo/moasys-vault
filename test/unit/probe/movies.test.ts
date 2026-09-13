@@ -151,6 +151,165 @@ describe('probeMovies', () => {
     expect(warnings.all().some(w => w.issue.match(/Quality mismatch/))).toBe(false)
   })
 
+  it('emits warn_short_duration for a file at or below min_duration_minutes', async () => {
+    const { rules, root, cache, warnings } = setup({
+      spec: { HD: { 'Short (2000)': { 'Short (2000).mp4': '' } } },
+      rules: { min_duration_minutes: 30 },
+      probes: {
+        'HD/Short (2000)/Short (2000).mp4': fakeProbe({
+          duration_seconds: 125,
+          video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 },
+        }),
+      },
+    })
+
+    await probeMovies({ root_path: root }, rules, cache, warnings)
+    const hit = warnings.all().find(w => w.type === 'warn_short_duration')
+    expect(hit).toBeDefined()
+    expect(hit?.issue).toMatch(/Short runtime — 2m 05s/)
+  })
+
+  it('fires warn_short_duration exactly at the threshold (at-or-below, not strictly-below)', async () => {
+    const { rules, root, cache, warnings } = setup({
+      spec: { HD: { 'X (2000)': { 'X (2000).mp4': '' } } },
+      rules: { min_duration_minutes: 30 },
+      probes: {
+        'HD/X (2000)/X (2000).mp4': fakeProbe({
+          duration_seconds: 1800,
+          video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 },
+        }),
+      },
+    })
+
+    await probeMovies({ root_path: root }, rules, cache, warnings)
+    expect(warnings.all().some(w => w.type === 'warn_short_duration')).toBe(true)
+  })
+
+  it('stays silent one second over the threshold', async () => {
+    const { rules, root, cache, warnings } = setup({
+      spec: { HD: { 'X (2000)': { 'X (2000).mp4': '' } } },
+      rules: { min_duration_minutes: 30 },
+      probes: {
+        'HD/X (2000)/X (2000).mp4': fakeProbe({
+          duration_seconds: 1801,
+          video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 },
+        }),
+      },
+    })
+
+    await probeMovies({ root_path: root }, rules, cache, warnings)
+    expect(warnings.all().some(w => w.type === 'warn_short_duration')).toBe(false)
+  })
+
+  it('fires warn_short_duration on a zero-length container', async () => {
+    // The most valuable hit this check produces — a broken encode.
+    const { rules, root, cache, warnings } = setup({
+      spec: { HD: { 'X (2000)': { 'X (2000).mp4': '' } } },
+      rules: { min_duration_minutes: 30 },
+      probes: {
+        'HD/X (2000)/X (2000).mp4': fakeProbe({
+          duration_seconds: 0,
+          video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 },
+        }),
+      },
+    })
+
+    await probeMovies({ root_path: root }, rules, cache, warnings)
+    expect(warnings.all().some(w => w.type === 'warn_short_duration')).toBe(true)
+  })
+
+  it('stays silent when duration was never measured (null)', async () => {
+    // Unreadable files are warn_probe_failed's job, not this check's.
+    const { rules, root, cache, warnings } = setup({
+      spec: { HD: { 'X (2000)': { 'X (2000).mp4': '' } } },
+      rules: { min_duration_minutes: 30 },
+      probes: {
+        'HD/X (2000)/X (2000).mp4': fakeProbe({
+          duration_seconds: null,
+          video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 },
+        }),
+      },
+    })
+
+    await probeMovies({ root_path: root }, rules, cache, warnings)
+    expect(warnings.all().some(w => w.type === 'warn_short_duration')).toBe(false)
+  })
+
+  it('disables warn_short_duration when min_duration_minutes is 0', async () => {
+    const { rules, root, cache, warnings } = setup({
+      spec: { HD: { 'X (2000)': { 'X (2000).mp4': '' } } },
+      rules: { min_duration_minutes: 0 },
+      probes: {
+        'HD/X (2000)/X (2000).mp4': fakeProbe({
+          duration_seconds: 60,
+          video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 },
+        }),
+      },
+    })
+
+    await probeMovies({ root_path: root }, rules, cache, warnings)
+    expect(warnings.all().some(w => w.type === 'warn_short_duration')).toBe(false)
+  })
+
+  it('silences warn_short_duration when the toggle is false', async () => {
+    const { rules, root, cache, warnings } = setup({
+      spec: { HD: { 'X (2000)': { 'X (2000).mp4': '' } } },
+      rules: {
+        min_duration_minutes: 30,
+        checks: { ...defaultMoviesRules.checks, warn_short_duration: false },
+      },
+      probes: {
+        'HD/X (2000)/X (2000).mp4': fakeProbe({
+          duration_seconds: 60,
+          video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 },
+        }),
+      },
+    })
+
+    await probeMovies({ root_path: root }, rules, cache, warnings)
+    expect(warnings.all().some(w => w.type === 'warn_short_duration')).toBe(false)
+  })
+
+  it('points warn_short_duration at the ignore-file escape hatch', async () => {
+    const { rules, root, cache, warnings } = setup({
+      spec: { HD: { 'X (2000)': { 'X (2000).mp4': '' } } },
+      rules: { min_duration_minutes: 30 },
+      probes: {
+        'HD/X (2000)/X (2000).mp4': fakeProbe({
+          duration_seconds: 60,
+          video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 },
+        }),
+      },
+    })
+
+    await probeMovies({ root_path: root }, rules, cache, warnings)
+    const hit = warnings.all().find(w => w.type === 'warn_short_duration')
+    expect(hit?.issue).toMatch(/ignored\/<drive>\/movies\.yaml/)
+    expect(hit?.issue).toMatch(/types: \[warn_short_duration\]/)
+  })
+
+  it('fires warn_short_duration in a general-tag category, unlike warn_quality_mismatch', async () => {
+    // "Documentary" has no UHD/HD/SD substring → quality null. The runtime
+    // check is not gated on quality, so it still fires.
+    const { rules, root, cache, warnings } = setup({
+      spec: { Documentary: { 'X (2000)': { 'X (2000).mp4': '' } } },
+      rules: {
+        categories: [{ name: 'Documentary' }],
+        min_duration_minutes: 30,
+      },
+      probes: {
+        'Documentary/X (2000)/X (2000).mp4': fakeProbe({
+          duration_seconds: 60,
+          video: { codec: 'h264', width: 720, height: 480, frame_rate: 24 },
+        }),
+      },
+    })
+
+    await probeMovies({ root_path: root }, rules, cache, warnings)
+    expect(warnings.all().some(w => w.type === 'warn_short_duration')).toBe(true)
+    expect(warnings.all().some(w => w.type === 'warn_quality_mismatch')).toBe(false)
+  })
+
   it('skips a file with no video stream (audio-only is rare here)', async () => {
     const { rules, root, cache, warnings } = setup({
       spec: { HD: { 'X (2000)': { 'X (2000).mp4': '' } } },

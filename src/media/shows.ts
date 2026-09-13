@@ -40,7 +40,7 @@ import {
   resolveCategories,
   sortQualities,
 } from '../core/rules/helpers'
-import { finalizeVersions, groupCategoriesByQuality } from '../core/versions'
+import { distinctCategories, finalizeVersions, groupCategoriesByQuality } from '../core/versions'
 import { ProbeData } from '../probe/types'
 import { deriveQuality } from '../probe/helpers'
 
@@ -635,6 +635,13 @@ export function createShowsModule(
           const warningPath = `${show.title} (${show.year}) — Season ${season.season_label}`
           const byQuality = groupCategoriesByQuality(season.versions, categoryToQuality)
 
+          // `warningPath` is a display label — em-dash separated, with no
+          // category — so scope derivation can't read levels off it. Spell
+          // them out, or no ignore entry could ever reach these two checks.
+          // `Season 1` folds onto the on-disk `Season 01` in core/ignored.ts,
+          // so one `seasons:` entry covers this and the scan pass alike.
+          const seasonLevels = [`${show.title} (${show.year})`, `Season ${season.season_label}`]
+
           if (duplicateOn) {
             for (const quality of sortQualities(byQuality.keys())) {
               const cats = byQuality.get(quality)!
@@ -644,9 +651,12 @@ export function createShowsModule(
                 warningPath,
                 `Season ${season.season_label} has duplicate ${quality} copies in ` +
                   `${cats.length} folders: ${cats.join(', ')} — keep one and delete the rest`,
-                // Group the bucket by quality (UHD, then HD, then SD) rather
-                // than by show title, so the worst offenders read together.
-                { sortKey: qualitySortKey(quality) }
+                {
+                  // Group the bucket by quality (UHD, then HD, then SD) rather
+                  // than by show title, so the worst offenders read together.
+                  sortKey: qualitySortKey(quality),
+                  scope: { categories: cats, levels: seasonLevels },
+                }
               )
             }
           }
@@ -660,7 +670,13 @@ export function createShowsModule(
               warnings.add(
                 'warn_multi_quality',
                 warningPath,
-                `Season ${season.season_label} exists in multiple qualities: ${sortQualities(qualities).join(', ')}`
+                `Season ${season.season_label} exists in multiple qualities: ${sortQualities(qualities).join(', ')}`,
+                {
+                  scope: {
+                    categories: distinctCategories(season.versions),
+                    levels: seasonLevels,
+                  },
+                }
               )
             }
           }

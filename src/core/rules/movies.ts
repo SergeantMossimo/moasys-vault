@@ -100,6 +100,37 @@ export const MoviesRulesSchema = z.object({
     })
   ),
 
+  /**
+   * Runtime floor in minutes. Any movie file whose ffprobe duration is at or
+   * below this fires `warn_short_duration` — the target is a truncated or
+   * failed encode, a 4-minute file where a 2-hour film should be.
+   *
+   * Set to 0 to disable the check entirely.
+   *
+   * Expect legitimate hits: short films, animated TV specials, and stand-up
+   * sets are all genuinely under 30 minutes. Silence those per-path in
+   * `ignored/<drive>/movies.yaml` with `types: [warn_short_duration]` rather
+   * than lowering the threshold.
+   */
+  min_duration_minutes: z.number().int().nonnegative(),
+
+  /**
+   * How far a local file's runtime may differ from TMDB's, as a percentage of
+   * TMDB's runtime, before `warn_tmdb_runtime_mismatch` fires. Symmetric —
+   * 50 means "flag anything below half or above one-and-a-half times TMDB".
+   *
+   * Set to 0 to disable the check.
+   *
+   * This is the precise counterpart to `min_duration_minutes`: a genuine
+   * 2-minute short matches TMDB's 2-minute runtime and stays silent, while a
+   * feature truncated to 5 minutes is caught no matter how long it is. The
+   * over-length side catches wrongly-matched films and concatenated files;
+   * extended cuts TMDB doesn't carry will fire here legitimately.
+   *
+   * Runs in the validate pass, so it needs a TMDB match to compare against.
+   */
+  runtime_tolerance_percent: z.number().int().nonnegative(),
+
   /** Per-warning toggles. Set any to false to silence that warning. */
   checks: z.object({
     warn_non_primary: z.boolean(),
@@ -127,6 +158,15 @@ export const MoviesRulesSchema = z.object({
     warn_duplicate_quality: z.boolean(),
     warn_multi_quality: z.boolean(),
     warn_quality_mismatch: z.boolean(),
+    /**
+     * The file's runtime is at or below `min_duration_minutes`. Usually a
+     * truncated or failed encode. This is a review list, not an error list —
+     * short films, TV specials and stand-up sets fire legitimately, so silence
+     * those per-path in `ignored/<drive>/movies.yaml` with
+     * `types: [warn_short_duration]`, which leaves their naming and TMDB
+     * warnings visible.
+     */
+    warn_short_duration: z.boolean(),
     /**
      * Video files found at a level where the scanner expects a subfolder.
      * Specifically: video files placed directly in a media folder rather
@@ -168,6 +208,15 @@ export const MoviesRulesSchema = z.object({
      * where you COULD rename to match TMDB exactly.
      */
     warn_tmdb_title_canonical: z.boolean(),
+    /**
+     * The local file's runtime differs from TMDB's by more than
+     * `runtime_tolerance_percent`. Under-length means a truncated encode;
+     * over-length means a wrongly-matched film, a concatenated file, or an
+     * extended cut TMDB doesn't carry. Catches wrong matches that title +
+     * year scoring cannot see — a 5-minute short sharing a feature's exact
+     * title and year still scores `high`.
+     */
+    warn_tmdb_runtime_mismatch: z.boolean(),
   }),
 })
 
@@ -209,6 +258,8 @@ export const defaultMoviesRules: MoviesRules = MoviesRulesSchema.parse({
     '.idx',
   ],
   quality_thresholds: [], // Ships empty — see rules/movies.example.yaml for the shape
+  min_duration_minutes: 30, // 0 disables the check
+  runtime_tolerance_percent: 50, // 0 disables the check
   checks: {
     warn_non_primary: true,
     warn_no_videos: true,
@@ -223,6 +274,7 @@ export const defaultMoviesRules: MoviesRules = MoviesRulesSchema.parse({
     warn_duplicate_quality: true,
     warn_multi_quality: true,
     warn_quality_mismatch: true,
+    warn_short_duration: true,
     warn_loose_files: true,
     warn_extra_subfolders: true,
     warn_unexpected_entries: true,
@@ -230,5 +282,6 @@ export const defaultMoviesRules: MoviesRules = MoviesRulesSchema.parse({
     warn_tmdb_low_confidence: true,
     warn_tmdb_year_mismatch: true,
     warn_tmdb_title_canonical: true,
+    warn_tmdb_runtime_mismatch: true,
   },
 })

@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-import { validateMovies } from '../../../src/validate/movies'
+import { validateMovies, movieDurationKey, type MovieDurations } from '../../../src/validate/movies'
 import { defaultMoviesRules, type MoviesRules } from '../../../src/core/rules/movies'
 import { JsonCache } from '../../../src/validate/cache'
 import { WarningCollector, type MovieOutput } from '../../../src/core/types'
@@ -636,6 +636,7 @@ describe('validateMovies — caching', () => {
       memoryCache(),
       memoryCache(),
       new WarningCollector(),
+      undefined,
       progress
     )
 
@@ -680,5 +681,181 @@ describe('validateMovies — caching', () => {
     )
 
     expect(result[0]?.alternatives).toEqual([{ id: 2, title: 'Heat (Old)', year: 1986 }])
+  })
+})
+
+describe('validateMovies — warn_tmdb_runtime_mismatch', () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  /** A client that resolves "The Crow" (1994) to a TMDB record of `runtime`. */
+  function runtimeClient(runtime: number | null): TmdbClient {
+    return mockClient({
+      searchResults: [
+        {
+          id: 100,
+          title: 'The Crow',
+          original_title: 'The Crow',
+          release_date: '1994-05-13',
+          popularity: 50,
+        },
+      ],
+      details: {
+        100: {
+          id: 100,
+          title: 'The Crow',
+          original_title: 'The Crow',
+          release_date: '1994-05-13',
+          runtime,
+        },
+      },
+    })
+  }
+
+  /** Probe durations for one file of The Crow, given a length in minutes. */
+  function durationsOf(minutes: number): MovieDurations {
+    return new Map([
+      [
+        movieDurationKey('The Crow', 1994, null),
+        [{ path: 'HD/The Crow (1994)/The Crow (1994).mp4', duration_seconds: minutes * 60 }],
+      ],
+    ])
+  }
+
+  async function run(opts: {
+    tmdbRuntime: number | null
+    localMinutes: number
+    rules?: Partial<MoviesRules>
+    durations?: MovieDurations
+  }) {
+    const warnings = new WarningCollector()
+    await validateMovies(
+      [movie('The Crow', 1994)],
+      { ...defaultMoviesRules, ...opts.rules },
+      runtimeClient(opts.tmdbRuntime),
+      memoryCache(),
+      memoryCache(),
+      warnings,
+      opts.durations ?? durationsOf(opts.localMinutes)
+    )
+    return warnings.all().filter(w => w.type === 'warn_tmdb_runtime_mismatch')
+  }
+
+  it('fires when the file is far shorter than TMDB (truncated encode)', async () => {
+    const hits = await run({ tmdbRuntime: 102, localMinutes: 5 })
+    expect(hits).toHaveLength(1)
+    expect(hits[0]?.issue).toMatch(/file is 5m but TMDB says 'The Crow' runs 1h 42m/)
+    expect(hits[0]?.issue).toMatch(/95% shorter/)
+    expect(hits[0]?.path).toBe('HD/The Crow (1994)/The Crow (1994).mp4')
+  })
+
+  it('fires when the file is far longer than TMDB (wrong match or concatenated)', async () => {
+    const hits = await run({ tmdbRuntime: 5, localMinutes: 115 })
+    expect(hits).toHaveLength(1)
+    expect(hits[0]?.issue).toMatch(/longer/)
+    expect(hits[0]?.issue).toMatch(/wrongly-matched film/)
+  })
+
+  it('stays silent inside the tolerance band', async () => {
+    // 90 local vs 102 TMDB is ~12% off — a different cut, not a problem.
+    expect(await run({ tmdbRuntime: 102, localMinutes: 90 })).toHaveLength(0)
+  })
+
+  it('stays silent for a genuine short film whose runtime TMDB agrees with', async () => {
+    // The case warn_short_duration cannot distinguish: 2m local, 2m on TMDB.
+    expect(await run({ tmdbRuntime: 2, localMinutes: 2 })).toHaveLength(0)
+  })
+
+  it('fires exactly outside, not at, the tolerance boundary', async () => {
+    // tolerance 50% => drift must EXCEED 0.5. 50 vs 100 is exactly 50%.
+    expect(await run({ tmdbRuntime: 100, localMinutes: 50 })).toHaveLength(0)
+    expect(await run({ tmdbRuntime: 100, localMinutes: 49 })).toHaveLength(1)
+  })
+
+  it('respects a custom runtime_tolerance_percent', async () => {
+    const opts = { tmdbRuntime: 100, localMinutes: 70 } // 30% off
+    expect(await run({ ...opts, rules: { runtime_tolerance_percent: 50 } })).toHaveLength(0)
+    expect(await run({ ...opts, rules: { runtime_tolerance_percent: 20 } })).toHaveLength(1)
+  })
+
+  it('is disabled by runtime_tolerance_percent: 0', async () => {
+    const hits = await run({
+      tmdbRuntime: 102,
+      localMinutes: 5,
+      rules: { runtime_tolerance_percent: 0 },
+    })
+    expect(hits).toHaveLength(0)
+  })
+
+  it('is disabled by the check toggle', async () => {
+    const hits = await run({
+      tmdbRuntime: 102,
+      localMinutes: 5,
+      rules: {
+        checks: { ...defaultMoviesRules.checks, warn_tmdb_runtime_mismatch: false },
+      },
+    })
+    expect(hits).toHaveLength(0)
+  })
+
+  it('stays silent when TMDB has no runtime recorded', async () => {
+    expect(await run({ tmdbRuntime: null, localMinutes: 5 })).toHaveLength(0)
+    // TMDB uses 0 for "nobody filled this in" — not a zero-length film.
+    expect(await run({ tmdbRuntime: 0, localMinutes: 5 })).toHaveLength(0)
+  })
+
+  it('stays silent when no probe durations were supplied', async () => {
+    const warnings = new WarningCollector()
+    await validateMovies(
+      [movie('The Crow', 1994)],
+      defaultMoviesRules,
+      runtimeClient(102),
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+    expect(warnings.all().filter(w => w.type === 'warn_tmdb_runtime_mismatch')).toHaveLength(0)
+  })
+
+  it('warns per file, so one truncated version does not implicate the others', async () => {
+    const durations: MovieDurations = new Map([
+      [
+        movieDurationKey('The Crow', 1994, null),
+        [
+          { path: 'UHD/The Crow (1994)/The Crow (1994).mp4', duration_seconds: 102 * 60 },
+          { path: 'HD/The Crow (1994)/The Crow (1994).mp4', duration_seconds: 5 * 60 },
+        ],
+      ],
+    ])
+    const hits = await run({ tmdbRuntime: 102, localMinutes: 0, durations })
+    expect(hits).toHaveLength(1)
+    expect(hits[0]?.path).toBe('HD/The Crow (1994)/The Crow (1994).mp4')
+  })
+
+  it('points at both escape hatches — the ignore file and the check toggle', async () => {
+    const hits = await run({ tmdbRuntime: 102, localMinutes: 5 })
+    expect(hits[0]?.issue).toMatch(/ignored\/<drive>\/movies\.yaml under 'files:'/)
+    expect(hits[0]?.issue).toMatch(/checks\.warn_tmdb_runtime_mismatch: false/)
+  })
+
+  it('does not fire when TMDB found no match at all', async () => {
+    const warnings = new WarningCollector()
+    await validateMovies(
+      [movie('The Crow', 1994)],
+      defaultMoviesRules,
+      mockClient({ searchResults: [] }),
+      memoryCache(),
+      memoryCache(),
+      warnings,
+      durationsOf(5)
+    )
+    expect(warnings.all().filter(w => w.type === 'warn_tmdb_runtime_mismatch')).toHaveLength(0)
+  })
+
+  afterEach(() => {
+    errorSpy.mockRestore()
   })
 })

@@ -33,7 +33,7 @@ import {
 import { driveSlug, loadConfig } from './core/config'
 import { scan, writeJson } from './core/scanner'
 import { loadRules } from './core/rules/loader'
-import { loadIgnoredPaths } from './core/ignored'
+import { loadIgnoreList } from './core/ignored'
 import {
   parseRunnerArgs,
   resolveRoot,
@@ -232,7 +232,13 @@ async function runType<TRecord, TOutput, TConfig extends BaseMediaConfig>(
   // probe — in one file. Constructed with this drive's ignored entries so any
   // warning that matches an entry in ignored/<drive>/<type>.yaml is silently
   // dropped (still counted via warnings.silencedCount()).
-  const warnings = new WarningCollector(loadIgnoredPaths(SCRIPT_DIR, slug, mediaType))
+  //
+  // hasCategories tells scope derivation whether the first path segment is a
+  // category folder. A library with `categories: []` resolves to one synthetic
+  // category with an empty folderName, so every warning path is one level
+  // shallower — see deriveScope in core/ignored.ts.
+  const hasCategories = entry.module.getCategories().some(c => c.folderName !== '')
+  const warnings = new WarningCollector(loadIgnoreList(SCRIPT_DIR, slug, mediaType), hasCategories)
 
   // ── Probe pass ────────────────────────────────────────────────────────
   const cache = new ProbeCache(cachePath)

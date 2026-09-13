@@ -392,7 +392,11 @@ export function createAudiobooksModule(
         warnings.add(
           'warn_duplicate_book',
           path.join(book.authors.join(', '), book.title),
-          `Duplicate book found in multiple categories: ${ordered.join(', ')}`
+          `Duplicate book found in multiple categories: ${ordered.join(', ')}`,
+          // The path carries no category — this check spans them by
+          // definition — so scope derivation would read the author as one.
+          // Spelling it out is also what lets a `folders:` entry reach here.
+          { scope: { categories: ordered, levels: [book.authors.join(', '), book.title] } }
         )
       }
     },

@@ -14,8 +14,10 @@ cache/
 rules/*.local.yaml
 
 # Per-user ignore lists, one folder per drive (ignored/<drive>/<type>.yaml).
-# The committed top-level `.yaml.example` templates stay in.
+# The committed top-level `.yaml.example` templates stay in. `.bak` covers the
+# backups left behind when an ignore list is converted to a new format.
 ignored/**/*.yaml
+ignored/**/*.bak
 !ignored/*.yaml.example
 
 # Secrets — TMDB API key etc. NEVER commit this.

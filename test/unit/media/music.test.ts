@@ -4,9 +4,15 @@ import { createMusicModule } from '../../../src/media/music'
 import { defaultMusicRules, MusicRules } from '../../../src/core/rules/music'
 import { scan } from '../../../src/core/scanner'
 import { WarningCollector } from '../../../src/core/types'
+import { parseIgnoreList } from '../../../src/core/ignored'
 import { buildLibrary, cleanupLibrary, probeMap, type DirSpec } from '../../fixtures/library'
 
-function runMusicScan(opts: { spec: DirSpec; rules?: Partial<MusicRules> }) {
+function runMusicScan(opts: {
+  spec: DirSpec
+  rules?: Partial<MusicRules>
+  /** Level-keyed ignore file contents, as `ignored/<drive>/music.yaml` parses. */
+  ignored?: Record<string, string[]>
+}) {
   const rules: MusicRules = {
     ...defaultMusicRules,
     categories: [{ name: 'Music' }, { name: 'Soundtracks' }],
@@ -15,7 +21,7 @@ function runMusicScan(opts: { spec: DirSpec; rules?: Partial<MusicRules> }) {
   const root = buildLibrary(opts.spec, 'moasys-music-')
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
   const module = createMusicModule(rules)
-  const warnings = new WarningCollector()
+  const warnings = new WarningCollector(parseIgnoreList(opts.ignored ?? {}, 'music', 'test.yaml'))
   const probes = probeMap({})
 
   try {
@@ -185,6 +191,31 @@ describe('music module — warnings', () => {
     expect(
       result.warnings.some(w => w.issue.match(/Duplicate album found in multiple categories/))
     ).toBe(true)
+  })
+
+  it('warn_duplicate_album: an `albums:` entry silences it', () => {
+    // The check emits `Artist/Album` with no category, while the probe pass
+    // emits `Category/Artist/Album` for the same album. A level-keyed entry
+    // reaches both; a path prefix could only ever reach one.
+    const result = runMusicScan({
+      spec: {
+        Music: { Artist: { Album: { '01 - Song.flac': '' } } },
+        Soundtracks: { Artist: { Album: { '01 - Song.flac': '' } } },
+      },
+      ignored: { albums: ['Artist/Album'] },
+    })
+    expect(result.warnings.some(w => w.type === 'warn_duplicate_album')).toBe(false)
+  })
+
+  it('warn_duplicate_album: an `artists:` entry silences it too', () => {
+    const result = runMusicScan({
+      spec: {
+        Music: { Artist: { Album: { '01 - Song.flac': '' } } },
+        Soundtracks: { Artist: { Album: { '01 - Song.flac': '' } } },
+      },
+      ignored: { artists: ['Artist'] },
+    })
+    expect(result.warnings.some(w => w.type === 'warn_duplicate_album')).toBe(false)
   })
 
   it('warn_duplicate_album: silenced when category set is in acceptable_album_combos', () => {

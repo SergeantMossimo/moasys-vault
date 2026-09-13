@@ -4,9 +4,15 @@ import { createAudiobooksModule } from '../../../src/media/audiobooks'
 import { defaultAudiobooksRules, AudiobooksRules } from '../../../src/core/rules/audiobooks'
 import { scan } from '../../../src/core/scanner'
 import { WarningCollector } from '../../../src/core/types'
+import { parseIgnoreList } from '../../../src/core/ignored'
 import { buildLibrary, cleanupLibrary, probeMap, type DirSpec } from '../../fixtures/library'
 
-function runAudiobooksScan(opts: { spec: DirSpec; rules?: Partial<AudiobooksRules> }) {
+function runAudiobooksScan(opts: {
+  spec: DirSpec
+  rules?: Partial<AudiobooksRules>
+  /** Level-keyed ignore file contents, as `ignored/<drive>/audiobooks.yaml` parses. */
+  ignored?: Record<string, string[]>
+}) {
   const rules: AudiobooksRules = {
     ...defaultAudiobooksRules,
     categories: [{ name: 'Audible' }, { name: 'Book On CD' }],
@@ -15,7 +21,9 @@ function runAudiobooksScan(opts: { spec: DirSpec; rules?: Partial<AudiobooksRule
   const root = buildLibrary(opts.spec, 'moasys-audiobooks-')
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
   const module = createAudiobooksModule(rules)
-  const warnings = new WarningCollector()
+  const warnings = new WarningCollector(
+    parseIgnoreList(opts.ignored ?? {}, 'audiobooks', 'test.yaml')
+  )
   const probes = probeMap({})
 
   try {
@@ -164,6 +172,28 @@ describe('audiobooks module — warnings', () => {
       },
     })
     expect(result.warnings.some(w => w.issue.match(/Potential missing chapters/))).toBe(true)
+  })
+
+  it('warn_duplicate_book: a `books:` entry silences it despite the path having no category', () => {
+    const result = runAudiobooksScan({
+      spec: {
+        Audible: { Author: { Book: { '01 - Chapter.mp3': '' } } },
+        'Book On CD': { Author: { Book: { '01 - Chapter.mp3': '' } } },
+      },
+      ignored: { books: ['Author/Book'] },
+    })
+    expect(result.warnings.some(w => w.type === 'warn_duplicate_book')).toBe(false)
+  })
+
+  it('warn_duplicate_book: a `folders:` entry reaches it as well', () => {
+    const result = runAudiobooksScan({
+      spec: {
+        Audible: { Author: { Book: { '01 - Chapter.mp3': '' } } },
+        'Book On CD': { Author: { Book: { '01 - Chapter.mp3': '' } } },
+      },
+      ignored: { folders: ['Book On CD'] },
+    })
+    expect(result.warnings.some(w => w.type === 'warn_duplicate_book')).toBe(false)
   })
 
   it('warn_duplicate_book: same title in multiple categories', () => {

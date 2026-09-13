@@ -6,7 +6,8 @@
  * everywhere it's used — no silent mismatches between modules.
  */
 
-import { IgnoredEntry, isWarningIgnored } from './ignored'
+import { deriveScope, EMPTY_IGNORE_LIST, isWarningIgnored } from './ignored'
+import type { IgnoreList, WarningScope } from './ignored'
 
 // ─────────────────────────────────────────────
 // Config types
@@ -112,6 +113,15 @@ export interface WarningOptions {
    * a bucket that mixes the two orders unpredictably.
    */
   sortKey?: string
+  /**
+   * Where this warning sits in the library hierarchy, for ignore-list
+   * matching. Set it only when `path` isn't a real category-anchored library
+   * path — the duplicate-copy checks emit a display label with no category
+   * (`Firefly (2002) — Season 1`), and the TMDB episode-name check emits an
+   * episode CODE where a filename would normally sit. Everything else derives
+   * correctly from `path` and should leave this alone.
+   */
+  scope?: WarningScope
 }
 
 /**
@@ -363,21 +373,36 @@ export class WarningCollector {
   private warnings: Warning[] = []
   private silenced = 0
 
-  constructor(private ignored: IgnoredEntry[] = []) {}
+  /**
+   * @param ignored       loaded ignore list for this drive + media type
+   * @param hasCategories false when `rules.categories` is empty. Such a
+   *                      library has no category segment, so every warning
+   *                      path is one level shallower and scope derivation
+   *                      must not eat the first segment as a category.
+   *                      Derive it from the rules rather than hardcoding —
+   *                      getting it backwards silences the wrong things
+   *                      rather than raising an error.
+   */
+  constructor(
+    private ignored: IgnoreList = EMPTY_IGNORE_LIST,
+    private hasCategories: boolean = true
+  ) {}
 
   /** Add a warning. type, path, and issue are required; `options` is optional.
    *  - type:   stable machine-readable identifier (e.g. 'warn_bad_folder_name'),
-   *            used for grouping in warnings.json and for type-scoped silencing
-   *            in ignored/<type>.yaml.
+   *            used for grouping in warnings.json and as the `checks` toggle name.
    *  - path:   library-relative location. Backslashes are normalized to forward
    *            slashes so output is consistent across Windows and macOS/Linux.
    *  - issue:  human-readable description.
-   *  - options: `extension` and `sortKey` — see `WarningOptions`. */
+   *  - options: `extension`, `sortKey` and `scope` — see `WarningOptions`. */
   add(type: string, path: string, issue: string, options: WarningOptions = {}): void {
     const normalizedPath = path.replace(/\\/g, '/')
-    if (isWarningIgnored(type, normalizedPath, this.ignored)) {
-      this.silenced++
-      return
+    if (this.ignored.entries.length > 0) {
+      const scope = options.scope ?? deriveScope(normalizedPath, this.hasCategories)
+      if (isWarningIgnored(scope, this.ignored)) {
+        this.silenced++
+        return
+      }
     }
     const entry: Warning = { type, path: normalizedPath, issue }
     if (options.extension !== undefined) entry.extension = options.extension
