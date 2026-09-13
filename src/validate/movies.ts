@@ -19,6 +19,7 @@ import { MoviesRules } from '../core/rules/movies'
 
 import { JsonCache, searchKey } from './cache'
 import {
+  categoriesOf,
   normalizeTitle,
   normalizeTitleLoose,
   parseYear,
@@ -146,6 +147,36 @@ function pickBestMovieMatch(
 }
 
 // ─────────────────────────────────────────────
+// Local runtime comparison
+// ─────────────────────────────────────────────
+
+/** One probed file's measured runtime, keyed into `MovieDurations` by movie. */
+export interface MovieFileDuration {
+  /** Library-relative path, used as the warning path. */
+  path: string
+  duration_seconds: number
+}
+
+/** Map from `movieDurationKey()` to every probed file for that movie. */
+export type MovieDurations = Map<string, MovieFileDuration[]>
+
+/**
+ * Join key between the scan catalog and the probe output. Mirrors `makeKey`
+ * in probe/movies.ts — title|year|edition, lowercased.
+ */
+export function movieDurationKey(title: string, year: number, edition: string | null): string {
+  return `${title.toLowerCase()}|${year}|${(edition ?? '').toLowerCase()}`
+}
+
+/** Format a minute count for warning text — `5m`, `1h 47m`. */
+function formatMinutes(minutes: number): string {
+  const total = Math.round(minutes)
+  const h = Math.floor(total / 60)
+  const m = total % 60
+  return h > 0 ? `${h}h ${m}m` : `${m}m`
+}
+
+// ─────────────────────────────────────────────
 // Validation entry point
 // ─────────────────────────────────────────────
 
@@ -156,6 +187,12 @@ export async function validateMovies(
   searchCache: JsonCache<ResolvedSearch>,
   detailsCache: JsonCache<TmdbMovieDetails>,
   warnings: WarningCollector,
+  /**
+   * Measured runtimes from the probe pass, for `warn_tmdb_runtime_mismatch`.
+   * Omitted (or empty) simply skips that check — the rest of validation does
+   * not depend on probe output.
+   */
+  durations?: MovieDurations,
   onProgress?: (done: number, total: number, cached: number) => void
 ): Promise<MovieValidation[]> {
   const out: MovieValidation[] = []
@@ -201,6 +238,7 @@ export async function validateMovies(
     }
 
     // Pull canonical details for the best match
+    let tmdbRuntime: number | null = null
     if (resolved.best_id !== null) {
       let details = detailsCache.get(String(resolved.best_id))
       if (!details) {
@@ -217,6 +255,9 @@ export async function validateMovies(
         entry.tmdb_title = details.title
         entry.tmdb_title_filename_safe = stripFilenameIllegalChars(details.title)
         entry.tmdb_year = parseYear(details.release_date)
+        // TMDB reports 0 for records where nobody has filled the runtime in —
+        // treat that as "unknown" rather than a zero-length film.
+        tmdbRuntime = details.runtime ? details.runtime : null
       }
     }
 
@@ -244,11 +285,17 @@ export async function validateMovies(
     const moviePath =
       firstCategory && firstCategory !== 'default' ? `${firstCategory}/${movieLabel}` : movieLabel
 
+    // The displayed path names only the first category, but a movie can sit in
+    // several. Give the ignore matcher all of them so a `folders:` entry isn't
+    // at the mercy of which category happened to sort first.
+    const movieScope = { categories: categoriesOf(movie.versions), levels: [movieLabel] }
+
     if (resolved.confidence === 'none' && rules.checks.warn_tmdb_no_match) {
       warnings.add(
         'warn_tmdb_no_match',
         moviePath,
-        `TMDB found no match for '${movie.title}' (${movie.year}). Possible typo in title or year, or this movie isn't in TMDB.`
+        `TMDB found no match for '${movie.title}' (${movie.year}). Possible typo in title or year, or this movie isn't in TMDB.`,
+        { scope: movieScope }
       )
     } else if (resolved.confidence === 'low' && rules.checks.warn_tmdb_low_confidence) {
       const altText =
@@ -258,7 +305,8 @@ export async function validateMovies(
       warnings.add(
         'warn_tmdb_low_confidence',
         moviePath,
-        `TMDB low-confidence match: best guess is '${entry.tmdb_title}' (${entry.tmdb_year}).${altText} Review and confirm.`
+        `TMDB low-confidence match: best guess is '${entry.tmdb_title}' (${entry.tmdb_year}).${altText} Review and confirm.`,
+        { scope: movieScope }
       )
     } else if (
       rules.checks.warn_tmdb_year_mismatch &&
@@ -268,7 +316,8 @@ export async function validateMovies(
       warnings.add(
         'warn_tmdb_year_mismatch',
         moviePath,
-        `TMDB year mismatch: folder says ${movie.year} but TMDB says '${entry.tmdb_title}' was released in ${entry.tmdb_year}. Verify which is correct.`
+        `TMDB year mismatch: folder says ${movie.year} but TMDB says '${entry.tmdb_title}' was released in ${entry.tmdb_year}. Verify which is correct.`,
+        { scope: movieScope }
       )
     }
 
@@ -282,8 +331,41 @@ export async function validateMovies(
       warnings.add(
         'warn_tmdb_title_canonical',
         moviePath,
-        `TMDB canonical title differs: folder is '${movie.title}', TMDB filename-safe form is '${entry.tmdb_title_filename_safe}'. Consider renaming the folder to match.`
+        `TMDB canonical title differs: folder is '${movie.title}', TMDB filename-safe form is '${entry.tmdb_title_filename_safe}'. Consider renaming the folder to match.`,
+        { scope: movieScope }
       )
+    }
+
+    // Runtime cross-check — the precise counterpart to warn_short_duration.
+    // Per-file rather than per-movie: one version of a movie can be truncated
+    // while its other versions are fine.
+    if (
+      rules.checks.warn_tmdb_runtime_mismatch &&
+      rules.runtime_tolerance_percent > 0 &&
+      tmdbRuntime !== null
+    ) {
+      const tolerance = rules.runtime_tolerance_percent / 100
+      const files = durations?.get(movieDurationKey(movie.title, movie.year, movie.edition)) ?? []
+      for (const file of files) {
+        const localMinutes = file.duration_seconds / 60
+        const drift = Math.abs(localMinutes - tmdbRuntime) / tmdbRuntime
+        if (drift <= tolerance) continue
+        const direction = localMinutes < tmdbRuntime ? 'shorter' : 'longer'
+        const advice =
+          direction === 'shorter'
+            ? `Usually a truncated or failed encode — play the file to the end and re-encode from source if it's cut short.`
+            : `Usually a wrongly-matched film, two features concatenated into one file, or an extended cut TMDB doesn't carry.`
+        warnings.add(
+          'warn_tmdb_runtime_mismatch',
+          file.path,
+          `TMDB runtime mismatch — file is ${formatMinutes(localMinutes)} but TMDB says ` +
+            `'${entry.tmdb_title}' runs ${formatMinutes(tmdbRuntime)} ` +
+            `(${Math.round(drift * 100)}% ${direction}, tolerance is ${rules.runtime_tolerance_percent}%). ` +
+            `${advice} If the difference is intentional, silence it in ignored/<drive>/movies.yaml ` +
+            `under 'files:' (note that silences the file's other warnings too), or turn the ` +
+            `check off entirely with checks.warn_tmdb_runtime_mismatch: false`
+        )
+      }
     }
 
     out.push(entry)

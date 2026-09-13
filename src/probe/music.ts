@@ -83,6 +83,26 @@ function albumWarningPath(mediaType: string[], artist: string, album: string): s
 }
 
 /**
+ * The ignore-list scope for an album-level finding.
+ *
+ * `albumWarningPath` can only display ONE category, but an album may sit in
+ * several; handing the matcher all of them keeps a `folders:` entry from
+ * depending on which one happened to come first. The levels are spelled out
+ * rather than derived because the displayed path drops the category entirely
+ * in a flat library, which would shift every level by one.
+ */
+function albumWarningScope(
+  mediaType: string[],
+  artist: string,
+  album: string
+): { categories: string[]; levels: string[] } {
+  return {
+    categories: [...new Set(mediaType)].filter(c => c !== 'default'),
+    levels: [artist, album],
+  }
+}
+
+/**
  * Pull the codec name (e.g. "FLAC", "MP3", "AAC") out of an
  * `audio_quality_summary` entry like "FLAC 16/44.1" or "MP3 ~288".
  * Entries always start with the codec followed by a space, so the first
@@ -313,7 +333,8 @@ export async function probeMusic(
           albumWarningPath(album.media_type, artist.artist, album.album),
           `Album has inconsistent audio quality across tracks: ${album.audio_quality_summary.join(', ')}. ` +
             `Usually means a mid-album re-encode or files added at different bitrates. ` +
-            `Re-encode the outliers to match the album's primary quality.`
+            `Re-encode the outliers to match the album's primary quality.`,
+          { scope: albumWarningScope(album.media_type, artist.artist, album.album) }
         )
       }
     }
@@ -340,9 +361,10 @@ export async function probeMusic(
           albumWarningPath(album.media_type, artist.artist, album.album),
           `${mono} of ${totalWithAudio} track(s) in this album are mono (single audio channel). ` +
             `Most music since the late 1950s is stereo — mono usually indicates a bad rip or a ` +
-            `downloaded preview. Re-rip from a stereo source, or silence this album via ` +
-            `ignored/music.yaml with types: [warn_mono_audio] if the mono is intentional ` +
-            `(pre-stereo recording, mono master).`
+            `downloaded preview. Re-rip from a stereo source, or — if the mono is intentional ` +
+            `(pre-stereo recording, mono master) — list the album under 'albums:' in ` +
+            `ignored/<drive>/music.yaml, which silences its other warnings too.`,
+          { scope: albumWarningScope(album.media_type, artist.artist, album.album) }
         )
       }
     }
@@ -420,6 +442,9 @@ function analyzeTags(
   for (const artist of aggregated) {
     for (const album of artist.albums) {
       const albumPath = albumWarningPath(album.media_type, artist.artist, album.album)
+      const albumOpts = {
+        scope: albumWarningScope(album.media_type, artist.artist, album.album),
+      }
 
       // Collect distinct album_artist values (fall back to artist when
       // album_artist is missing — many older rips only set artist).
@@ -475,7 +500,8 @@ function analyzeTags(
           `Album has tracks by ${albumArtistSet.size} distinct artists (per AlbumArtist tag: ${sample}${more}) ` +
             `but isn't in a 'Various Artists' folder. ` +
             `Recommended fix: move this album to '<category>/Various Artists/${album.album}/' and ensure ` +
-            `each track's AlbumArtist tag is set to 'Various Artists' (per-track Artist tag stays the actual performer).`
+            `each track's AlbumArtist tag is set to 'Various Artists' (per-track Artist tag stays the actual performer).`,
+          albumOpts
         )
       }
 
@@ -491,14 +517,16 @@ function analyzeTags(
             albumPath,
             `Folder/tag mismatch: artist folder is '${artist.artist}' but AlbumArtist tag is '${tagValue}'. ` +
               `Recommended fix: rename folder to '${suggestedFolderName(tagValue)}' (or update the tag if the folder is correct). ` +
-              `Without this, Plex may catalog the album under one name while users browse under the other.`
+              `Without this, Plex may catalog the album under one name while users browse under the other.`,
+            albumOpts
           )
         } else if (comparison === 'case-only' && rules.checks.warn_folder_tag_case) {
           warnings.add(
             'warn_folder_tag_case',
             albumPath,
             `Folder/tag capitalization differs: artist folder is '${artist.artist}' but AlbumArtist tag is '${tagValue}'. ` +
-              `Only the capitalization differs. Make them agree so Plex and your filesystem present the artist identically.`
+              `Only the capitalization differs. Make them agree so Plex and your filesystem present the artist identically.`,
+            albumOpts
           )
         }
       }
@@ -512,14 +540,16 @@ function analyzeTags(
             'warn_folder_tag_mismatch',
             albumPath,
             `Folder/tag mismatch: album folder is '${album.album}' but Album tag is '${tagValue}'. ` +
-              `Recommended fix: rename folder to '${suggestedFolderName(tagValue)}' or update the tag.`
+              `Recommended fix: rename folder to '${suggestedFolderName(tagValue)}' or update the tag.`,
+            albumOpts
           )
         } else if (comparison === 'case-only' && rules.checks.warn_folder_tag_case) {
           warnings.add(
             'warn_folder_tag_case',
             albumPath,
             `Folder/tag capitalization differs: album folder is '${album.album}' but Album tag is '${tagValue}'. ` +
-              `Only the capitalization differs. Make them agree so Plex and your filesystem present the album identically.`
+              `Only the capitalization differs. Make them agree so Plex and your filesystem present the album identically.`,
+            albumOpts
           )
         }
       }
@@ -536,7 +566,8 @@ function analyzeTags(
           albumPath,
           `${missingTagsTracks.length} track(s) missing required tags (title, album, or artist/album_artist). ` +
             `Affected: ${sample}${more}. ` +
-            `Plex will fall back to filename parsing for these tracks. Tag them properly for cleaner library metadata.`
+            `Plex will fall back to filename parsing for these tracks. Tag them properly for cleaner library metadata.`,
+          albumOpts
         )
       }
 
@@ -553,7 +584,8 @@ function analyzeTags(
           albumPath,
           `${trackNumberMismatches.length} track(s) with track-number mismatch between filename and tag. ` +
             `${sample}${more}. ` +
-            `Usually an accidental rename — verify the tag is right, then rename the file.`
+            `Usually an accidental rename — verify the tag is right, then rename the file.`,
+          albumOpts
         )
       }
     }

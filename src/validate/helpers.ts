@@ -96,3 +96,19 @@ export function parseYear(date: string | undefined): number | null {
   const n = parseInt(date.slice(0, 4), 10)
   return Number.isFinite(n) ? n : null
 }
+
+/**
+ * Every real category a versions list touches, for the `categories` half of a
+ * `WarningScope`.
+ *
+ * The validate warnings display only the FIRST category (the path has to be
+ * one clickable string), but an item can legitimately span several. Handing
+ * the ignore matcher all of them keeps a `folders:` entry from depending on
+ * which category happened to sort first.
+ *
+ * 'default' is the sentinel `resolveCategories` uses for a library with no
+ * category subfolders; it names no real folder, so it's dropped.
+ */
+export function categoriesOf(versions: { category: string }[]): string[] {
+  return [...new Set(versions.map(v => v.category))].filter(c => c !== 'default')
+}

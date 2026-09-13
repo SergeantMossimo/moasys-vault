@@ -4,6 +4,7 @@ import { createMoviesModule } from '../../../src/media/movies'
 import { defaultMoviesRules, MoviesRules } from '../../../src/core/rules/movies'
 import { scan } from '../../../src/core/scanner'
 import { WarningCollector } from '../../../src/core/types'
+import { parseIgnoreList } from '../../../src/core/ignored'
 import {
   buildLibrary,
   cleanupLibrary,
@@ -20,6 +21,8 @@ function runMoviesScan(opts: {
   spec: DirSpec
   rules?: Partial<MoviesRules>
   probes?: Record<string, ReturnType<typeof fakeProbe>>
+  /** Level-keyed ignore file contents, as `ignored/<drive>/movies.yaml` parses. */
+  ignored?: Record<string, string[]>
 }) {
   const rules: MoviesRules = {
     ...defaultMoviesRules,
@@ -35,7 +38,7 @@ function runMoviesScan(opts: {
   // Silence scan()'s [SKIP] logs for missing category folders.
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
   const module = createMoviesModule(rules)
-  const warnings = new WarningCollector()
+  const warnings = new WarningCollector(parseIgnoreList(opts.ignored ?? {}, 'movies', 'test.yaml'))
   const probes = probeMap(opts.probes ?? {})
 
   try {
@@ -246,6 +249,35 @@ describe('movies module — warnings', () => {
       },
     })
     expect(result.warnings.some(w => w.issue.match(/Duplicate edition/))).toBe(true)
+  })
+
+  it('warn_multi_quality: a `movies:` entry silences it despite the path having no category', () => {
+    // The check emits a bare display name (`X (2000)`), so the old
+    // path-prefix matcher could not be reached by any category-prefixed
+    // entry — every entry in the real movies ignore file was one.
+    const result = runMoviesScan({
+      spec: {
+        UHD: { 'X (2000)': { 'X (2000).mp4': '' } },
+        SD: { 'X (2000)': { 'X (2000).mp4': '' } },
+      },
+      rules: { acceptable_quality_combos: [['UHD', 'HD']] },
+      ignored: { movies: ['X (2000)'] },
+    })
+    expect(result.warnings.some(w => w.type === 'warn_multi_quality')).toBe(false)
+  })
+
+  it('warn_multi_quality: an edition entry does not silence the plain movie', () => {
+    // Matching is exact, so `X (2000)` and `X (2000) {edition-Director's Cut}`
+    // stay separate — they are separate folders on disk.
+    const result = runMoviesScan({
+      spec: {
+        UHD: { 'X (2000)': { 'X (2000).mp4': '' } },
+        SD: { 'X (2000)': { 'X (2000).mp4': '' } },
+      },
+      rules: { acceptable_quality_combos: [['UHD', 'HD']] },
+      ignored: { movies: ["X (2000) {edition-Director's Cut}"] },
+    })
+    expect(result.warnings.some(w => w.type === 'warn_multi_quality')).toBe(true)
   })
 
   it('warn_multi_quality: same movie in two quality buckets not in acceptable_quality_combos', () => {

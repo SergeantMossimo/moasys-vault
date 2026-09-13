@@ -33,9 +33,10 @@ import {
   ShowOutput,
   WarningCollector,
 } from '../core/types'
+import type { MovieProbeOutput } from '../probe/types'
 import { driveSlug, loadConfig } from '../core/config'
 import { loadRules } from '../core/rules/loader'
-import { loadIgnoredPaths } from '../core/ignored'
+import { loadIgnoreList } from '../core/ignored'
 import {
   parseRunnerArgs,
   resolveRoot,
@@ -50,7 +51,7 @@ import { ShowsRulesSchema, defaultShowsRules } from '../core/rules/shows'
 import { loadSecrets } from './secrets'
 import { JsonCache } from './cache'
 import { TmdbClient } from './tmdb'
-import { validateMovies } from './movies'
+import { validateMovies, movieDurationKey, type MovieDurations } from './movies'
 import { validateShows } from './shows'
 import {
   ResolvedSearch,
@@ -83,8 +84,13 @@ const CONFIG: AppConfig = loadConfig(SCRIPT_DIR)
  * validation depends on it (we don't re-scan inside the validator), and the
  * fix is to run the scan for that same drive first.
  */
-function readScan<T>(slug: string, mediaType: 'movies' | 'shows', driveName: string): T[] {
-  const p = path.join(OUTPUT_DIR, slug, mediaType, `${mediaType}.json`)
+function readScan<T>(
+  slug: string,
+  mediaType: 'movies' | 'shows',
+  driveName: string,
+  fileName = `${mediaType}.json`
+): T[] {
+  const p = path.join(OUTPUT_DIR, slug, mediaType, fileName)
   if (!fs.existsSync(p)) {
     console.error(`\n  Error: ${p} not found.`)
     console.error(
@@ -93,6 +99,24 @@ function readScan<T>(slug: string, mediaType: 'movies' | 'shows', driveName: str
     process.exit(1)
   }
   return JSON.parse(fs.readFileSync(p, 'utf-8')) as T[]
+}
+
+/**
+ * Build the movie→measured-runtime map that `warn_tmdb_runtime_mismatch`
+ * compares against, from the same probe.json the scan pass wrote.
+ */
+function readMovieDurations(slug: string, driveName: string): MovieDurations {
+  const probed = readScan<MovieProbeOutput>(slug, 'movies', driveName, 'probe.json')
+  const map: MovieDurations = new Map()
+  for (const movie of probed) {
+    const files = movie.files
+      .filter(f => f.duration_seconds !== null)
+      .map(f => ({ path: f.path, duration_seconds: f.duration_seconds as number }))
+    if (files.length > 0) {
+      map.set(movieDurationKey(movie.title, movie.year, movie.edition), files)
+    }
+  }
+  return map
 }
 
 // ─────────────────────────────────────────────
@@ -123,6 +147,16 @@ async function runMovies(
   const movies = readScan<MovieOutput>(slug, 'movies', root.name)
   console.log(`    [INPUT] ${movies.length} movies from output/${slug}/movies/movies.json`)
 
+  // Measured runtimes for warn_tmdb_runtime_mismatch. Only read when the
+  // check is on, so a user who disabled it isn't forced to keep probe.json.
+  const wantRuntimes =
+    rules.checks.warn_tmdb_runtime_mismatch && rules.runtime_tolerance_percent > 0
+  const durations = wantRuntimes ? readMovieDurations(slug, root.name) : undefined
+  if (durations) {
+    const fileCount = [...durations.values()].reduce((n, f) => n + f.length, 0)
+    console.log(`    [INPUT] ${fileCount} measured runtimes from output/${slug}/movies/probe.json`)
+  }
+
   const searchCache = new JsonCache<ResolvedSearch>(
     path.join(CACHE_DIR, 'tmdb-search.json'),
     SEARCH_CACHE_VERSION
@@ -141,7 +175,10 @@ async function runMovies(
     `    [CACHE] ${searchCache.size()} search entries, ${detailsCache.size()} movie-details entries${prunedSummary}`
   )
 
-  const warnings = new WarningCollector(loadIgnoredPaths(SCRIPT_DIR, slug, 'movies'))
+  const warnings = new WarningCollector(
+    loadIgnoreList(SCRIPT_DIR, slug, 'movies'),
+    rules.categories.length > 0
+  )
 
   const data = await validateMovies(
     movies,
@@ -150,6 +187,7 @@ async function runMovies(
     searchCache,
     detailsCache,
     warnings,
+    durations,
     (done, total, cached) => {
       if (done === total || done % 50 === 0) {
         console.log(`    [TMDB] ${done}/${total} (${cached} cached)`)
@@ -227,7 +265,10 @@ async function runShows(
     `    [CACHE] ${searchCache.size()} search entries, ${detailsCache.size()} show-details entries, ${seasonsCache.size()} season-details entries${prunedSummary}`
   )
 
-  const warnings = new WarningCollector(loadIgnoredPaths(SCRIPT_DIR, slug, 'shows'))
+  const warnings = new WarningCollector(
+    loadIgnoreList(SCRIPT_DIR, slug, 'shows'),
+    rules.categories.length > 0
+  )
 
   const data = await validateShows(
     shows,

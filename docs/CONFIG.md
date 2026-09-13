@@ -376,6 +376,52 @@ quality_thresholds:
 
 ---
 
+### `min_duration_minutes`
+
+**Applies to:** movies only.
+
+**What it is:** A runtime floor in minutes. Any movie file whose ffprobe duration is at or below it gets flagged. The target is a truncated or failed encode — a 4-minute file where a 2-hour film should be. Set to `0` to disable the check entirely.
+
+**Why you'd change it:** Lower it if you keep a lot of legitimate short content and only care about catastrophic truncation; raise it if your library is all feature films.
+
+**Related warnings:** `warn_short_duration`.
+
+**Expect legitimate hits.** Short films, animated TV specials, and stand-up sets are genuinely under 30 minutes, so this is a review list rather than an error list. Silence the ones you've checked per-path in `ignored/<drive>/movies.yaml`, scoped to the one warning type so the film's naming and TMDB warnings stay visible:
+
+```yaml
+- path: HD/Luxo Jr. (1986)
+  types:
+    - warn_short_duration
+```
+
+**Example:**
+
+```yaml
+min_duration_minutes: 30
+```
+
+---
+
+### `runtime_tolerance_percent`
+
+**Applies to:** movies only. **Runs in the validate pass**, so it needs a TMDB match to compare against.
+
+**What it is:** How far a file's measured runtime may drift from TMDB's before it's flagged, as a percentage of TMDB's runtime. Symmetric — `50` flags anything under half or over one-and-a-half times TMDB's figure. Set to `0` to disable.
+
+**Why you'd change it:** Lower it to catch subtler drift (a missing reel, a cut-short recording); raise it if you keep a lot of extended cuts TMDB doesn't carry.
+
+**Related warnings:** `warn_tmdb_runtime_mismatch`.
+
+This is the precise counterpart to [`min_duration_minutes`](#min_duration_minutes). A genuine 2-minute short matches TMDB's 2-minute runtime and stays silent, while a feature truncated to 5 minutes is caught regardless of how long it is. The over-length side catches a class of error that title + year scoring cannot see at all: a short film sharing a feature's exact title and year scores `high` confidence, and only the runtime gives it away.
+
+**Example:**
+
+```yaml
+runtime_tolerance_percent: 50
+```
+
+---
+
 ### `acceptable_quality_combos`
 
 **Applies to:** movies + shows. **Only useful if your `categories` are organized by quality** (see [shape A above](#a-quality-organized-categories-eg-movies--shows-by-uhdhdsd)). If you don't use quality categories, this setting does nothing.
@@ -405,7 +451,7 @@ acceptable_quality_combos:
 
 **Why you'd change it:** You intentionally keep mixed-codec albums (e.g. a FLAC rip kept alongside a couple of MP3 promo tracks). The default is empty — every codec mix is flagged.
 
-**Related warnings:** `warn_quality_inconsistent` — silenced for the codec-mix case when the album's codec set matches a combo listed here. The bitrate-spread case is never silenced by this setting; use `ignored/music.yaml` to silence specific albums.
+**Related warnings:** `warn_quality_inconsistent` — silenced for the codec-mix case when the album's codec set matches a combo listed here. The bitrate-spread case is never silenced by this setting; list specific albums under `albums:` in `ignored/<drive>/music.yaml` instead (note that silences their other warnings too).
 
 **Example:**
 
@@ -489,7 +535,7 @@ The defaults live in code at `src/core/rules/<type>.ts` alongside the schema, so
 
 ## `ignored/<drive>/<type>.yaml` — silencing specific warnings
 
-For warnings you can't or don't want to fix (an incomplete season that never aired, a folder name you've decided not to change, a known false positive), drop an ignore file under that drive's folder. Any warning whose `path` matches an entry is silently dropped from `warnings.json` and counted in the run summary.
+For warnings you can't or don't want to fix (an incomplete season that never aired, a folder name you've decided not to change, a known false positive), drop an ignore file under that drive's folder. Matching warnings are silently dropped from `warnings.json` and `validation-warnings.json`, and counted in the run summary.
 
 Ignore lists are **per drive** as well as per type, because warning paths are relative to that drive's `root_path` — the same relative path can mean different files on different drives.
 
@@ -510,33 +556,62 @@ ignored/
 
 Each `.yaml.example` at the top level ships with commented usage patterns. To use: copy it to `ignored/<drive>/<type>.yaml` (lowercase drive name, drop the `.example` suffix) and uncomment / edit the entries you need. A drive with nothing to silence needs no file — and no folder — at all.
 
-### Two entry shapes
-
-Each entry can be either a bare **string** (path prefix that silences every warning) or an **object** with a path prefix plus a list of warning types to silence:
+### Entries are bare names, grouped by level
 
 ```yaml
-# ignored/shows.yaml — gitignored, per-user
-
-# Path-only: silences EVERY warning under this path.
-- HD/Channel 4 Catchup (2024)
-- HD/Some Show (2020)/Season 2
-
-# Type-scoped: silences only the listed warning types under this path.
-# Other warnings on the same path stay visible.
-- path: UHD/Star Trek Enterprise (2001)/Season 4
-  types:
-    - warn_episode_gaps
-    - warn_tmdb_episode_count
+# ignored/server/shows.yaml — gitignored, per-user
+folders:
+  - Other HD
+shows:
+  - Firefly (2002)
+seasons:
+  - Comedy Central Presents (1998)/Season 3
+episodes:
+  - My Name Is Earl (2005)/S03E01
 ```
 
-Each warning type is the bucket key under `by_type` in `warnings.json` and matches the corresponding toggle name in `rules/<type>.yaml` under `checks` — so you can copy-paste from one to the other.
+Each media type has its own set of level keys, outermost first:
+
+| Type       | Level 0   | Level 1   | Level 2   | Level 3    |
+| ---------- | --------- | --------- | --------- | ---------- |
+| Movies     | `folders` | `movies`  | `files`   | —          |
+| Shows      | `folders` | `shows`   | `seasons` | `episodes` |
+| Music      | `folders` | `artists` | `albums`  | `songs`    |
+| Audiobooks | `folders` | `authors` | `books`   | `chapters` |
+
+A key from the wrong type (`episodes:` in `movies.yaml`) is a load-time error rather than a list that silently silences nothing.
+
+### Names are category-independent
+
+A name is matched at its own level, **not** as a path from the root — so `shows: Firefly (2002)` silences that show whether it lives in `HD/`, `Other SD/`, or both, and keeps working if you move it between categories later.
+
+That's also what makes the cross-category checks reachable. `warn_multi_quality`, `warn_duplicate_quality`, `warn_duplicate_album` and `warn_duplicate_book` report a display label with no category in it (`Firefly (2002) — Season 1`), so no path-based entry could ever match them. A level-keyed entry can.
+
+### Qualifiers
+
+The deepest level (`files`, `episodes`, `songs`, `chapters`) and `seasons` must name a parent — a bare `09 - Chapter 9.mp3` or `Season 01` would match in every book or show in the library, so the loader rejects it. `albums` and `books` accept either form; qualify them when the name isn't distinctive on its own.
+
+A `/` in an entry means **"somewhere above"**, not "immediately above", so intermediate levels can be skipped:
+
+```yaml
+episodes:
+  - My Name Is Earl (2005)/S03E01 # show → episode, skipping the season
+songs:
+  - Pink Floyd/01 - In the Flesh.flac # artist → song, skipping the album
+```
+
+### Scope
+
+An entry silences **every** warning at or below its level — there is no per-warning-type scoping. To silence a whole warning type instead, set `checks.warn_*: false` in `rules/<type>.yaml`. The two are complementary: the ignore list is per item, `checks` is per check.
+
+An entry never reaches a warning shallower than itself — a `seasons:` entry can't silence a show-level warning like `warn_bad_show_folder`.
 
 ### Matching rules
 
-- **Prefix-based**: an entry like `Show (2020)` silences `Show (2020)` itself plus everything under it (`Show (2020)/Season 1`, `Show (2020)/Season 1/file.mp4`).
-- **Path-boundary respected**: `Show` does _not_ silence `Show 2 (2020)` — the prefix has to be followed by `/` or be an exact match.
-- **Case-insensitive + separator-normalized**: `Show` matches both `Show/...` and `show\...`, so the same file works on Windows and macOS/Linux.
-- **Type-scoped entries** silence a warning only when the warning's `type` is in the entry's `types` list. Path-only entries silence every type.
+- **Exact per level**, not a prefix: `Firefly (2002)` does not match `Firefly Serenity (2005)`.
+- **Case-insensitive and separator-normalized**: either slash works, so the same file is correct on Windows and macOS/Linux.
+- **Shows fold `Season 3` and `Season 03` onto one entry.** The scan pass reports the on-disk folder name; the TMDB pass reports the parsed season number.
+- **Shows treat an episode's filename and its `S03E01` code as the same episode.** Write an `episodes:` entry either way and it covers the scan pass's file warnings and the TMDB pass's episode-title warning alike.
 
 The `<type>.yaml` files are **gitignored** since they encode per-library decisions that don't belong in the shared repo. Missing or comments-only files are treated as "no ignores."
 

@@ -35,7 +35,7 @@ import {
   resolveCategories,
   sortQualities,
 } from '../core/rules/helpers'
-import { finalizeVersions, groupCategoriesByQuality } from '../core/versions'
+import { distinctCategories, finalizeVersions, groupCategoriesByQuality } from '../core/versions'
 import { ProbeData } from '../probe/types'
 import { deriveQuality } from '../probe/helpers'
 
@@ -453,9 +453,16 @@ export function createMoviesModule(
               movieDisplayName(record),
               `Duplicate ${quality} copies in ${cats.length} folders: ${cats.join(', ')} — ` +
                 `keep one and delete the rest`,
-              // Group the bucket by quality (UHD, then HD, then SD) rather
-              // than by title, so the worst offenders read together.
-              { sortKey: qualitySortKey(quality) }
+              {
+                // Group the bucket by quality (UHD, then HD, then SD) rather
+                // than by title, so the worst offenders read together.
+                sortKey: qualitySortKey(quality),
+                // The path here is a display label, not a library path — this
+                // check spans categories by definition, so there's no single
+                // one to anchor to. Spell the scope out or no ignore entry
+                // could ever reach it.
+                scope: { categories: cats, levels: [movieDisplayName(record)] },
+              }
             )
           }
         }
@@ -469,7 +476,14 @@ export function createMoviesModule(
             warnings.add(
               'warn_multi_quality',
               movieDisplayName(record),
-              `Movie exists in multiple qualities: ${sortQualities(qualities).join(', ')}`
+              `Movie exists in multiple qualities: ${sortQualities(qualities).join(', ')}`,
+              // Display label, not a library path — see warn_duplicate_quality.
+              {
+                scope: {
+                  categories: distinctCategories(record.versions),
+                  levels: [movieDisplayName(record)],
+                },
+              }
             )
           }
         }

@@ -4,6 +4,7 @@ import { createShowsModule } from '../../../src/media/shows'
 import { defaultShowsRules, ShowsRules } from '../../../src/core/rules/shows'
 import { scan } from '../../../src/core/scanner'
 import { WarningCollector } from '../../../src/core/types'
+import { parseIgnoreList } from '../../../src/core/ignored'
 import {
   buildLibrary,
   cleanupLibrary,
@@ -16,6 +17,8 @@ function runShowsScan(opts: {
   spec: DirSpec
   rules?: Partial<ShowsRules>
   probes?: Record<string, ReturnType<typeof fakeProbe>>
+  /** Level-keyed ignore file contents, as `ignored/<drive>/shows.yaml` parses. */
+  ignored?: Record<string, string[]>
 }) {
   const rules: ShowsRules = {
     ...defaultShowsRules,
@@ -30,7 +33,7 @@ function runShowsScan(opts: {
   const root = buildLibrary(opts.spec, 'moasys-shows-')
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
   const module = createShowsModule(rules)
-  const warnings = new WarningCollector()
+  const warnings = new WarningCollector(parseIgnoreList(opts.ignored ?? {}, 'shows', 'test.yaml'))
   const probes = probeMap(opts.probes ?? {})
 
   try {
@@ -436,6 +439,68 @@ describe('shows module — warnings', () => {
       },
     })
     expect(result.warnings.some(w => w.issue.match(/Unexpected file/))).toBe(false)
+  })
+})
+
+describe('shows module — ignore list reaches the cross-category checks', () => {
+  /** A season present in both HD and SD, which trips warn_multi_quality. */
+  const multiQualitySpec: DirSpec = {
+    HD: { 'Show (2020)': { 'Season 01': { 'Show (2020) - S01E01.mp4': '' } } },
+    SD: { 'Show (2020)': { 'Season 01': { 'Show (2020) - S01E01.mp4': '' } } },
+  }
+  const noHdSdCombo = { acceptable_quality_combos: [['UHD', 'HD']] }
+
+  it('a `shows:` entry silences warn_multi_quality', () => {
+    // This is what the level-keyed format exists for. The check emits
+    // `Show (2020) — Season 1` — no category, em-dash separated — which the
+    // old path-prefix matcher could never reach from any entry.
+    const result = runShowsScan({
+      spec: multiQualitySpec,
+      rules: noHdSdCombo,
+      ignored: { shows: ['Show (2020)'] },
+    })
+    expect(result.warnings.some(w => w.type === 'warn_multi_quality')).toBe(false)
+  })
+
+  it('a `seasons:` entry silences it too, via the Season 1 / Season 01 fold', () => {
+    // The check labels the season `Season 1` from the parsed number while the
+    // folder on disk is `Season 01`. One entry has to cover both.
+    const result = runShowsScan({
+      spec: multiQualitySpec,
+      rules: noHdSdCombo,
+      ignored: { seasons: ['Show (2020)/Season 01'] },
+    })
+    expect(result.warnings.some(w => w.type === 'warn_multi_quality')).toBe(false)
+  })
+
+  it('a `folders:` entry reaches it despite the path carrying no category', () => {
+    const result = runShowsScan({
+      spec: multiQualitySpec,
+      rules: noHdSdCombo,
+      ignored: { folders: ['SD'] },
+    })
+    expect(result.warnings.some(w => w.type === 'warn_multi_quality')).toBe(false)
+  })
+
+  it('leaves a different show alone', () => {
+    const result = runShowsScan({
+      spec: multiQualitySpec,
+      rules: noHdSdCombo,
+      ignored: { shows: ['Other Show (2020)'] },
+    })
+    expect(result.warnings.some(w => w.type === 'warn_multi_quality')).toBe(true)
+  })
+
+  it('an `episodes:` entry written as a code silences a warning on the file', () => {
+    // The scan pass warns about the filename; the TMDB pass warns about the
+    // S01E01 code. One entry covers both.
+    const result = runShowsScan({
+      spec: {
+        HD: { 'Show (2020)': { 'Season 01': { 'Show (2020) - S01E01 - Bad Name!.mkv': '' } } },
+      },
+      ignored: { episodes: ['Show (2020)/S01E01'] },
+    })
+    expect(result.warnings.filter(w => w.path.includes('S01E01'))).toHaveLength(0)
   })
 })
 

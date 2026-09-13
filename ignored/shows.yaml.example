@@ -2,75 +2,93 @@
 # MOASYS-Vault — Shows ignore list (EXAMPLE)
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# A "do not warn me about this" list for your shows library. Anything you put
-# here gets silently dropped from output/<drive>/shows/warnings.json on every
-# run.
+# A "do not warn me about this" list for your shows library. Anything listed
+# here is silently dropped from output/<drive>/shows/warnings.json and
+# validation-warnings.json on every run, and counted in the run summary.
 #
-# Ignore lists are per DRIVE as well as per type, because the paths below are
-# relative to that drive's root_path. `<drive>` is the lowercased `name` of a
-# root in config.json — e.g. `server`, `external`.
+# Ignore lists are per DRIVE as well as per type, because warning paths are
+# relative to that drive's root_path. `ignored/server/shows.yaml` only affects
+# runs against the root named "Server".
 #
 # How to use this file:
-#   1. Copy this file to `ignored/<drive>/shows.yaml` (create the drive
-#      folder, drop the `.example` suffix). The real per-drive files are
-#      gitignored so your personal decisions don't end up in version control.
-#   2. Add path prefixes below — one per line.
-#   3. Re-run `npm run shows <drive>`. Matching warnings disappear from the
-#      output.
+#   1. Copy it to `ignored/<drive>/shows.yaml` (drop the `.example` suffix).
+#      The real file is gitignored so your personal decisions stay out of
+#      version control.
+#   2. Add names under the level they belong to.
+#   3. Re-run `npm run shows <drive>`. Matching warnings disappear.
 #
-# Two entry shapes — pick whichever fits each case:
+# ── Levels ───────────────────────────────────────────────────────────────────
 #
-#   # 1. Path-only (a bare string) — silences EVERY warning under this path.
-#   - HD/Some Show (2020)/Season 2
+#   folders    a category folder   - Other HD
+#   shows      one show            - Firefly (2002)
+#   seasons    one season          - Band of Brothers (2001)/Specials
+#   episodes   one episode         - My Name Is Earl (2005)/S03E01
 #
-#   # 2. Type-scoped (an object) — silences only the listed warning types
-#   #    under this path. Other warnings on the same path stay visible.
-#   - path: HD/Some Show (2020)/Season 2
-#     types:
-#       - warn_episode_gaps
-#       - warn_tmdb_episode_count
+# Names are matched at their own level and are CATEGORY-INDEPENDENT: a show
+# listed here is silenced whether it lives in HD/, Other SD/, or both. That is
+# also what lets an entry reach warn_multi_quality and warn_duplicate_quality,
+# which report `Show (YEAR) — Season N` with no category to anchor to.
 #
-# Matching is case-insensitive and forward-slash-normalized, so the same
-# file works on Windows (backslashes) and macOS/Linux (forward slashes).
+# ── Two conveniences specific to shows ───────────────────────────────────────
 #
-# Get the paths to add from output/<drive>/shows/warnings.json and
-# output/<drive>/shows/validation-warnings.json — paths live under each `by_type`
-# bucket. The bucket key (e.g. `warn_episode_gaps`) is the warning type;
-# you can also find every type listed in rules/shows.yaml under `checks`.
+#   - `Season 3` and `Season 03` are the same entry. The scan pass reports the
+#     on-disk folder name; the TMDB pass reports the parsed season number. One
+#     entry covers both.
+#   - An `episodes:` entry may be written as the S03E01 code OR as the full
+#     filename. Either form silences both the scan pass's warnings about that
+#     file and the TMDB pass's episode-title warning about that code.
+#
+# ── Qualifiers ───────────────────────────────────────────────────────────────
+#
+# `seasons:` and `episodes:` entries must name their show — a bare `Season 01`
+# or episode filename would match in every show in the library. A `/` means
+# "somewhere above", not "immediately above", so `Show (2020)/S03E01` is fine
+# even though a season sits between them.
+#
+# ── Scope ────────────────────────────────────────────────────────────────────
+#
+# An entry silences EVERY warning at or below its level — episode gaps, TMDB
+# counts, naming, quality, all of them. There is no per-warning-type scoping.
+# To turn off a whole warning type instead, set `checks.warn_*: false` in
+# rules/shows.yaml.
+#
+# ── Matching ─────────────────────────────────────────────────────────────────
+#
+# Exact per level (not a prefix, so `Firefly (2002)` does not match
+# `Firefly Serenity (2005)`), case-insensitive, and either slash works.
+#
+# ── Finding names ────────────────────────────────────────────────────────────
+#
+# Take them from the `path` values in output/<drive>/shows/warnings.json and
+# validation-warnings.json, dropping the leading category folder.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+# Silence everything under a category folder
+# folders:
+#   - Other HD
+#   - Other SD
+
+
 # Silence a whole show you can't fix
-# (Use this when a show has known missing episodes — never released on disc,
-# culled by the rights holder, etc. — and you don't want to see
-# warn_episode_gaps / warn_tmdb_episode_count noise every run.)
-# - HD/Channel 4 Catchup (2024)
-# - HD/Some Reality Show (2020)
+# (Use this when a show has known missing episodes — never released, culled by
+# the rights holder — and you don't want warn_episode_gaps /
+# warn_tmdb_episode_count noise on every run.)
+# shows:
+#   - Channel 4 Catchup (2024)
+#   - Firefly (2002)
 
 
 # Silence one season
-# (The rest of the show's warnings stay live, but everything under this
-# specific season folder is dropped.)
-# - HD/Some Show (2020)/Season 2
-# - UHD/Star Trek Enterprise (2001)/Season 4
+# (The rest of the show's warnings stay live. `Season 2` and `Season 02` are
+# the same entry.)
+# seasons:
+#   - Some Show (2020)/Season 2
+#   - Band of Brothers (2001)/Specials
 
 
 # Silence one episode
-# (Pin-point: just one file. Useful when one episode has a legitimate quality
-# outlier you've decided to accept.)
-# - HD/Some Show (2020)/Season 1/Some Show (2020) - S01E05.mp4
-
-
-# Silence a whole category folder
-# (Drops EVERY warning under this folder.)
-# - Other HD
-# - Other SD
-
-
-# Silence one warning type for a specific path
-# (Most precise option. The example below silences ONLY the episode-gap
-# warnings for that season — everything else under it stays visible.)
-# - path: HD/Some Show (2020)/Season 2
-#   types:
-#     - warn_episode_gaps
-#     - warn_tmdb_episode_count
+# (Either form works and both cover every pass:)
+# episodes:
+#   - Some Show (2020)/S01E05
+#   - Some Show (2020)/Season 01/Some Show (2020) - S01E05 - Title.mp4

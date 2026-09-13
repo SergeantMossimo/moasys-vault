@@ -76,6 +76,28 @@ year_range:
 # dimension checks fire. Configure in movies.local.yaml.
 quality_thresholds: []
 
+# ── Minimum movie duration ──────────────────────────────────────────────────
+# Runtime floor in minutes. A movie file at or below this fires
+# warn_short_duration — the target is a truncated or failed encode. Set to 0
+# to disable the check.
+#
+# Expect legitimate hits at 30: short films, animated TV specials and stand-up
+# sets are genuinely this short. Silence those per-path in
+# ignored/<drive>/movies.yaml with `types: [warn_short_duration]` rather than
+# lowering the threshold and losing the truncated-encode signal.
+min_duration_minutes: 30
+
+# ── TMDB runtime tolerance ──────────────────────────────────────────────────
+# How far a file's runtime may differ from TMDB's, as a percentage of TMDB's,
+# before warn_tmdb_runtime_mismatch fires. Symmetric: 50 flags anything under
+# half or over one-and-a-half times TMDB's runtime. Set to 0 to disable.
+#
+# This is the precise version of min_duration_minutes — a real 2-minute short
+# matches TMDB's 2 minutes and stays quiet, while a feature truncated to 5
+# minutes is caught regardless of length. Runs in the validate pass, so it
+# needs a TMDB match. Extended cuts TMDB doesn't carry will fire here.
+runtime_tolerance_percent: 50
+
 # ── Acceptable cross-quality combos ─────────────────────────────────────────
 # Only used when categories are organized by quality (shape A above).
 # Lists quality sets a single movie may legitimately span without firing
@@ -105,6 +127,7 @@ checks:
   warn_duplicate_quality: true    # Movie in two folders of the SAME quality tier (HD + Other HD) — not whitelistable
   warn_multi_quality: true        # Movie in multiple quality folders (unless in acceptable_quality_combos)
   warn_quality_mismatch: true     # File dimensions don't fit its category's quality bucket
+  warn_short_duration: false      # Runtime at or below min_duration_minutes
   warn_loose_files: true          # Video files at unexpected nesting
   warn_extra_subfolders: true     # Unexpected subfolders inside a movie folder
   warn_unexpected_entries: true   # Non-video, non-sidecar files
@@ -112,3 +135,4 @@ checks:
   warn_tmdb_low_confidence: true  # TMDB match score below threshold
   warn_tmdb_year_mismatch: true   # TMDB canonical year differs from folder year
   warn_tmdb_title_canonical: true # Folder title differs from TMDB filename-safe canonical
+  warn_tmdb_runtime_mismatch: true # Runtime differs from TMDB's by more than runtime_tolerance_percent

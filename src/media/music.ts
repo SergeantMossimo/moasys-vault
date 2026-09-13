@@ -447,7 +447,11 @@ export function createMusicModule(
           warnings.add(
             'warn_duplicate_album',
             path.join(artist.artist, album.album),
-            `Duplicate album found in multiple categories: ${ordered.join(', ')}`
+            `Duplicate album found in multiple categories: ${ordered.join(', ')}`,
+            // The path carries no category — this check spans them by
+            // definition — so scope derivation would read the artist as one.
+            // Spelling it out is also what lets a `folders:` entry reach here.
+            { scope: { categories: ordered, levels: [artist.artist, album.album] } }
           )
         }
       }

@@ -102,6 +102,60 @@ describe('MoviesRulesSchema', () => {
     expect(MoviesRulesSchema.safeParse(rules).success).toBe(false)
   })
 
+  it('accepts a positive min_duration_minutes', () => {
+    const rules = { ...defaultMoviesRules, min_duration_minutes: 30 }
+    expect(MoviesRulesSchema.safeParse(rules).success).toBe(true)
+  })
+
+  it('accepts min_duration_minutes of 0 (the disable sentinel)', () => {
+    const rules = { ...defaultMoviesRules, min_duration_minutes: 0 }
+    expect(MoviesRulesSchema.safeParse(rules).success).toBe(true)
+  })
+
+  it('rejects a negative min_duration_minutes', () => {
+    const rules = { ...defaultMoviesRules, min_duration_minutes: -1 }
+    expect(MoviesRulesSchema.safeParse(rules).success).toBe(false)
+  })
+
+  it('rejects a fractional min_duration_minutes', () => {
+    const rules = { ...defaultMoviesRules, min_duration_minutes: 12.5 }
+    expect(MoviesRulesSchema.safeParse(rules).success).toBe(false)
+  })
+
+  it('rejects a string min_duration_minutes', () => {
+    const rules = { ...defaultMoviesRules, min_duration_minutes: '30' }
+    expect(MoviesRulesSchema.safeParse(rules).success).toBe(false)
+  })
+
+  it('accepts a positive runtime_tolerance_percent', () => {
+    const rules = { ...defaultMoviesRules, runtime_tolerance_percent: 25 }
+    expect(MoviesRulesSchema.safeParse(rules).success).toBe(true)
+  })
+
+  it('accepts runtime_tolerance_percent of 0 (the disable sentinel)', () => {
+    const rules = { ...defaultMoviesRules, runtime_tolerance_percent: 0 }
+    expect(MoviesRulesSchema.safeParse(rules).success).toBe(true)
+  })
+
+  it('rejects a negative runtime_tolerance_percent', () => {
+    const rules = { ...defaultMoviesRules, runtime_tolerance_percent: -10 }
+    expect(MoviesRulesSchema.safeParse(rules).success).toBe(false)
+  })
+
+  it('rejects when the warn_tmdb_runtime_mismatch toggle is missing', () => {
+    const checks = { ...defaultMoviesRules.checks } as Record<string, boolean>
+    delete checks.warn_tmdb_runtime_mismatch
+    const rules = { ...defaultMoviesRules, checks }
+    expect(MoviesRulesSchema.safeParse(rules).success).toBe(false)
+  })
+
+  it('rejects when the warn_short_duration toggle is missing', () => {
+    const checks = { ...defaultMoviesRules.checks } as Record<string, boolean>
+    delete checks.warn_short_duration
+    const rules = { ...defaultMoviesRules, checks }
+    expect(MoviesRulesSchema.safeParse(rules).success).toBe(false)
+  })
+
   it('rejects when a check toggle is missing', () => {
     const checks = { ...defaultMoviesRules.checks } as Record<string, boolean>
     delete checks.warn_quality_mismatch

@@ -17,6 +17,7 @@ import { ShowsRules } from '../core/rules/shows'
 
 import { JsonCache, searchKey } from './cache'
 import {
+  categoriesOf,
   normalizeTitle,
   normalizeTitleLoose,
   parseYear,
@@ -351,11 +352,20 @@ export async function validateShows(
     const showPath =
       firstCategory && firstCategory !== 'default' ? `${firstCategory}/${label}` : label
 
+    // The displayed path names only the first category, but a show can span
+    // several. Give the ignore matcher every one of them so a `folders:` entry
+    // isn't at the mercy of which category happened to sort first.
+    const showScope = {
+      categories: categoriesOf(show.seasons.flatMap(s => s.versions)),
+      levels: [label],
+    }
+
     if (resolved.confidence === 'none' && rules.checks.warn_tmdb_no_match) {
       warnings.add(
         'warn_tmdb_no_match',
         showPath,
-        `TMDB found no match for '${show.title}' (${show.year}). Possible typo or this show isn't in TMDB.`
+        `TMDB found no match for '${show.title}' (${show.year}). Possible typo or this show isn't in TMDB.`,
+        { scope: showScope }
       )
     } else if (resolved.confidence === 'low' && rules.checks.warn_tmdb_low_confidence) {
       const altText =
@@ -365,7 +375,8 @@ export async function validateShows(
       warnings.add(
         'warn_tmdb_low_confidence',
         showPath,
-        `TMDB low-confidence match: best guess is '${entry.tmdb_title}' (${entry.tmdb_first_air_year}).${altText} Review and confirm.`
+        `TMDB low-confidence match: best guess is '${entry.tmdb_title}' (${entry.tmdb_first_air_year}).${altText} Review and confirm.`,
+        { scope: showScope }
       )
     }
 
@@ -379,7 +390,8 @@ export async function validateShows(
       warnings.add(
         'warn_tmdb_title_canonical',
         showPath,
-        `TMDB canonical title differs: folder is '${show.title}', TMDB filename-safe form is '${entry.tmdb_title_filename_safe}'. Consider renaming the folder to match.`
+        `TMDB canonical title differs: folder is '${show.title}', TMDB filename-safe form is '${entry.tmdb_title_filename_safe}'. Consider renaming the folder to match.`,
+        { scope: showScope }
       )
     }
 
@@ -398,7 +410,16 @@ export async function validateShows(
           warnings.add(
             'warn_tmdb_episode_count',
             `${seasonShowPath}/Season ${season.season}`,
-            `Season ${season.season} has ${season.local_episode_count} of ${season.tmdb_episode_count} episodes per TMDB (${season.missing} missing). Identify gaps via shows.json or the scan's potential-missing-episodes warning.`
+            `Season ${season.season} has ${season.local_episode_count} of ${season.tmdb_episode_count} episodes per TMDB (${season.missing} missing). Identify gaps via shows.json or the scan's potential-missing-episodes warning.`,
+            // `Season 3` here is the parsed TMDB number, not the on-disk
+            // `Season 03` folder; core/ignored.ts folds the two onto one key
+            // so a single `seasons:` entry covers this and the scan pass.
+            {
+              scope: {
+                categories: categoriesOf(show.seasons[s]?.versions ?? []),
+                levels: [label, `Season ${season.season}`],
+              },
+            }
           )
         }
       }
@@ -460,7 +481,18 @@ export async function validateShows(
           warnings.add(
             'warn_tmdb_episode_name_mismatch',
             `${seasonShowPath}/${epLabel}`,
-            `Episode title '${m.local}' differs from TMDB's ${tmdbExpected}. Verify which is correct.`
+            `Episode title '${m.local}' differs from TMDB's ${tmdbExpected}. Verify which is correct.`,
+            // The path's last segment is an episode CODE, not a filename, so
+            // derivation would read it as a season. Naming the season
+            // explicitly puts the code at the episode level, where an
+            // `episodes:` entry — written as the code OR as the episode's
+            // filename — can reach it.
+            {
+              scope: {
+                categories: categoriesOf(localSeason.versions),
+                levels: [label, `Season ${seasonNumber}`, epLabel],
+              },
+            }
           )
         }
       }

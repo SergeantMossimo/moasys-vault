@@ -11,6 +11,13 @@ import {
   writeWarnings,
 } from '../../../src/core/runner-shared'
 import { MediaRootConfig, WarningCollector } from '../../../src/core/types'
+import { parseIgnoreList } from '../../../src/core/ignored'
+import type { IgnoreMediaType } from '../../../src/core/ignored'
+
+/** Build an ignore list the way a real file parses, for collector tests. */
+function ignoreList(mediaType: IgnoreMediaType, raw: Record<string, string[]>) {
+  return parseIgnoreList(raw, mediaType, 'test.yaml')
+}
 
 const VALID_TYPES = ['movies', 'shows', 'music', 'audiobooks'] as const
 
@@ -302,14 +309,23 @@ describe('WarningCollector', () => {
     expect(wc.all().map(w => `${w.type}/${w.path}`)).toEqual(['warn_a/x', 'warn_a/y', 'warn_b/z'])
   })
 
-  it('silences warnings whose path matches an ignored entry', () => {
-    const wc = new WarningCollector([{ path: 'HD/Show (2020)', types: null }])
+  it('silences warnings at and below a matching ignore entry', () => {
+    const wc = new WarningCollector(ignoreList('shows', { shows: ['Show (2020)'] }))
     wc.add('warn_thing', 'HD/Show (2020)', 'bad')
     wc.add('warn_thing', 'HD/Show (2020)/Season 1/file.mp4', 'also bad')
     wc.add('warn_thing', 'HD/Other Show (2020)', 'visible')
 
     expect(wc.count()).toBe(1)
     expect(wc.all().map(w => w.path)).toEqual(['HD/Other Show (2020)'])
+    expect(wc.silencedCount()).toBe(2)
+  })
+
+  it('silences regardless of warning type — there is no type scoping', () => {
+    const wc = new WarningCollector(ignoreList('shows', { shows: ['Show (2020)'] }))
+    wc.add('warn_episode_gaps', 'HD/Show (2020)/Season 1', 'gaps in S1')
+    wc.add('warn_bad_file_name', 'HD/Show (2020)/Season 1/x.mp4', 'also silenced')
+
+    expect(wc.count()).toBe(0)
     expect(wc.silencedCount()).toBe(2)
   })
 
@@ -321,19 +337,34 @@ describe('WarningCollector', () => {
   })
 
   it('normalizes separators + case when matching ignored entries', () => {
-    const wc = new WarningCollector([{ path: 'HD/Show (2020)', types: null }])
-    wc.add('warn_thing', 'hd\\show (2020)\\file.mp4', 'x')
+    const wc = new WarningCollector(ignoreList('shows', { shows: ['Show (2020)'] }))
+    wc.add('warn_thing', 'hd\\show (2020)\\season 01\\file.mp4', 'x')
     expect(wc.count()).toBe(0)
     expect(wc.silencedCount()).toBe(1)
   })
 
-  it('type-scoped ignored entry silences only the listed warning types on its path', () => {
-    const wc = new WarningCollector([{ path: 'HD/Show (2020)', types: ['warn_episode_gaps'] }])
-    wc.add('warn_episode_gaps', 'HD/Show (2020)/Season 1', 'gaps in S1')
-    wc.add('warn_bad_file_name', 'HD/Show (2020)/Season 1/x.mp4', 'visible')
+  it('reads the first segment as an item, not a category, when hasCategories is false', () => {
+    // A library with `categories: []` has no category segment, so every path
+    // is one level shallower.
+    const l = ignoreList('shows', { shows: ['Show (2020)'] })
 
-    expect(wc.count()).toBe(1)
-    expect(wc.all().map(w => w.type)).toEqual(['warn_bad_file_name'])
+    const flat = new WarningCollector(l, false)
+    flat.add('warn_thing', 'Show (2020)/Season 01', 'x')
+    expect(flat.silencedCount()).toBe(1)
+
+    const categorized = new WarningCollector(l, true)
+    categorized.add('warn_thing', 'Show (2020)/Season 01', 'x')
+    expect(categorized.silencedCount()).toBe(0)
+  })
+
+  it('uses options.scope in place of deriving levels from the path', () => {
+    // The contract for checks that emit a display label rather than a library
+    // path — warn_multi_quality's `Firefly (2002) — Season 1`, for instance.
+    const wc = new WarningCollector(ignoreList('shows', { shows: ['Firefly (2002)'] }))
+    wc.add('warn_multi_quality', 'Firefly (2002) — Season 1', 'two qualities', {
+      scope: { categories: ['HD', 'SD'], levels: ['Firefly (2002)', 'Season 1'] },
+    })
+    expect(wc.count()).toBe(0)
     expect(wc.silencedCount()).toBe(1)
   })
 

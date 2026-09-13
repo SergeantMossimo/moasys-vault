@@ -2,66 +2,84 @@
 # MOASYS-Vault — Movies ignore list (EXAMPLE)
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# A "do not warn me about this" list for your movie library. Anything you put
-# here gets silently dropped from output/<drive>/movies/warnings.json on every
-# run.
+# A "do not warn me about this" list for your movies library. Anything listed
+# here is silently dropped from output/<drive>/movies/warnings.json and
+# validation-warnings.json on every run, and counted in the run summary.
 #
-# Ignore lists are per DRIVE as well as per type, because the paths below are
-# relative to that drive's root_path. `<drive>` is the lowercased `name` of a
-# root in config.json — e.g. `server`, `external`.
+# Ignore lists are per DRIVE as well as per type, because warning paths are
+# relative to that drive's root_path. `ignored/server/movies.yaml` only
+# affects runs against the root named "Server".
 #
 # How to use this file:
-#   1. Copy this file to `ignored/<drive>/movies.yaml` (create the drive
-#      folder, drop the `.example` suffix). The real per-drive files are
-#      gitignored so your personal decisions don't end up in version control.
-#   2. Add path prefixes below — one per line.
-#   3. Re-run `npm run movies <drive>`. Matching warnings disappear from the
-#      output.
+#   1. Copy it to `ignored/<drive>/movies.yaml` (drop the `.example` suffix).
+#      The real file is gitignored so your personal decisions stay out of
+#      version control.
+#   2. Add names under the level they belong to.
+#   3. Re-run `npm run movies <drive>`. Matching warnings disappear.
 #
-# Two entry shapes — pick whichever fits each case:
+# ── Levels ───────────────────────────────────────────────────────────────────
 #
-#   # 1. Path-only (a bare string) — silences EVERY warning under this path.
-#   - UHD/Some Movie (2020)
+#   folders   a category folder      - Other HD
+#   movies    one movie folder       - The Crow (1994)
+#   files     one file, qualified    - The Crow (1994)/The Crow (1994).mkv
 #
-#   # 2. Type-scoped (an object) — silences only the listed warning types
-#   #    under this path. Other warnings on the same path stay visible.
-#   - path: UHD/Some Movie (2020)
-#     types:
-#       - warn_tmdb_year_mismatch
+# Names are matched at their own level and are CATEGORY-INDEPENDENT: a movie
+# listed here is silenced wherever it lives — HD/, Other HD/, or both. That is
+# also what lets an entry reach warn_multi_quality and warn_duplicate_quality,
+# which report a bare title with no category to anchor to.
 #
-# Matching is case-insensitive and forward-slash-normalized, so the same
-# file works on Windows (backslashes) and macOS/Linux (forward slashes).
+# ── Qualifiers ───────────────────────────────────────────────────────────────
 #
-# Get the paths to add from output/<drive>/movies/warnings.json and
-# output/<drive>/movies/validation-warnings.json — paths live under each `by_type`
-# bucket. The bucket key (e.g. `warn_tmdb_no_match`) is the warning type;
-# you can also find every type listed in rules/movies.yaml under `checks`.
+# `files:` entries must name their movie folder too — a bare filename would
+# match that name anywhere in the library. A `/` means "somewhere above", not
+# "immediately above", so you can skip intermediate levels.
+#
+# ── Scope ────────────────────────────────────────────────────────────────────
+#
+# An entry silences EVERY warning at or below its level — naming, TMDB,
+# quality, all of them. There is no per-warning-type scoping. To turn off a
+# whole warning type instead, set `checks.warn_*: false` in rules/movies.yaml.
+#
+# ── Matching ─────────────────────────────────────────────────────────────────
+#
+# Exact per level (not a prefix, so `The Crow (1994)` does not match
+# `The Crow 2 (1996)`), case-insensitive, and either slash works — the same
+# file is correct on Windows and macOS/Linux.
+#
+# ── Finding names ────────────────────────────────────────────────────────────
+#
+# Take them from the `path` values in output/<drive>/movies/warnings.json and
+# validation-warnings.json: the last segment for a movie, the last two for a
+# file. Drop the leading category folder.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 # Silence everything under a category folder
 # (Useful for "Other UHD" / "Other HD" / "Other SD" — categories you keep
 # around but don't actively curate.)
-# - Other UHD
-# - Other SD
+# folders:
+#   - Other UHD
+#   - Other SD
 
 
-# Silence one specific movie
-# (Drops every warning inside this movie's folder — quality mismatch, TMDB
-# no-match, naming warnings, etc.)
-# - UHD/Some Movie (2020)
-# - HD/Old Concert Film (1985)
+# Silence one movie, in every category it appears in
+# (Drops every warning on it — quality mismatch, TMDB no-match, naming, and
+# the duplicate/multi-quality checks that no path-based entry could reach.)
+# movies:
+#   - Some Movie (2020)
+#   - Luxo Jr. (1986)
+#
+# `{edition-...}` is part of the folder name, so each edition is its own
+# folder and needs its own line. `The Hobbit (2014)` does NOT cover
+# `The Hobbit (2014) {edition-Maple Films Edit}`.
+#   - The Hobbit (2014)
+#   - The Hobbit (2014) {edition-Maple Films Edit}
 
 
-# Silence one specific file
-# (Pin-point: just one file. Useful when a specific edition has a legitimate
-# warning you've decided to accept.)
-# - UHD/Blade Runner (1982)/Blade Runner (1982) {edition-Final Cut}.mp4
-
-
-# Silence one warning type for a specific path
-# (Most precise option. The example below silences ONLY the TMDB year-
-# mismatch warning — other warnings on the same path stay visible.)
-# - path: UHD/Casablanca (1942)
-#   types:
-#     - warn_tmdb_year_mismatch
+# Silence one file
+# (Pin-point. Useful for a single version with a runtime or quality outlier
+# you've decided to accept. Note this still silences that file's OTHER
+# warnings — if you only want to drop one check across the library, use
+# `checks.warn_*: false` in rules/movies.yaml instead.)
+# files:
+#   - Blade Runner (1982)/Blade Runner (1982) {edition-Final Cut}.mp4

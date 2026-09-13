@@ -127,6 +127,29 @@ These checks are forgiving by design — HandBrake-cropped 664×448 SD and 1920�
 
 See [Configuration](CONFIG.md#three-configuration-shapes) for the full configuration matrix.
 
+### Short runtime (movies)
+
+The probe pass also knows how long each file actually is, and `warn_short_duration` flags any movie file whose runtime is **at or below** `min_duration_minutes` (default 30). The thing worth catching is a truncated or failed encode — a 4-minute file where a 2-hour film should be, or a zero-length container that won't play at all.
+
+Unlike `warn_quality_mismatch`, this isn't gated on the category's quality, so it fires in general-tag categories like `Documentary/` too. Files whose duration ffprobe couldn't read are skipped — those already fire `warn_probe_failed`. Set `min_duration_minutes: 0` to turn the check off.
+
+#### A known false positive: legitimate short films
+
+Plenty of things in a movie library are genuinely under 30 minutes. On this library the check fires on 239 files on `server` and 179 on `external`, and most of them are fine: Pixar shorts (_Luxo Jr._ 2m, _For the Birds_ 3m), animated TV specials (_The Snowman_ 27m, _Shrek the Halls_ 28m), Marvel one-shots (_Team Thor_ 2m), and stand-up specials (_Louis C.K. One Night Stand_ 29m).
+
+So treat this one as a **review list, not an error list** — walk it once, confirm the genuinely short titles, and list them in `ignored/<drive>/movies.yaml`:
+
+```yaml
+movies:
+  - Luxo Jr. (1986)
+```
+
+Note that silences the film's _other_ warnings too — naming, TMDB, quality. That's the trade the ignore list makes: it's scoped per item, not per check. If short films are noisy across the whole library rather than on a handful of titles, turn the check off with `checks.warn_short_duration: false` instead.
+
+Resist the temptation to lower `min_duration_minutes` to make the noise go away — that also throws away the truncated-encode signal, which is the entire point.
+
+The precise version of this check lives in the validate pass — see [TMDB runtime cross-check](#tmdb-runtime-cross-check-movies) below. If you run `npm run validate:movies`, that is the list to work from; `warn_short_duration` is the offline approximation for when you haven't validated.
+
 ### Audio quality summary (music)
 
 Each album in `output/<drive>/music/probe.json` gets a derived `audio_quality_summary` field — short, human-readable strings like `"FLAC 16/44.1"`, `"MP3 ~288"`, or `"AAC 256"`. The summary collapses tracks that share a codec and roughly the same bitrate target into one entry, so a VBR-encoded album doesn't list ten different bitrates.
@@ -181,6 +204,20 @@ See [Configuration](CONFIG.md#secretsjson) for details.
 - Year off by one (Casablanca 1942 vs TMDB's 1943 — premiere vs wide release)
 - Title canonicalization opportunities (your `Alice In Wonderland` → TMDB's `Alice in Wonderland`)
 - Obscure films that aren't in TMDB at all
+- Runtime that disagrees with TMDB's — see below
+
+#### TMDB runtime cross-check (movies)
+
+`warn_tmdb_runtime_mismatch` compares each file's measured runtime (from `probe.json`, so the scan must have run first) against TMDB's, and fires when they differ by more than `runtime_tolerance_percent` — 50% by default, symmetric in both directions.
+
+This is the precise counterpart to [`warn_short_duration`](#short-runtime-movies). Where that check flags everything under 30 minutes and buries real problems under 200 legitimate short films, this one knows how long the film is _supposed_ to be:
+
+- **Far shorter than TMDB** — a truncated or failed encode. A feature that arrived as a 5-minute sample is caught no matter how long the real film is, and a genuine 2-minute Pixar short matches TMDB's 2 minutes and stays silent.
+- **Far longer than TMDB** — a wrongly-matched film, two features concatenated into one file, or an extended cut TMDB doesn't carry.
+
+The over-length direction catches a class of error that title + year scoring is structurally blind to. A 5-minute short film sharing a feature's exact title and release year scores `high` confidence — every signal the matcher looks at agrees. Only the runtime gives it away.
+
+Extended and director's cuts will fire here legitimately when TMDB carries only the theatrical runtime. List those under `files:` in `ignored/<drive>/movies.yaml` (which silences that file's other warnings too), or turn the check off with `checks.warn_tmdb_runtime_mismatch: false`.
 
 **For shows (everything above plus):**
 

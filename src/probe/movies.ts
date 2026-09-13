@@ -6,7 +6,7 @@
  *
  * Naming-related warnings (bad file name, year mismatch, etc.) are NOT
  * re-emitted here — those are the scan pass's job. The probe pass only
- * adds probe-specific warnings (currently: quality_mismatch).
+ * adds probe-specific warnings (currently: quality_mismatch, short_duration).
  */
 
 import fs from 'fs'
@@ -55,6 +55,20 @@ function makeKey(title: string, year: number, edition: string | null): string {
 /** Normalize a relative path to forward slashes for cache/output consistency. */
 function toRel(p: string): string {
   return p.split(path.sep).join('/')
+}
+
+/**
+ * Human-readable runtime for warning messages — `2m 05s`, `1h 47m 12s`.
+ * Module-local on purpose; promote to probe/helpers.ts if a second caller
+ * ever needs it.
+ */
+function formatDuration(seconds: number): string {
+  const total = Math.round(seconds)
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return h > 0 ? `${h}h ${pad(m)}m ${pad(s)}s` : `${m}m ${pad(s)}s`
 }
 
 // ─────────────────────────────────────────────
@@ -208,7 +222,8 @@ function aggregate(
  *   1. Walk the library and build probe tasks
  *   2. Probe each file (cache-aware), reporting progress
  *   3. Emit quality_mismatch warnings for files outside their bucket
- *   4. Aggregate into the per-movie shape and return
+ *   4. Emit short_duration warnings for files at or below the runtime floor
+ *   5. Aggregate into the per-movie shape and return
  *
  * Cache writes are the caller's responsibility — keeps this function pure-ish
  * and lets the runner control when the cache is persisted.
@@ -261,6 +276,28 @@ export async function probeMovies(
             `) for quality '${task.quality}' (category '${task.category}')`
         )
       }
+    }
+  }
+
+  // Short runtime check — the target is a truncated or failed encode. Only
+  // primary-extension files are probed at all (see collectTasks), so a short
+  // non-primary file isn't covered here; it already fires warn_non_primary.
+  if (rules.checks.warn_short_duration && rules.min_duration_minutes > 0) {
+    const thresholdSeconds = rules.min_duration_minutes * 60
+    for (const { task, data } of probed) {
+      // null means we never measured it — unreadable files fire warn_probe_failed.
+      if (data.duration_seconds === null) continue
+      if (data.duration_seconds > thresholdSeconds) continue
+      warnings.add(
+        'warn_short_duration',
+        task.relativePath,
+        `Short runtime — ${formatDuration(data.duration_seconds)}, at or below the ` +
+          `${rules.min_duration_minutes}-minute threshold (min_duration_minutes). ` +
+          `Usually a truncated or failed encode; play the file through to the end and ` +
+          `re-encode from source if it's cut short. If it's a genuine short film, TV ` +
+          `special, or stand-up set, silence it in ignored/<drive>/movies.yaml with ` +
+          `types: [warn_short_duration]`
+      )
     }
   }
 
