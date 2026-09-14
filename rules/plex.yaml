@@ -1,0 +1,24 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# MOASYS-Vault — Plex rules (defaults)
+# ─────────────────────────────────────────────────────────────────────────────
+# Toggles for `npm run plex:check`, which compares what Plex has with what the
+# scanner found on disk. One file covers every media type; warnings land in
+# output/<drive>/<type>/plex-warnings.json.
+#
+# Edit a value to change the project-wide default. Personal overrides belong
+# in `rules/plex.local.yaml`, which is gitignored. To silence specific items,
+# use the per-type ignore lists in ignored/<drive>/<type>.yaml — they apply to
+# Plex warnings too.
+#
+# Full reference: docs/PLEX.md
+# ─────────────────────────────────────────────────────────────────────────────
+
+checks:
+  warn_plex_folder_not_in_library: true # On disk, in a folder no Plex library covers
+  warn_plex_missing_item: true   # On disk, but no Plex item points at it
+  warn_plex_orphan_item: true    # Plex points at a file that's gone, and hasn't noticed
+  warn_plex_unavailable: true    # Plex flagged the file deleted — it's in the trash
+  warn_plex_unmatched: true      # Movie/show/album not matched to the library's agent
+  warn_plex_title_mismatch: true # Plex's title/year names something else — likely a wrong match
+  warn_plex_title_case: true     # Plex's title differs from the folder only in capitalization
+  warn_plex_duplicate: true      # Listed under Plex's Duplicates filter

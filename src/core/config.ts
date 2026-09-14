@@ -36,6 +36,9 @@ import { AppConfig } from './types'
 // Schema
 // ─────────────────────────────────────────────
 
+/** Folder under output/ that holds Plex pulls. Reserved as a drive name. */
+export const PLEX_OUTPUT_SEGMENT = 'plex'
+
 /**
  * One named root. `root_path` is the per-machine location; `name` identifies
  * the drive and becomes a folder segment under cache/, ignored/, and output/,
@@ -59,8 +62,47 @@ const MediaRootSchema = z.object({
     .refine(
       value => value !== '.' && value !== '..',
       "name cannot be '.' or '..' — it is used as a folder name"
+    )
+    // output/plex/ holds the Plex library pulls, which aren't tied to a drive.
+    // A drive named "Plex" would write its scan output into the same folder.
+    .refine(
+      value => value.toLowerCase() !== PLEX_OUTPUT_SEGMENT,
+      `name cannot be '${PLEX_OUTPUT_SEGMENT}' — output/${PLEX_OUTPUT_SEGMENT}/ is reserved for Plex library pulls`
     ),
 })
+
+/**
+ * Plex connection settings. Optional — only the `plex:*` commands read it,
+ * and they exit with setup instructions when it's missing. The token is NOT
+ * here: it's a credential, so it lives in the gitignored `.secrets.json`.
+ */
+const PlexConfigSchema = z.object({
+  /**
+   * Base URL of the Plex Media Server, e.g. `http://192.168.1.50:32400`, or
+   * the `https://…plex.direct:32400` address when the server requires
+   * secure connections.
+   */
+  url: z
+    .string()
+    .url('plex.url must be a full URL, e.g. "http://192.168.1.50:32400"')
+    .refine(u => /^https?:\/\//i.test(u), 'plex.url must start with http:// or https://'),
+  /**
+   * Explicit prefix translations from the paths Plex reports to the paths
+   * this machine uses, for when automatic mapping can't work out the
+   * relationship. `{ "plex": "/volume1/Media", "local": "M:\\" }` turns
+   * `/volume1/Media/Movies/HD/…` into `M:\Movies\HD\…`.
+   */
+  path_map: z
+    .array(
+      z.object({
+        plex: z.string().min(1),
+        local: z.string().min(1),
+      })
+    )
+    .optional(),
+})
+
+export type PlexConfig = z.infer<typeof PlexConfigSchema>
 
 /**
  * A media type's list of roots: at least one, with unique names. Names are
@@ -99,6 +141,7 @@ export const AppConfigSchema = z.object({
   shows: MediaRootListSchema,
   music: MediaRootListSchema,
   audiobooks: MediaRootListSchema,
+  plex: PlexConfigSchema.optional(),
 })
 
 // ─────────────────────────────────────────────

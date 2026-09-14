@@ -203,10 +203,10 @@ describe('writeJsonOutput', () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/3 entries/))
   })
 
-  it('logs 0 entries for non-array outputs', () => {
+  it('omits the entry count for non-array outputs', () => {
     const out = path.join(tmpDir, 'obj.json')
     writeJsonOutput(out, { a: 1 })
-    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/0 entries/))
+    expect(logSpy).toHaveBeenCalledWith(expect.not.stringMatching(/entries/))
   })
 })
 

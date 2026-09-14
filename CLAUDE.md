@@ -44,14 +44,15 @@ After any `--apply`, verify against the filesystem rather than trusting the tool
 
 Several checks compare a filename or tag against its parent folder. These deliberately come in pairs — a strict check for genuinely different values and a separate, lower-severity check for capitalization-only drift, so cosmetic noise can't bury a real mismatch:
 
-| Type                       | Different value                                          | Capitalization only                              |
-| -------------------------- | -------------------------------------------------------- | ------------------------------------------------ |
-| Shows                      | `warn_show_year_mismatch`                                | `warn_show_title_case`                           |
-| Movies                     | `warn_title_mismatch`                                    | `warn_title_case`                                |
-| Music                      | `warn_folder_tag_mismatch`                               | `warn_folder_tag_case`                           |
-| Audiobooks (book vs book)  | `warn_series_name_mismatch`, `warn_author_name_mismatch` | `warn_series_name_case`, `warn_author_name_case` |
-| Audiobooks (tag vs folder) | `warn_book_tag_mismatch`, `warn_author_tag_mismatch`     | `warn_book_tag_case`, `warn_author_tag_case`     |
-| Audiobooks (Open Library)  | `warn_openlibrary_title_mismatch`                        | `warn_openlibrary_title_case`                    |
+| Type                        | Different value                                          | Capitalization only                              |
+| --------------------------- | -------------------------------------------------------- | ------------------------------------------------ |
+| Shows                       | `warn_show_year_mismatch`                                | `warn_show_title_case`                           |
+| Movies                      | `warn_title_mismatch`                                    | `warn_title_case`                                |
+| Music                       | `warn_folder_tag_mismatch`                               | `warn_folder_tag_case`                           |
+| Audiobooks (book vs book)   | `warn_series_name_mismatch`, `warn_author_name_mismatch` | `warn_series_name_case`, `warn_author_name_case` |
+| Audiobooks (tag vs folder)  | `warn_book_tag_mismatch`, `warn_author_tag_mismatch`     | `warn_book_tag_case`, `warn_author_tag_case`     |
+| Audiobooks (Open Library)   | `warn_openlibrary_title_mismatch`                        | `warn_openlibrary_title_case`                    |
+| Plex (Plex title vs folder) | `warn_plex_title_mismatch`                               | `warn_plex_title_case`                           |
 
 The precedent is `warn_tmdb_title_canonical`, which has always been case-sensitive and separate. If you add another folder-vs-file comparison, follow the same split — a bare `.toLowerCase()` comparison makes case drift permanently invisible, which is exactly how 174 files went unreported for months.
 
@@ -115,6 +116,9 @@ npm run validate:movies external
 npm run validate:audiobooks        # Open Library validation — no API key
 npm run validate:all
 
+npm run plex:pull                  # Plex libraries → output/plex/<library>/ (read-only GETs)
+npm run plex:check                 # Compare the pull with scan output → output/<drive>/<type>/plex-warnings.json
+
 # The one write-capable command. Dry run by default; drive name is required.
 npm run fix:shows -- --fix show-prefix external          # preview
 npm run fix:shows -- --fix episode-titles external --apply
@@ -154,6 +158,7 @@ Docs are split between README and `docs/`. When the user asks something or you n
 - **docs/CONVENTIONS.md** — Plex folder/file naming per media type (hierarchies, examples, gotchas)
 - **docs/SCANS.md** — Runbook for scan / probe / validate. Suggested workflow + re-run scenarios.
 - **docs/OUTPUT.md** — Output file shapes + complete warning tables per media type
+- **docs/PLEX.md** — Plex setup (url + token), `plex:pull` output, path mapping, `plex:check` warnings
 
 When you add a new feature/warning/rule, update the relevant docs/ file AND any related warning table. Don't put deep reference content in README — it's intentionally lean.
 

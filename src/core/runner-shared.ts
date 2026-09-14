@@ -119,8 +119,8 @@ export function rootNames(roots: MediaRootConfig[]): string {
 export function writeJsonOutput(outputPath: string, data: unknown): void {
   fs.mkdirSync(path.dirname(outputPath), { recursive: true })
   fs.writeFileSync(outputPath, JSON.stringify(data, null, 2), 'utf-8')
-  const count = Array.isArray(data) ? data.length : 0
-  console.log(`    [OUT] ${outputPath}  (${count} entries)`)
+  const summary = Array.isArray(data) ? `  (${data.length} entries)` : ''
+  console.log(`    [OUT] ${outputPath}${summary}`)
 }
 
 /**

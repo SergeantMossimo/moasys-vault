@@ -41,6 +41,10 @@ One section per media type. Each section is a **list of named roots**, so a medi
 - Unique within a media type (case-insensitively).
 - The same name can be reused across media types. `Server` holding both movies and music is the normal case.
 
+`plex` is reserved — `output/plex/` holds Plex library pulls, so no drive can use that name.
+
+An optional **`plex`** block holds your Plex server address (`url`) and, when needed, `path_map` entries translating Plex's paths to yours. See [Plex](PLEX.md#setup). The Plex token goes in [`.secrets.json`](#secretsjson), not here.
+
 Every section needs at least one root. If you don't have a media type at all, give it a placeholder — it's never touched unless you run that type's command.
 
 The scanner walks the subfolders defined in the rules files under `categories`, or — if `categories` is empty in the rules file — it walks `root_path` directly and labels every record's category as `"default"`. Categories are defined per _type_, not per drive, so the same `rules/<type>.yaml` applies to every root. A category folder missing from one drive is just skipped.
@@ -624,6 +628,8 @@ Done — 131 entries, 18 warnings, 5 silenced via ignore list.
 ---
 
 ## `.secrets.json`
+
+The Plex commands need a token in a `plex` block here — see [Plex](PLEX.md#2-token--secretsjson). Each command validates only the block it uses.
 
 The TMDB validation pass for movies and shows ([Scans](SCANS.md)) needs an API key. It lives in `.secrets.json` at the project root. The file is gitignored so that you don't end up sharing your API key. `npm run validate:audiobooks` uses Open Library, which needs no key, and runs without this file.
 
