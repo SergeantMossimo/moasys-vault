@@ -1,85 +1,26 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# MOASYS-Vault — Movies ignore list (EXAMPLE)
+# MOASYS-Vault — Movies ignore list (template)
 # ─────────────────────────────────────────────────────────────────────────────
+# Silences warnings you've decided to live with. Copy to
+# ignored/<drive>/movies.yaml (e.g. ignored/server/movies.yaml), uncomment what
+# you need, and re-run. The real file is gitignored.
 #
-# A "do not warn me about this" list for your movies library. Anything listed
-# here is silently dropped from output/<drive>/movies/warnings.json and
-# validation-warnings.json on every run, and counted in the run summary.
+# Names match exactly at their level, in any category, case-insensitively. An
+# entry silences EVERY warning at or below it — scan, validate and Plex. To turn
+# off one kind of warning everywhere, use `checks:` in rules/movies.yaml instead.
 #
-# Ignore lists are per DRIVE as well as per type, because warning paths are
-# relative to that drive's root_path. `ignored/server/movies.yaml` only
-# affects runs against the root named "Server".
-#
-# How to use this file:
-#   1. Copy it to `ignored/<drive>/movies.yaml` (drop the `.example` suffix).
-#      The real file is gitignored so your personal decisions stay out of
-#      version control.
-#   2. Add names under the level they belong to.
-#   3. Re-run `npm run movies <drive>`. Matching warnings disappear.
-#
-# ── Levels ───────────────────────────────────────────────────────────────────
-#
-#   folders   a category folder      - Other HD
-#   movies    one movie folder       - The Crow (1994)
-#   files     one file, qualified    - The Crow (1994)/The Crow (1994).mkv
-#
-# Names are matched at their own level and are CATEGORY-INDEPENDENT: a movie
-# listed here is silenced wherever it lives — HD/, Other HD/, or both. That is
-# also what lets an entry reach warn_multi_quality and warn_duplicate_quality,
-# which report a bare title with no category to anchor to.
-#
-# ── Qualifiers ───────────────────────────────────────────────────────────────
-#
-# `files:` entries must name their movie folder too — a bare filename would
-# match that name anywhere in the library. A `/` means "somewhere above", not
-# "immediately above", so you can skip intermediate levels.
-#
-# ── Scope ────────────────────────────────────────────────────────────────────
-#
-# An entry silences EVERY warning at or below its level — naming, TMDB,
-# quality, all of them. There is no per-warning-type scoping. To turn off a
-# whole warning type instead, set `checks.warn_*: false` in rules/movies.yaml.
-#
-# ── Matching ─────────────────────────────────────────────────────────────────
-#
-# Exact per level (not a prefix, so `The Crow (1994)` does not match
-# `The Crow 2 (1996)`), case-insensitive, and either slash works — the same
-# file is correct on Windows and macOS/Linux.
-#
-# ── Finding names ────────────────────────────────────────────────────────────
-#
-# Take them from the `path` values in output/<drive>/movies/warnings.json and
-# validation-warnings.json: the last segment for a movie, the last two for a
-# file. Drop the leading category folder.
+# Full reference: docs/CONFIG.md → "ignored/<drive>/<type>.yaml"
 # ─────────────────────────────────────────────────────────────────────────────
 
-
-# Silence everything under a category folder
-# (Useful for "Other UHD" / "Other HD" / "Other SD" — categories you keep
-# around but don't actively curate.)
+# A whole category folder
 # folders:
-#   - Other UHD
 #   - Other SD
 
-
-# Silence one movie, in every category it appears in
-# (Drops every warning on it — quality mismatch, TMDB no-match, naming, and
-# the duplicate/multi-quality checks that no path-based entry could reach.)
+# One movie, wherever it lives. Each {edition-…} is its own name.
 # movies:
-#   - Some Movie (2020)
 #   - Luxo Jr. (1986)
-#
-# `{edition-...}` is part of the folder name, so each edition is its own
-# folder and needs its own line. `The Hobbit (2014)` does NOT cover
-# `The Hobbit (2014) {edition-Maple Films Edit}`.
-#   - The Hobbit (2014)
 #   - The Hobbit (2014) {edition-Maple Films Edit}
 
-
-# Silence one file
-# (Pin-point. Useful for a single version with a runtime or quality outlier
-# you've decided to accept. Note this still silences that file's OTHER
-# warnings — if you only want to drop one check across the library, use
-# `checks.warn_*: false` in rules/movies.yaml instead.)
+# One file — must name its movie folder too
 # files:
 #   - Blade Runner (1982)/Blade Runner (1982) {edition-Final Cut}.mp4

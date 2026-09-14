@@ -144,10 +144,10 @@ When making bulk changes across all 4 media types, use `Edit` with `replace_all:
 
 ## Roadmap
 
-There's no formal roadmap; `README.md` → `## Recent additions` logs what has landed. The big-ticket items so far, all shipped:
+There's no formal roadmap; `CHANGELOG.md` logs what has landed, and `package.json`'s version tracks its newest entry. The big-ticket items so far, all shipped:
 
 - **Music quality summary** — per-album `audio_quality_summary` in `output/<drive>/music/data/probe.json` (`"FLAC 16/44.1"`, `"MP3 ~288"`). VBR tolerance collapses same-codec same-quality-target tracks into one entry.
-- **ID3 tag reading for music** — per-track `tags` in `output/<drive>/music/data/probe.json` via `music-metadata`. Four warnings: compilation_detected, folder_tag_mismatch, missing_tags, track_number_mismatch.
+- **ID3 tag reading for music** — per-track `tags` in `output/<drive>/music/data/probe.json` via `music-metadata`. Five warnings: compilation_detected, folder_tag_mismatch, folder_tag_case, missing_tags, track_number_mismatch.
 - **TMDB validation for movies + shows** — `npm run validate:movies` / `validate:shows`. Cross-checks titles, years, and (for shows) per-season episode counts. API key in `.secrets.json` (gitignored). Cache in `cache/tmdb-*.json`.
 - **Audiobook name checks + Open Library validation** — series/author consistency and embedded-tag comparison in the scan; `npm run validate:audiobooks` against Open Library (no key). Cache in `cache/openlibrary-search.json`.
 - **Plex integration** — `plex:pull` (per-library catalogs + collections), `plex:check` (Plex vs disk), `plex:logs` (server log errors tied to files by item id). Read-only GET client in `src/plex/client.ts`; token in `.secrets.json`, URL in `config.json`. See `docs/PLEX.md`.
@@ -156,17 +156,19 @@ Future ideas: deeper music quality analysis (per-track bitrate distribution, enc
 
 ## Documentation layout
 
-Docs are split between README and `docs/`. When the user asks something or you need to point them at existing docs, use this map:
+Each topic has exactly one home; everywhere else links to it rather than restating it. When the user asks something or you need to point them at existing docs, use this map:
 
-- **README.md** — quickstart, the three passes overview, project structure, recent additions
+- **README.md** — landing page only: pitch, requirements, quickstart, command table, links to the docs, project folders. No reference content.
+- **CHANGELOG.md** — one entry per landed PR, newest first; bump `package.json`'s version to match.
+- **docs/SCANS.md** — the workflow (first run, `npm run all`, what to re-run), scan and validate internals, scan times, and `fix:shows`
+- **docs/CONFIG.md** — `config.json`, rules files and every setting, ignore lists (the canonical reference), `.secrets.json`
+- **docs/CONVENTIONS.md** — Plex folder/file naming per media type, with gotchas; links to OUTPUT.md for warnings rather than listing them
+- **docs/OUTPUT.md** — the output layout, file shapes, and the warning tables for the four media types
+- **docs/PLEX.md** — Plex setup, path mapping, and the Plex commands with their warning tables
 - **schemas/** — hand-maintained JSON Schemas for every output file; update the matching one when an output shape changes
-- **docs/CONFIG.md** — `config.json` + `rules/<type>.yaml` reference, override mechanism, `.secrets.json` setup
-- **docs/CONVENTIONS.md** — Plex folder/file naming per media type (hierarchies, examples, gotchas)
-- **docs/SCANS.md** — Runbook for scan / probe / validate. Suggested workflow + re-run scenarios.
-- **docs/OUTPUT.md** — Output file shapes + complete warning tables per media type
-- **docs/PLEX.md** — Plex setup (url + token), `plex:pull` output, path mapping, `plex:check` warnings
+- **ignored/\*.yaml.example** — short templates; a test uncomments them and runs them through the loader
 
-When you add a new feature/warning/rule, update the relevant docs/ file AND any related warning table. Don't put deep reference content in README — it's intentionally lean.
+When you add a new feature/warning/rule, update its home doc AND the matching warning table, then add a CHANGELOG entry.
 
 ## External references
 

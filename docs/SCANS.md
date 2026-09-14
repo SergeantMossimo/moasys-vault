@@ -1,85 +1,50 @@
-# Scans & Validation — Runbook
+# Scans & Validation
 
-MOASYS-Vault has two passes you can run against your library:
+The day-to-day guide: how to run MOASYS-Vault, what each pass does, and how long it takes.
 
-| Pass         | Command                           | What it does                                                                                                          |
-| ------------ | --------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| **Scan**     | `npm run <type> [drive]`          | Walks your folders and inspects every file. Produces your catalog plus a list of hygiene issues.                      |
-| **Validate** | `npm run validate:<type> [drive]` | Cross-checks your catalog against TheMovieDB or Open Library to catch title typos, wrong years, and missing episodes. |
+| Pass                                                      | Command                            | What it does                                                                                        |
+| --------------------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------- |
+| [Scan](#scan-pass)                                        | `npm run <type> [drive]`           | Inspects every file and walks your folders. Writes your catalog and a list of hygiene issues.       |
+| [Validate](#validate-pass)                                | `npm run validate:<type> [drive]`  | Cross-checks the catalog against TheMovieDB (movies, shows) or Open Library (audiobooks). Optional. |
+| [Plex](PLEX.md)                                           | `npm run plex:pull` / `plex:check` | Compares what Plex has with what's on disk. Optional.                                               |
+| [Fix show filenames](#fixing-filenames--npm-run-fixshows) | `npm run fix:shows`                | Renames flagged episode files. The only command that writes to your library.                        |
 
-The **scan** pass runs for every media type. The **validate** pass covers **movies and shows** (against TheMovieDB, which needs a free API key) and **audiobooks** (against Open Library, which needs no key). Music has no validate pass — its tag checks run during the scan. Validate is also fully optional; you don't need it for the scanner to work.
-
-## Picking a drive
-
-If a media type spans several drives, `config.json` lists one named root per drive and every command takes an optional drive name. Omit it and you get the **first root** configured for that type:
-
-```bash
-npm run movies              # first movies root
-npm run movies external     # the root named "External"
-npm run validate:movies external
-```
-
-Each drive is scanned independently, into its own `output/<drive>/<type>/` folder with its own cache and ignore list. Nothing is merged across drives. See [Configuration](CONFIG.md#selecting-a-drive) for the full rules.
+Every command takes an optional drive name — a root's `name` from `config.json`. Leave it off and each type uses its first root. Drives are scanned independently and never merged; see [Selecting a drive](CONFIG.md#selecting-a-drive).
 
 ---
 
-## Suggested workflow
+## Workflow
 
-### Initial setup (one-time)
+### First run
 
 ```bash
-# 1. Install dependencies
 npm install
+cp config.example.json config.json   # then edit the paths — see Configuration
 
-# 2. Point the scanner at your library
-# Copy config.example.json to config.json and list a named root for each media type you have
-# (one entry per drive if a type spans more than one)
-
-# 3. First scan — this is the slow one (every file gets inspected to build a cache)
-npm run scan:all
-
-# 3.1 If a type spans several drives, scan each one
-npm run scan:all external
-
-# 3.2 (Optional) Validate movies/shows against TMDB — needs a TMDB API key —
-#     and audiobooks against Open Library, which needs nothing
-npm run validate:movies
-npm run validate:shows
-npm run validate:audiobooks
-
-# 4. Review the warnings, fix what you want to fix in your library, re-scan
-npm run scan:all
+npm run scan:all                     # slow once: every file gets inspected (see Speed below)
+npm run scan:all external            # repeat for each extra drive, if you have one
 ```
 
-Re-runs are near-instant because the file inspection cache (`cache/<drive>/<type>-probe.json`) skips anything that hasn't changed. If the first scan is slow on an SSD or network share, set `probe_concurrency` on that root in `config.json` — see [Configuration](CONFIG.md#configjson).
+Then, optionally, set up the cross-checks:
+
+- **Validation** — add a free TMDB key to `.secrets.json` (see [Setup](#setup)), then `npm run validate:all`. Audiobooks validate against Open Library with no key.
+- **Plex** — add your server address and token (see [Plex setup](PLEX.md#setup)), then `npm run plex:pull` and `npm run plex:check`.
 
 ### Routine refresh
 
 Once set up, one command runs every routine pass for a drive, in dependency order:
 
 ```bash
-npm run all             # scan → validate → plex pull → plex check
-npm run all external    # the same, for the root named "External"
+npm run all                          # scan → validate → plex pull → plex check
+npm run all external                 # the same, for the root named "External"
 npm run all -- --no-plex --no-validate
 ```
 
 Steps that aren't set up are skipped with the reason — no TMDB key skips movie and show validation (audiobooks still validate), and no `plex` block or token skips both Plex steps. A failing step stops the run. `plex:logs` isn't included, and `fix:shows` never is.
 
-### Adding new media
+### After changing your library
 
-```bash
-# 1. Add the new files/folders to your library
-
-# 2. Re-scan the affected type (existing files served from cache; only the new ones get inspected)
-npm run movies        # or shows, music, audiobooks
-
-# 3. (Optional) Re-validate movies/shows against TMDB
-npm run validate:movies
-```
-
-### After cleaning up warnings
-
-You changed something in your library — what do you need to re-run?
+Work through the `*warnings.json` files in `output/<drive>/<type>/` ([Output](OUTPUT.md) explains each one), fix what you want to fix, then re-run what the change affects:
 
 | You changed...                                   | Re-run                                                               |
 | ------------------------------------------------ | -------------------------------------------------------------------- |
@@ -92,29 +57,30 @@ You changed something in your library — what do you need to re-run?
 
 ---
 
-## Scan pass — `npm run <type> [drive]`
+## Scan pass
 
-The scan pass for one media type on one drive does three things in order:
+`npm run <type> [drive]`, or `npm run scan:all [drive]` for every type. For one media type on one drive, the scan:
 
-1. **Inspect every file.** Walks every primary file and records video dimensions, audio codec/bitrate/sample rate, and (for music and audiobooks) the artist/album/track info embedded in the file. A cache entry from before tags were read for that type gets its tags backfilled once — a quick header read, not a re-inspection. Results are cached, so subsequent runs skip unchanged files.
-2. **Walk the folder tree.** Goes through the configured `categories` (or `root_path` directly if no categories are set) and parses each file's name and folder structure. Combines the inspection data to derive each version's quality.
-3. **Write its output** under `output/<drive>/<type>/`:
-   - `<type>.json` — your clean catalog
-   - `warnings.json` — every hygiene issue from steps 1 and 2
-   - `data/probe.json` — the rich per-file inspection data (codec, bitrate, sample rate, embedded tags, etc.), which the validate and Plex commands read
+1. **Inspects every primary file.** Records video dimensions, audio codec/bitrate/sample rate, and (for music and audiobooks) the tags embedded in the file. Results are cached, so later runs skip unchanged files. A cache entry from before tags were read for that type gets its tags backfilled once — a quick header read, not a re-inspection.
+2. **Walks the folder tree.** Goes through the configured `categories` (or `root_path` directly if there are none), parses each folder and file name against the [naming conventions](CONVENTIONS.md), and uses the inspection data to work out each copy's quality.
+3. **Writes** `<type>.json` (your catalog), `warnings.json` (every issue from steps 1 and 2), and `data/probe.json` (the inspection data the validate and Plex commands read) under `output/<drive>/<type>/`. See [Output](OUTPUT.md).
 
 ### Speed
 
-First run on a fresh library is the slow one — file inspection takes 100–300 ms per file:
+The first scan of a library is the slow one — inspecting a file takes 100–300 ms. After that only new or changed files are inspected, so a re-scan takes seconds on a local disk and a minute or two for a large library on a network share, where just listing the files takes time.
 
-| Library        | First run  |
-| -------------- | ---------- |
-| 2,500 movies   | ~12–20 min |
-| 5,000 episodes | ~15–25 min |
-| 7,000 tracks   | ~10 min    |
-| 3,500 chapters | ~6 min     |
+| First run         | Time       |
+| ----------------- | ---------- |
+| 2,500 movies      | ~12–20 min |
+| 5,000 episodes    | ~15–25 min |
+| 7,000 tracks      | ~10 min    |
+| 3,500 chapters    | ~6 min     |
+| `validate:movies` | ~10 min    |
+| `validate:shows`  | ~3 min     |
 
-The cache lives at `cache/<drive>/<type>-probe.json` (gitignored) and is keyed by `path | modification time | size`, where the path is relative to that drive's `root_path`. Only changed or added files get re-inspected on subsequent runs. Each drive keeps its own cache file — a shared one would let one drive's orphan cleanup delete the other drive's entries.
+**Faster first scans.** On an SSD or network share, set `probe_concurrency` on the root in `config.json` to inspect several files at once — 4–8 usually cuts the first scan several times over. Leave it at the default of 1 for spinning disks. See [Configuration](CONFIG.md#configjson).
+
+**The cache.** `cache/<drive>/<type>-probe.json` is keyed by `path | modification time | size`, with the path relative to the drive's `root_path`, so replacing or renaming a file re-inspects it. Each drive keeps its own file — a shared one would let one drive's orphan cleanup delete the other's entries. Delete the file to force a full re-inspection.
 
 ### Quality buckets (movies and shows)
 
@@ -146,7 +112,7 @@ See [Configuration](CONFIG.md#three-configuration-shapes) for the full configura
 
 The probe pass also knows how long each file actually is, and `warn_short_duration` flags any movie file whose runtime is **at or below** `min_duration_minutes` (default 30). It's **off by default** because the [TMDB runtime cross-check](#tmdb-runtime-cross-check-movies) does the same job more precisely; turn it on with `checks.warn_short_duration: true` if you don't run validation. The thing worth catching is a truncated or failed encode — a 4-minute file where a 2-hour film should be, or a zero-length container that won't play at all.
 
-Unlike `warn_quality_mismatch`, this isn't gated on the category's quality, so it fires in general-tag categories like `Documentary/` too. Files whose duration ffprobe couldn't read are skipped — those already fire `warn_probe_failed`. Set `min_duration_minutes: 0` to turn the check off.
+Unlike `warn_quality_mismatch`, this isn't gated on the category's quality, so it fires in general-tag categories like `Documentary/` too. Files whose duration ffprobe couldn't read are skipped — those already fire `warn_probe_failed`.
 
 #### A known false positive: legitimate short films
 
@@ -159,7 +125,7 @@ movies:
   - Luxo Jr. (1986)
 ```
 
-Note that silences the film's _other_ warnings too — naming, TMDB, quality. That's the trade the ignore list makes: it's scoped per item, not per check. If short films are noisy across the whole library rather than on a handful of titles, turn the check off with `checks.warn_short_duration: false` instead.
+Note that silences the film's _other_ warnings too — naming, TMDB, quality. That's the trade the ignore list makes: it's scoped per item, not per check. If short films are noisy across the whole library rather than on a handful of titles, leave the check off and rely on the TMDB runtime cross-check instead.
 
 Resist the temptation to lower `min_duration_minutes` to make the noise go away — that also throws away the truncated-encode signal, which is the entire point.
 
@@ -175,10 +141,11 @@ Albums where the tracks have truly mismatched quality (FLAC mixed with MP3, or a
 
 Music files carry metadata embedded inside them — title, artist, album, year, track number, genre, and so on. The scanner reads these tags during the file inspection pass and stores them per track in `output/<drive>/music/data/probe.json` under a `tags` field.
 
-Four warnings are driven from the tag data:
+Five warnings are driven from the tag data:
 
 - **`warn_compilation_detected`** — the album has multiple distinct AlbumArtist values, which usually means it belongs under `Various Artists/`
 - **`warn_folder_tag_mismatch`** — the folder name (artist or album) disagrees with what's embedded in the file
+- **`warn_folder_tag_case`** — the folder name matches the tag except for capitalization
 - **`warn_missing_tags`** — required tag fields (title / album / artist) are blank
 - **`warn_track_number_mismatch`** — the track number in the filename (`01 - ...`) doesn't match the track number embedded in the file
 
@@ -194,7 +161,9 @@ If you find a stack of these in your warnings, that's the pattern.
 
 ---
 
-## Validate pass — `npm run validate:<type> [drive]`
+## Validate pass
+
+`npm run validate:<type> [drive]`, or `npm run validate:all [drive]`.
 
 Cross-checks your scan output against TheMovieDB (movies, shows) or Open Library (audiobooks — see [Audiobooks against Open Library](#audiobooks-against-open-library) below). Music has no validate pass.
 
@@ -353,7 +322,7 @@ It **only ever renames files**. No deletes, no moves between folders, no folder 
 
 `episode-titles` reads `output/<drive>/shows/data/validation.json` and `cache/tmdb-show-seasons.json`, so **run `npm run validate:shows <drive>` first**. It makes no network calls of its own.
 
-### Workflow
+### Running it
 
 ```bash
 npm run fix:shows -- --fix show-prefix external            # 1. preview

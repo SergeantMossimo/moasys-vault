@@ -1,12 +1,13 @@
 # Configuration & Rules
 
-Configuration is split between two layers:
+Everything you can configure, in four files:
 
-- **`config.json`** — the per-machine path to each media library. The bare minimum to point the scanner at your files.
-- **`rules/<type>.yaml`** — everything about how your library is organized: which subfolders to scan, file extensions, regex patterns, year ranges, ignored season names, sidecar lists, per-warning toggles.
-  - Types include: movies, shows, music, and audiobooks
-
-Each rules file contains the default rules for its media type. You only need to edit a rules file if you want to override a default.
+| File                                                                                | What it holds                                                                                          | You edit it…                                |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
+| [`config.json`](#configjson)                                                        | Where your library lives: named roots per media type, plus the Plex server address                     | Always — once, at setup                     |
+| [`rules/<type>.yaml`](#rules-typeyaml-and-typelocalyaml)                            | How your library is organized: categories, extensions, name patterns, quality buckets, warning toggles | When your library differs from the defaults |
+| [`ignored/<drive>/<type>.yaml`](#ignoreddrivetypeyaml--silencing-specific-warnings) | Specific items whose warnings you've decided to live with                                              | As you review warnings                      |
+| [`.secrets.json`](#secretsjson)                                                     | TMDB API key and Plex token                                                                            | Only if you use those features              |
 
 ---
 
@@ -75,7 +76,7 @@ npm run validate:movies external
 npm run scan:all external   # every type that has an "External" root
 ```
 
-Naming a drive that isn't configured for that type is an error — except under `scan:all` / `validate:all`, where the type is skipped with a note. That's what lets `npm run scan:all external` work when only movies and shows live on the external drive.
+Naming a drive that isn't configured for a type — or running a type that isn't in `config.json` at all — is an error on a single-type command. The `--all` commands (`scan:all`, `validate:all`, `plex:check`, `npm run all`) skip that type with a note instead. That's what lets `npm run scan:all external` work when only movies and shows live on the external drive.
 
 ### Per-drive files
 
@@ -97,19 +98,19 @@ That's it for `config.json`. Everything else lives in `rules/<type>.yaml`.
 
 ## Rules: `<type>.yaml` and `<type>.local.yaml`
 
-Each media type has up to two files that live in the `rules` folder:
+Each media type has up to two files in the `rules` folder, and `plex.yaml` covers the Plex checks:
 
 ```text
 rules/
 ├── movies.yaml             ← default configuration
-├── movies.local.yaml       ← personal overrides (optional)
+├── movies.local.yaml       ← personal overrides (optional, gitignored)
 ├── shows.yaml
-├── shows.local.yaml
 ├── music.yaml
-├── music.local.yaml
 ├── audiobooks.yaml
-└── audiobooks.local.yaml
+└── plex.yaml               ← warning toggles for plex:check and plex:logs — see Plex
 ```
+
+Rules are per media type, not per drive — the same `rules/movies.yaml` applies to every movies root.
 
 **`rules/<type>.yaml`** ships with every option set to the code default — fully visible, no comment-block tricks. Edit a value to change the project-wide default for this checkout. Comment a line out to fall back to whatever the current code default is (useful when you want to "ignore" a setting and let the code decide).
 
@@ -540,12 +541,12 @@ checks:
 Rules are validated at startup against a Zod schema. If your YAML has a typo, wrong type, or invalid regex, you get a clear error before any scanning happens:
 
 ```text
-Error: rules/movies.yaml failed schema validation:
-  - year_range.min: Expected number, received string
+Error: rules for movies failed schema validation (sources: rules/movies.yaml + rules/movies.local.yaml):
+  - year_range.min: Invalid input: expected number, received string
   - patterns.folder: must be a valid regular expression
 ```
 
-The defaults live in code at `src/core/rules/<type>.ts` alongside the schema, so changes ship as a single coordinated update.
+The defaults live in code at `src/core/rules/<type>.ts` alongside the schema, and a test fails if the committed `rules/<type>.yaml` ever drifts from them.
 
 ---
 
@@ -641,22 +642,18 @@ Done — 131 entries, 18 warnings, 5 silenced via ignore list.
 
 ## `.secrets.json`
 
-The Plex commands need a token in a `plex` block here — see [Plex](PLEX.md#2-token--secretsjson). Each command validates only the block it uses.
-
-The TMDB validation pass for movies and shows ([Scans](SCANS.md)) needs an API key. It lives in `.secrets.json` at the project root. The file is gitignored so that you don't end up sharing your API key. `npm run validate:audiobooks` uses Open Library, which needs no key, and runs without this file.
-
-To set it up:
-
-1. Sign up for a free TMDB v3 API key — getting-started docs: <https://developer.themoviedb.org/docs/getting-started>
-2. Copy `.secrets.json.example` to a new file called `.secrets.json`.
-3. Paste your key into the `tmdb.api_key` field
+Credentials live in `.secrets.json` at the project root, which is gitignored. Copy `.secrets.json.example` and fill in only the blocks you use — each command validates just the block it needs, so an unfilled placeholder for a feature you don't use never gets in the way.
 
 ```json
 {
-  "tmdb": {
-    "api_key": "your-tmdb-v3-api-key-here"
-  }
+  "tmdb": { "api_key": "your-tmdb-v3-api-key" },
+  "plex": { "token": "your-plex-token" }
 }
 ```
 
-The loader validates the key shape at startup and exits with a clear error if it's missing or unedited.
+| Block  | Needed by                                                                  | How to get it                                                                                                 |
+| ------ | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `tmdb` | `validate:movies`, `validate:shows` (skipped by `validate:all` if missing) | A free v3 API key — see [TMDB's getting-started guide](https://developer.themoviedb.org/docs/getting-started) |
+| `plex` | `plex:pull`, `plex:check`, `plex:logs`                                     | Your `X-Plex-Token` — see [Plex setup](PLEX.md#2-token--secretsjson)                                          |
+
+`validate:audiobooks` uses Open Library and needs no key. A missing, malformed, or still-placeholder block fails at startup with instructions, before any requests are made.

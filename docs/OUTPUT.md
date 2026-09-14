@@ -229,7 +229,7 @@ The bucket key (a `warn_*` identifier) is the same string you use under `rules/<
 
 Every warning has a per-type toggle in `rules/<type>.yaml` under `checks.warn_*`. Warnings ship enabled unless their table row says **Off by default**; set any toggle to `false` to silence that check everywhere. To silence specific items instead, list them by level in `ignored/<drive>/<type>.yaml` — see [Configuration](CONFIG.md#ignoreddrivetypeyaml--silencing-specific-warnings). The two are complementary: `checks` is per check, the ignore list is per item and silences every check on it.
 
-The tables below show the human-readable issue text you'll see in `warnings.json` alongside what triggered it. Warnings marked _(validate pass)_ only appear after `npm run validate:<type>`.
+The tables below show the human-readable issue text you'll see in `warnings.json` alongside what triggered it. Warnings marked _(validate pass)_ only appear after `npm run validate:<type>`, in `validation-warnings.json`. The Plex warnings in `plex-warnings.json` and `plex-log-warnings.json` are listed in [Plex](PLEX.md#warnings).
 
 ### Movies
 

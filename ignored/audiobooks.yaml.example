@@ -1,85 +1,30 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# MOASYS-Vault — Audiobooks ignore list (EXAMPLE)
+# MOASYS-Vault — Audiobooks ignore list (template)
 # ─────────────────────────────────────────────────────────────────────────────
+# Silences warnings you've decided to live with. Copy to
+# ignored/<drive>/audiobooks.yaml (e.g. ignored/server/audiobooks.yaml),
+# uncomment what you need, and re-run. The real file is gitignored.
 #
-# A "do not warn me about this" list for your audiobooks library. Anything
-# listed here is silently dropped from output/<drive>/audiobooks/warnings.json
-# on every run, and counted in the run summary.
+# Names match exactly at their level, in any category, case-insensitively. An
+# entry silences EVERY warning at or below it — scan, validate and Plex. To turn
+# off one kind of warning everywhere, use `checks:` in rules/audiobooks.yaml.
 #
-# Ignore lists are per DRIVE as well as per type, because warning paths are
-# relative to that drive's root_path. `ignored/server/audiobooks.yaml` only
-# affects runs against the root named "Server".
-#
-# How to use this file:
-#   1. Copy it to `ignored/<drive>/audiobooks.yaml` (drop the `.example`
-#      suffix). The real file is gitignored so your personal decisions stay
-#      out of version control.
-#   2. Add names under the level they belong to.
-#   3. Re-run `npm run audiobooks <drive>`. Matching warnings disappear.
-#
-# ── Levels ───────────────────────────────────────────────────────────────────
-#
-#   folders    a category folder        - Other Audible
-#   authors    one author folder        - J.R.R. Tolkien
-#   books      one book                 - The Hobbit
-#                                         (or  J.R.R. Tolkien/The Hobbit)
-#   chapters   one file, qualified      - The Hobbit/09 - Chapter 9.mp3
-#
-# Names are matched at their own level and are CATEGORY-INDEPENDENT: a book
-# listed here is silenced whether it sits in Audible/, Book On CD/, or both.
-# That is also what lets an entry reach warn_duplicate_book, which reports
-# `Author/Book` with no category to anchor to.
-#
-# For a multi-author book the author name is the comma-joined folder form, the
-# same string the scanner reports — `Don Malarkey, Bob Welch`.
-#
-# ── Qualifiers ───────────────────────────────────────────────────────────────
-#
-# `chapters:` entries must name their book. A bare `09 - Chapter 9.mp3` exists
-# in hundreds of books, so one such entry would silence all of them — the
-# loader rejects it rather than let that happen quietly. `books:` may be bare
-# or qualified with the author. A `/` means "somewhere above", not
-# "immediately above".
-#
-# ── Scope ────────────────────────────────────────────────────────────────────
-#
-# An entry silences EVERY warning at or below its level — chapter gaps,
-# naming, unexpected entries, all of them. There is no per-warning-type
-# scoping. To turn off a whole warning type instead, set
-# `checks.warn_*: false` in rules/audiobooks.yaml.
-#
-# ── Matching ─────────────────────────────────────────────────────────────────
-#
-# Exact per level (not a prefix), case-insensitive, and either slash works.
-#
-# ── Finding names ────────────────────────────────────────────────────────────
-#
-# Take them from the `path` values in output/<drive>/audiobooks/warnings.json,
-# dropping the leading category folder.
+# Full reference: docs/CONFIG.md → "ignored/<drive>/<type>.yaml"
 # ─────────────────────────────────────────────────────────────────────────────
 
-
-# Silence everything under a category folder
+# A whole category folder
 # folders:
 #   - Other Audible
-#   - Book On CD
 
-
-# Silence a whole author
+# A whole author — multi-author folders use the folder's comma-joined name
 # authors:
-#   - Some Author
 #   - Don Malarkey, Bob Welch
 
-
-# Silence one book
-# (Drops every warning on it — chapter gaps, bad chapter names, unexpected
-# entries. Common for a multi-part book whose numbering legitimately skips.)
+# One book — bare, or with its author
 # books:
 #   - The Lord of the Rings
-#   - J.R.R. Tolkien/The Lord of the Rings
+#   - J.R.R. Tolkien/The Hobbit
 
-
-# Silence one chapter file
+# One chapter file — must name its book
 # chapters:
 #   - The Lord of the Rings/09 - Chapter 9.mp3
-#   - J.R.R. Tolkien/The Lord of the Rings/09 - Chapter 9.mp3
