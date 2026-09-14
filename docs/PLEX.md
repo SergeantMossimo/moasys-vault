@@ -21,9 +21,6 @@ Add a `plex` block alongside your media roots:
 ```json
 {
   "movies": [{ "root_path": "M:\\Movies", "name": "Server" }],
-  "shows": [{ "root_path": "M:\\Shows", "name": "Server" }],
-  "music": [{ "root_path": "M:\\Audio", "name": "Server" }],
-  "audiobooks": [{ "root_path": "M:\\Audiobooks", "name": "Server" }],
   "plex": {
     "url": "http://192.168.1.50:32400"
   }

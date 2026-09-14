@@ -1,8 +1,8 @@
 # Folder Structure & Naming Conventions
 
-MOASYS-Vault follows Plex's documented folder and file naming conventions. This page is the day-to-day reference for what your library should look like and what the scanner flags when it doesn't.
+MOASYS-Vault follows Plex's documented folder and file naming conventions. This page is the reference for what your library should look like, with the gotchas that trip people up. For every warning the scanner raises when a library doesn't match, see the [warning tables](OUTPUT.md#warning-tables).
 
-If you already follow Plex's conventions, you're good — the defaults in `rules/<type>.yaml` match Plex exactly. If you want to tighten or loosen anything for your library, see [Configuration](CONFIG.md).
+If you already follow Plex's conventions, you're good — the defaults in `rules/<type>.yaml` match Plex. To tighten or loosen anything for your library, see [Configuration](CONFIG.md).
 
 > **Plex's official docs** (for reference):
 > [Naming Movie Files](https://support.plex.tv/articles/200381023-naming-movie-files/) ·
@@ -40,15 +40,12 @@ Movies/
     └── Close Encounters of the Third Kind (1977) {edition-Special Edition}.mp4
 ```
 
-**What gets flagged:**
+**Gotchas:**
 
-- The file's year doesn't match the parent folder's year (`warn_year_mismatch`)
-- The file's title doesn't match the parent folder's title, case-insensitive (`warn_title_mismatch`)
-- An empty `{edition-}` tag with no value after the dash (`warn_empty_edition`)
-- Two files in the same folder claim the same edition (`warn_duplicate_edition`)
-- The same movie appears in more than one quality folder — _only fires if your `categories` are organized by quality_ — unless the combination is whitelisted in `acceptable_quality_combos` (`warn_multi_quality`)
-- The same movie appears in two or more folders of the _same_ quality tier, e.g. `HD/` and `Other HD/` — redundant copies of the same thing. `acceptable_quality_combos` never silences this, since a combo describes which tiers may coexist, not how many copies may sit inside one (`warn_duplicate_quality`)
-- Subfolders inside a movie folder (`warn_extra_subfolders`). **Heads up:** any video files inside those subfolders are NOT added to the catalog — the scanner only reads direct children of the movie folder. You'll see the subfolder name in `warnings.json` so you know what got skipped.
+- **Each edition is its own catalog entry.** Two files in one folder claiming the same `{edition-…}` are flagged.
+- **Capitalization counts.** A file titled `The crow (1994)` in `The Crow (1994)/` gets its own lower-severity capitalization warning, separate from a genuinely different title.
+- **No subfolders inside a movie folder.** The scanner only reads a movie folder's direct children — video files in a subfolder are **not** added to the catalog. The subfolder is flagged so you know what was skipped.
+- **Quality folders.** If your categories are organized by quality (`UHD/`, `HD/`, `SD/`), the same movie in two tiers is flagged unless you whitelist the pair, and two copies in the _same_ tier (`HD/` + `Other HD/`) always are. See [Three configuration shapes](CONFIG.md#three-configuration-shapes).
 
 ---
 
@@ -72,8 +69,9 @@ Movies/
 - **Show folder:** `Show Title (YEAR)` — year in parentheses
 - **Season folder:** `Season XX` — two-digit zero-padded number (`Season 01`, not `Season 1`)
 - **Episode file:** `Show Title (YEAR) - S01E01 - Episode Title.<ext>`
-  - The trailing `- Episode Title` portion is optional
+  - The trailing `- Episode Title` portion is optional, but files without it are summarized as missing titles
   - Multi-episode files use `S01E01-E02`
+  - Plex reads `s01e01` and `S01E01` alike. To keep your library consistent, set a house style with [`episode_code_case`](CONFIG.md#episode_code_case)
 
 **Special seasons:**
 
@@ -92,20 +90,18 @@ Shows/
 └── Star Trek Enterprise (2001)/
     ├── Season 01/
     │   ├── Star Trek Enterprise (2001) - S01E01-E02 - Broken Bow Part 1 And 2.mp4
-    │   ├── Star Trek Enterprise (2001) - S01E03 - Flight or Flight.mp4
+    │   ├── Star Trek Enterprise (2001) - S01E03 - Fight or Flight.mp4
     │   └── Star Trek Enterprise (2001) - S01E04 - Strange New World.mp4
     └── Specials/
         └── Star Trek Enterprise (2001) - S00E01 - Behind the Scenes.mp4
 ```
 
-**What gets flagged:**
+**Gotchas:**
 
-- Season folder isn't two-digit zero-padded (e.g. `Season 1` instead of `Season 01`) and isn't in `ignored_season_names` (`warn_bad_season_folder`)
-- File's show name or year doesn't match the parent show folder (`warn_show_year_mismatch`)
-- File's season number doesn't match the parent season folder (`warn_season_mismatch`)
-- Gaps in episode numbers within a season — multi-episode files (`S01E01-E02`) count as 2 (`warn_episode_gaps`)
-- Episode files placed directly in a show folder, without a `Season XX` wrapper (`warn_loose_files`) — those files are NOT added to the catalog
-- Subfolders inside a season folder (`warn_extra_subfolders`). **Same heads-up as movies:** files inside those subfolders are NOT scanned. You'll see the subfolder name in `warnings.json`.
+- **`Season 1` isn't `Season 01`.** Season folders must be zero-padded, unless the name is listed in `ignored_season_names`.
+- **Episodes need a season folder.** Files directly in a show folder are **not** added to the catalog, and neither are files in a subfolder inside a season.
+- **Gap detection counts multi-episode files fully** — `S01E01-E02` covers episodes 1 and 2. It only sees gaps _between_ episodes you have; a missing final episode needs the [TMDB episode count](SCANS.md#what-it-catches) check.
+- **Too many files to rename by hand?** [`npm run fix:shows`](SCANS.md#fixing-filenames--npm-run-fixshows) can repair show prefixes, add episode titles, and normalize episode codes.
 
 ---
 
@@ -173,18 +169,12 @@ Soundtracks/
         └── ...
 ```
 
-**What gets flagged:**
+**Gotchas:**
 
-- Track file name doesn't match any pattern (`warn_bad_track_name`)
-- Track numbers aren't zero-padded to 2 digits (e.g. `1` instead of `01`) — falls under `warn_bad_track_name`
-- Trailing whitespace or Windows-illegal characters in artist/album folders (`warn_suspicious_folder_chars`) — these silently fragment your Plex library, so the scanner flags them aggressively
-- Gaps in track numbers within a disc (`warn_track_gaps`)
-- The same artist + album combination appears in more than one category (`warn_duplicate_album`)
-- Audio files placed loose in a category folder OR in an artist folder without an album wrapper (`warn_loose_files`) — those files are NOT added to the catalog
-- The embedded music tag disagrees with the folder name (`warn_folder_tag_mismatch`)
-
-A few gotchas worth knowing:
-
+- Track numbers must be zero-padded to two digits — `1 - Track` doesn't match
+- Trailing whitespace or Windows-illegal characters in artist or album folders silently split an artist in Plex, so they're flagged
+- Audio files loose in a category folder or directly in an artist folder are **not** added to the catalog
+- Embedded tags matter as much as folders: Plex groups by the `Album Artist` tag, so a tag that disagrees with its folder is flagged. See [Embedded music tags](SCANS.md#embedded-music-tags)
 - The scanner doesn't recurse into subfolders inside an album — multi-disc albums must use the flat disc-prefixed convention (`101`, `201`, etc.)
 - The disc number prefix is greedy: a file named `100 - Track` parses as disc 1, track 00 (because the multi-disc pattern is tried first)
 - `warn_folder_tag_mismatch` accounts for what Windows allows in a folder name: Windows-illegal characters (`< > : " | ? * \ /`) and trailing periods/spaces are dropped from the tag before comparison. So an `AlbumArtist` tag of `P.O.D.` matches the folder `P.O.D`, `AC/DC` matches `ACDC`, and `Billboard Hits U.S.A.` matches `Billboard Hits U.S.A` — no warning fires for those
@@ -238,16 +228,9 @@ Book On CD/
         └── 202 - Chapter 2.mp3
 ```
 
-**What gets flagged:**
+**Gotchas:**
 
-- Chapter file name doesn't match any pattern (`warn_bad_chapter_name`)
-- Gaps in chapter numbers within a disc (`warn_chapter_gaps`)
-- The same book title appears in more than one category (`warn_duplicate_book`) — books are keyed by **title only**, so different authors with the same title will collide
-- Audio files at unexpected nesting (`warn_loose_files`)
-- Subfolders inside a book folder (`warn_extra_subfolders`)
-
-A few gotchas worth knowing:
-
-- Books are keyed by title only — the same title by different authors collides in the catalog. Intentional, but worth knowing.
+- Books are keyed by title only — the same title by different authors collides, and is reported as a duplicate if it sits in two categories. Intentional, but worth knowing.
+- Spelling drift across books is flagged: `Gaunt's Ghost` vs `Gaunt's Ghosts` in series names, `Tobias S. Buckell` vs `Tobias Buckell` in author folders. Plex treats each spelling as a different series or person.
 - No quality dimension check applies to audiobooks — spoken word at modest bitrates is fine. Codec and bitrate are still collected during the file inspection pass.
 - The same flat / disc-prefixed convention applies for multi-disc books — no per-disc subfolders.
