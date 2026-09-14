@@ -195,7 +195,7 @@ A few things to know if you're building a website (or anything else) on top of t
 
 ### `warnings.json` (shape shared across scan + validate)
 
-Warnings are grouped by their `type` (the same identifier as the matching `checks.warn_*` toggle in `rules/<type>.yaml`) under `by_type`. Each row in a bucket carries a `path` and human-readable `issue`; some rows also carry an `extension`. Buckets are sparse — only types that actually fired appear as keys. Inside each bucket, rows are sorted alphabetically by path; the outer keys are sorted alphabetically too, so the file diffs cleanly across runs.
+Warnings are grouped by their `type` (the same identifier as the matching `checks.warn_*` toggle in `rules/<type>.yaml`) under `by_type`. Each row in a bucket carries a `path`, a human-readable `issue`, and an `ignore` entry you can paste into your ignore list to silence it (see [below](#silencing-a-row)); some rows also carry an `extension`. Buckets are sparse — only types that actually fired appear as keys. Inside each bucket, rows are sorted alphabetically by path; the outer keys are sorted alphabetically too, so the file diffs cleanly across runs.
 
 One bucket orders itself differently: `warn_duplicate_quality` groups by quality first — every UHD row, then HD, then SD — with paths sorted alphabetically inside each quality group. Duplicates of your best copies are the ones worth acting on first, so they read together at the top rather than scattered through an alphabetical list. Ordering is still fully deterministic, so the file diffs cleanly across runs either way.
 
@@ -207,19 +207,33 @@ One bucket orders itself differently: `warn_duplicate_quality` groups by quality
     "warn_non_primary": [
       {
         "path": "UHD/The Terminator (1984)/The Terminator (1984).mkv",
+        "issue": "Non-.MP4 video file — may need re-encoding",
         "extension": ".mkv",
-        "issue": "Non-.MP4 video file — may need re-encoding"
+        "ignore": "files: The Terminator (1984)/The Terminator (1984).mkv"
       }
     ],
     "warn_tmdb_no_match": [
       {
         "path": "UHD/'Twas The Night Before Christmas (1974)",
-        "issue": "TMDB found no match for ''Twas The Night Before Christmas' (1974). Possible typo in title or year, or this movie isn't in TMDB."
+        "issue": "TMDB found no match for ''Twas The Night Before Christmas' (1974). Possible typo in title or year, or this movie isn't in TMDB.",
+        "ignore": "movies: \"'Twas The Night Before Christmas (1974)\""
       }
     ]
   }
 }
 ```
+
+#### Silencing a row
+
+`ignore` is the narrowest entry that silences just that row, written as `<key>: <name>`. To use it, add the name under that key in `ignored/<drive>/<type>.yaml`:
+
+```yaml
+# "ignore": "episodes: Firefly (2002)/S01E05"  becomes:
+episodes:
+  - Firefly (2002)/S01E05
+```
+
+It's deliberately narrow — an entry silences everything at or below its level, so a suggestion for one episode names that episode rather than the whole show. Widen it by hand (`shows: Firefly (2002)`) if that's what you want. Names that YAML would misread, like one starting with `'`, come already quoted. See [Configuration](CONFIG.md#ignoreddrivetypeyaml--silencing-specific-warnings) for how matching works.
 
 The bucket key (a `warn_*` identifier) is the same string you use under `rules/<type>.yaml` `checks`, so it's copy-pasteable between the two. Ignore lists don't reference warning types at all — they list names by level (see [CONFIG.md](CONFIG.md#ignoreddrivetypeyaml--silencing-specific-warnings)), so `checks: false` is the only way to silence a whole warning _type_.
 
@@ -276,7 +290,7 @@ The tables below show the human-readable issue text you'll see in `warnings.json
 | Loose video files                                 | Episode files directly in a category folder or in a show folder (no `Season XX` wrapper) — NOT added to the catalog                                                                                                                                                                       |
 | Unexpected subfolder in season folder             | Subfolders found inside a `Season XX/` folder — files inside them are NOT scanned                                                                                                                                                                                                         |
 | Unexpected file                                   | A non-video file that isn't a recognized Plex sidecar                                                                                                                                                                                                                                     |
-| Quality mismatch                                  | The file's actual dimensions don't fit the bucket its category implies                                                                                                                                                                                                                    |
+| Quality mismatch                                  | Episodes in a season don't fit the bucket their category implies. Summarized once per season, with the resolutions found and the bucket each actually fits                                                                                                                                |
 | Season has duplicate _Q_ copies in _N_ folders    | A single season is in two or more folders of the SAME quality tier (`HD/` + `Other HD/`) — redundant files. Not whitelistable                                                                                                                                                             |
 | Season exists in multiple qualities               | A single season has copies in two quality folders (whitelist via `acceptable_quality_combos`)                                                                                                                                                                                             |
 | TMDB no match _(validate pass)_                   | TMDB found nothing matching the title + year, under either the strict or loose comparison                                                                                                                                                                                                 |

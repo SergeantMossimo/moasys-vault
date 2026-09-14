@@ -17,7 +17,7 @@ Built for **MOASYS** _(Mossimo's Oasis System)_ and designed to be shared.
 
 ## Requirements
 
-- [Node.js](https://nodejs.org/) 22 or newer (24 LTS recommended)
+- [Node.js](https://nodejs.org/) 22.12 or newer (24 LTS recommended)
 - A media library on a local folder, external drive, or network share — anything your OS can open
 
 ## Quickstart

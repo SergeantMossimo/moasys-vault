@@ -146,10 +146,32 @@ export class ProbeCache {
    *
    * Safe to call at the end of a scan: cleared entries weren't read this run
    * (their files don't exist), so dropping them doesn't lose any work.
+   *
+   * Refuses to prune anything when `rootPath` itself is missing — an
+   * unplugged drive or a moved folder would otherwise look like a library
+   * where every file was deleted, and wipe a cache that takes minutes to
+   * rebuild. Entries under `keepPrefixes` (forward-slash relative folders,
+   * e.g. category folders that are missing this run) are kept for the same
+   * reason.
+   *
+   * `seenThisRun` is the set of relative paths the probe pass just found on
+   * disk. Those are known to exist, so only the remaining entries are checked
+   * — on a network share that turns one existence check per cached file into
+   * one per file that actually went away. The result is identical either way.
    */
-  pruneOrphans(rootPath: string): number {
+  pruneOrphans(
+    rootPath: string,
+    keepPrefixes: string[] = [],
+    seenThisRun: ReadonlySet<string> = new Set()
+  ): number {
+    if (!fs.existsSync(rootPath)) return 0
+    const keep = keepPrefixes.map(p => (p.endsWith('/') ? p : `${p}/`).toLowerCase())
+
     let removed = 0
     for (const [key, entry] of this.entries) {
+      if (seenThisRun.has(entry.path)) continue
+      const lower = entry.path.toLowerCase()
+      if (keep.some(prefix => lower.startsWith(prefix))) continue
       const absolutePath = path.join(rootPath, entry.path)
       if (!fs.existsSync(absolutePath)) {
         this.entries.delete(key)

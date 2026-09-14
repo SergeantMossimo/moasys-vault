@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
 
 import {
   printRunSummary,
+  rootPathAvailable,
   rootProblem,
   selectRoot,
   warningBreakdown,
@@ -116,5 +120,51 @@ describe('printRunSummary', () => {
   it('prints only the totals line when there is nothing to review', () => {
     printRunSummary(new WarningCollector(), { noun: 'validation warnings', review: 'x' })
     expect(lines()).toEqual(['\n  Done — 0 validation warnings.'])
+  })
+})
+
+describe('rootPathAvailable', () => {
+  let tmpDir: string
+  let logSpy: ReturnType<typeof vi.spyOn>
+  let errorSpy: ReturnType<typeof vi.spyOn>
+  let exitSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'moasys-root-available-'))
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(((_code?: number) => {
+      throw new Error('process.exit called')
+    }) as never)
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    logSpy.mockRestore()
+    errorSpy.mockRestore()
+    exitSpy.mockRestore()
+  })
+
+  it('is true for an existing folder', () => {
+    expect(rootPathAvailable('shows', { root_path: tmpDir, name: 'External' }, false)).toBe(true)
+  })
+
+  it('skips with a note under --all when the folder is missing', () => {
+    const root = { root_path: path.join(tmpDir, 'Move'), name: 'External' }
+    expect(rootPathAvailable('shows', root, true)).toBe(false)
+    const text = logSpy.mock.calls.map((call: unknown[]) => String(call[0])).join('\n')
+    expect(text).toContain("[SKIP] shows root 'External' not found")
+    expect(text).toContain('update root_path in config.json')
+  })
+
+  it('exits on a single-type run when the folder is missing', () => {
+    const root = { root_path: path.join(tmpDir, 'Move'), name: 'External' }
+    expect(() => rootPathAvailable('shows', root, false)).toThrow('process.exit called')
+  })
+
+  it('treats a file at root_path as missing', () => {
+    const file = path.join(tmpDir, 'not-a-folder.txt')
+    fs.writeFileSync(file, '')
+    expect(rootPathAvailable('movies', { root_path: file, name: 'Server' }, true)).toBe(false)
   })
 })

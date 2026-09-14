@@ -40,6 +40,7 @@ import {
   parseRunnerArgs,
   printBanner,
   printRunSummary,
+  rootPathAvailable,
   selectRoot,
   writeJsonOutput,
   writeWarnings,
@@ -207,8 +208,14 @@ async function runType<TRecord, TOutput, TConfig extends BaseMediaConfig>(
 
   // Drop cache entries whose files no longer exist under root_path. Keeps
   // cache/<drive>/<type>-probe.json from growing without bound as files are
-  // renamed or deleted from the library.
-  const orphans = cache.pruneOrphans(root.root_path)
+  // renamed or deleted from the library. Entries under a category folder that
+  // is missing this run are kept: a folder being reorganized, or a drive only
+  // partly available, shouldn't cost a re-probe of everything in it.
+  const missingCategories = entry.module
+    .getCategories()
+    .map(c => c.folderName)
+    .filter(name => name !== '' && !fs.existsSync(path.join(root.root_path, name)))
+  const orphans = cache.pruneOrphans(root.root_path, missingCategories, new Set(probeByPath.keys()))
   cache.save()
   const orphanSummary = orphans > 0 ? ` (pruned ${orphans} orphan${orphans === 1 ? '' : 's'})` : ''
   console.log(`    [CACHE] ${cache.size()} entries saved to ${cachePath}${orphanSummary}`)
@@ -241,7 +248,11 @@ async function main(): Promise<void> {
   // about to run, so `scan:all` loads one type's rules at a time.
   for (const mediaType of types) {
     const root = selectRoot(config, mediaType, parsed.drive, acrossAllTypes)
-    if (root) await runMediaType(mediaType, root)
+    // A missing root must stop the run before anything is written: scanning
+    // it would produce an empty catalog and prune the whole probe cache.
+    if (root && rootPathAvailable(mediaType, root, acrossAllTypes)) {
+      await runMediaType(mediaType, root)
+    }
   }
 
   console.log()

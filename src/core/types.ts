@@ -6,8 +6,8 @@
  * everywhere it's used — no silent mismatches between modules.
  */
 
-import { deriveScope, EMPTY_IGNORE_LIST, isWarningIgnored } from './ignored'
-import type { IgnoreList, WarningScope } from './ignored'
+import { deriveScope, EMPTY_IGNORE_LIST, isWarningIgnored, suggestIgnoreEntry } from './ignored'
+import type { IgnoreList, IgnoreMediaType, WarningScope } from './ignored'
 
 // ─────────────────────────────────────────────
 // Config types
@@ -102,6 +102,8 @@ export interface Warning {
    * consumer of warnings.json would act on.
    */
   sortKey?: string
+  /** Ready-to-paste ignore-list entry — see `suggestIgnoreEntry`. */
+  ignore?: string
 }
 
 /** Optional extras on a warning. See `WarningCollector.add`. */
@@ -140,6 +142,12 @@ export interface WarningRow {
   path: string
   issue: string
   extension?: string
+  /**
+   * The narrowest ignore-list entry that would silence this row, e.g.
+   * `shows: Firefly (2002)` — add `- Firefly (2002)` under `shows:` in
+   * ignored/<drive>/<type>.yaml. Absent when no entry can reach the row.
+   */
+  ignore?: string
 }
 
 /**
@@ -386,9 +394,14 @@ function compareRows(a: Warning, b: Warning): number {
 export class WarningCollector {
   private warnings: Warning[] = []
   private silenced = 0
+  private readonly ignored: IgnoreList
+  /** Media type for ignore suggestions; null when no list was supplied. */
+  private readonly suggestFor: IgnoreMediaType | null
 
   /**
-   * @param ignored       loaded ignore list for this drive + media type
+   * @param ignored       loaded ignore list for this drive + media type. When
+   *                      given (even empty), each row also carries a
+   *                      ready-to-paste `ignore` entry for that media type.
    * @param hasCategories false when `rules.categories` is empty. Such a
    *                      library has no category segment, so every warning
    *                      path is one level shallower and scope derivation
@@ -398,9 +411,12 @@ export class WarningCollector {
    *                      rather than raising an error.
    */
   constructor(
-    private ignored: IgnoreList = EMPTY_IGNORE_LIST,
+    ignored?: IgnoreList,
     private hasCategories: boolean = true
-  ) {}
+  ) {
+    this.ignored = ignored ?? EMPTY_IGNORE_LIST
+    this.suggestFor = ignored?.mediaType ?? null
+  }
 
   /** Add a warning. type, path, and issue are required; `options` is optional.
    *  - type:   stable machine-readable identifier (e.g. 'warn_bad_folder_name'),
@@ -411,16 +427,21 @@ export class WarningCollector {
    *  - options: `extension`, `sortKey` and `scope` — see `WarningOptions`. */
   add(type: string, path: string, issue: string, options: WarningOptions = {}): void {
     const normalizedPath = path.replace(/\\/g, '/')
-    if (this.ignored.entries.length > 0) {
-      const scope = options.scope ?? deriveScope(normalizedPath, this.hasCategories)
-      if (isWarningIgnored(scope, this.ignored)) {
-        this.silenced++
-        return
-      }
+    const needScope = this.ignored.entries.length > 0 || this.suggestFor !== null
+    const scope = needScope
+      ? (options.scope ?? deriveScope(normalizedPath, this.hasCategories))
+      : undefined
+    if (scope && this.ignored.entries.length > 0 && isWarningIgnored(scope, this.ignored)) {
+      this.silenced++
+      return
     }
     const entry: Warning = { type, path: normalizedPath, issue }
     if (options.extension !== undefined) entry.extension = options.extension
     if (options.sortKey !== undefined) entry.sortKey = options.sortKey
+    if (scope && this.suggestFor !== null) {
+      const ignore = suggestIgnoreEntry(scope, this.suggestFor)
+      if (ignore !== null) entry.ignore = ignore
+    }
     this.warnings.push(entry)
   }
 
@@ -466,6 +487,7 @@ export class WarningCollector {
         .map(w => {
           const row: WarningRow = { path: w.path, issue: w.issue }
           if (w.extension !== undefined) row.extension = w.extension
+          if (w.ignore !== undefined) row.ignore = w.ignore
           return row
         })
     }

@@ -112,6 +112,9 @@ export class PlexClient {
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       })
     } catch (err) {
+      // No `cause`: only the redacted message may leave this client. A crash
+      // handler printing the original error chain could expose the token.
+      // eslint-disable-next-line preserve-caught-error
       throw new Error(
         this.redact(
           `Could not reach Plex at ${this.baseUrl} (${(err as Error).message}). ` +

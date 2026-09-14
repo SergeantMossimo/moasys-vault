@@ -92,10 +92,14 @@ export class TmdbClient {
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       })
     } catch (err) {
+      // No `cause` on either throw: the request URL carries the API key, and a
+      // crash handler printing the original error chain could expose it.
       const e = err as Error
       if (e.name === 'TimeoutError') {
+        // eslint-disable-next-line preserve-caught-error
         throw new Error(`TMDB request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`)
       }
+      // eslint-disable-next-line preserve-caught-error
       throw new Error(`TMDB network error: ${e.message}`)
     } finally {
       this.lastRequestAt = Date.now()

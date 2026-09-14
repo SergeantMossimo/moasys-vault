@@ -2,6 +2,16 @@
 
 What's landed, newest first. Not formal release notes — pointers to what's new if you're returning after time away. Entries marked _(breaking)_ change a file format or setting you may need to update.
 
+## v0.14
+
+- Every warning row carries an `ignore` field with the narrowest ready-to-paste ignore-list entry that silences it — see [Silencing a row](docs/OUTPUT.md#silencing-a-row).
+- A missing `root_path` (disconnected drive, moved folder) now stops the scan and `plex:check` instead of scanning an empty library — which had overwritten output and emptied the probe cache. Cache entries under a category folder that is missing for one run are kept too.
+- `fix:shows --undo` validates the whole manifest first and refuses any rename that would move a file between folders or overwrite one.
+- Warm scans on network shares are faster: orphan pruning no longer re-checks files the scan just found.
+- Missing category folders are reported once per scan instead of twice.
+- Shows `warn_quality_mismatch` is summarized once per season — with the resolutions found and the bucket each actually fits — instead of one row per episode.
+- Dependencies: ESLint 10 (flat config), Vitest 5, `@types/node` 22, and minor updates. Node 22.12 or newer is now required.
+
 ## v0.13
 
 - Docs consolidated: the README is now a short landing page, and each topic has one home in [`docs/`](docs/) — output layout in [Output](docs/OUTPUT.md), ignore lists in [Configuration](docs/CONFIG.md), the workflow and scan times in [Scans](docs/SCANS.md). This changelog moved out of the README.

@@ -17,7 +17,14 @@ import { ShowsRules } from '../core/rules/shows'
 import { compilePattern, resolveCategories } from '../core/rules/helpers'
 
 import { ProbeCache } from './cache'
-import { ProbeTask, ProbedFile, classifyQuality, probeBatch } from './helpers'
+import {
+  ProbeTask,
+  ProbedFile,
+  QualityBucket,
+  classifyQuality,
+  deriveQuality,
+  probeBatch,
+} from './helpers'
 import { ShowProbeOutput, ShowSeasonProbe, EpisodeProbe, ProbeData, ProbeResult } from './types'
 
 // ─────────────────────────────────────────────
@@ -110,10 +117,8 @@ function collectTasks(
 
   for (const cat of resolveCategories(rules.categories)) {
     const folderPath = path.join(config.root_path, cat.folderName)
-    if (!fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) {
-      console.log(`    [SKIP] Category folder not found: ${folderPath}`)
-      continue
-    }
+    // Missing folders are reported once, by the scan pass (core/scanner.ts).
+    if (!fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) continue
 
     for (const showEntry of fs.readdirSync(folderPath, { withFileTypes: true })) {
       if (!showEntry.isDirectory()) continue
@@ -261,6 +266,101 @@ function aggregate(
 }
 
 // ─────────────────────────────────────────────
+// Quality mismatch
+// ─────────────────────────────────────────────
+
+/** How many resolutions and episode codes a season summary spells out. */
+const QUALITY_SAMPLE_LIMIT = 3
+
+/**
+ * `warn_quality_mismatch`, summarized once per season folder — like
+ * warn_missing_episode_title and warn_episode_code_case. A season that's in
+ * the wrong quality folder is wrong wholesale, and one row per episode buried
+ * the signal: a single external drive produced 7,346 of them.
+ *
+ * The summary says how many episodes miss the bucket, which resolutions they
+ * are and which bucket each actually fits (so you know where the season
+ * belongs), and a few episode codes.
+ */
+function reportQualityMismatches(
+  probed: ProbedFile[],
+  identities: Map<string, EpisodeIdentity>,
+  rules: ShowsRules,
+  warnings: WarningCollector
+): void {
+  interface SeasonTally {
+    total: number
+    category: string
+    quality: string | null
+    bucket: QualityBucket | null
+    misses: Array<{ episodeId: string; dims: string }>
+  }
+  const seasons = new Map<string, SeasonTally>()
+
+  for (const { task, data } of probed) {
+    if (!data.video) continue
+    const seasonFolder = path.posix.dirname(task.relativePath)
+    let tally = seasons.get(seasonFolder)
+    if (!tally) {
+      tally = { total: 0, category: task.category, quality: task.quality, bucket: null, misses: [] }
+      seasons.set(seasonFolder, tally)
+    }
+    tally.total++
+
+    const { bucket, fits } = classifyQuality(
+      data.video.width,
+      data.video.height,
+      task.quality,
+      rules.quality_thresholds
+    )
+    if (bucket === null || fits) continue
+    tally.bucket = bucket
+    tally.misses.push({
+      episodeId:
+        identities.get(task.relativePath)?.episodeId ?? path.posix.basename(task.relativePath),
+      dims: `${data.video.width}x${data.video.height}`,
+    })
+  }
+
+  for (const [seasonFolder, tally] of seasons) {
+    const bucket = tally.bucket
+    if (bucket === null || tally.misses.length === 0) continue
+
+    const byDims = new Map<string, number>()
+    for (const miss of tally.misses) byDims.set(miss.dims, (byDims.get(miss.dims) ?? 0) + 1)
+    const dims = [...byDims.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    const dimsText = dims
+      .slice(0, QUALITY_SAMPLE_LIMIT)
+      .map(([d, n]) => {
+        const [w, h] = d.split('x').map(Number)
+        const fitsQuality = deriveQuality(w!, h!, rules.quality_thresholds)
+        return `${d}${fitsQuality ? ` (fits ${fitsQuality})` : ''} ×${n}`
+      })
+      .join(', ')
+    const moreDims =
+      dims.length > QUALITY_SAMPLE_LIMIT ? `, +${dims.length - QUALITY_SAMPLE_LIMIT} more` : ''
+
+    const codes = tally.misses.map(m => m.episodeId).sort()
+    const codesText =
+      codes.slice(0, QUALITY_SAMPLE_LIMIT).join(', ') +
+      (codes.length > QUALITY_SAMPLE_LIMIT ? `, +${codes.length - QUALITY_SAMPLE_LIMIT} more` : '')
+
+    const range =
+      `${bucket.min_width !== undefined ? `min ${bucket.min_width}` : 'no min'}, ` +
+      `${bucket.max_width !== undefined ? `max ${bucket.max_width}` : 'no max'}`
+
+    warnings.add(
+      'warn_quality_mismatch',
+      seasonFolder,
+      `Quality mismatch — ${tally.misses.length} of ${tally.total} episode file(s) don't fit bucket ` +
+        `'${bucket.name}' (${range}) for quality '${tally.quality}' (category '${tally.category}'): ` +
+        `${dimsText}${moreDims}. Episodes: ${codesText}. ` +
+        `Move the season to the folder matching its resolution, or replace the files with a better source.`
+    )
+  }
+}
+
+// ─────────────────────────────────────────────
 // Entry point
 // ─────────────────────────────────────────────
 
@@ -291,26 +391,7 @@ export async function probeShows(
   )
 
   if (rules.checks.warn_quality_mismatch) {
-    for (const { task, data } of probed) {
-      if (!data.video) continue
-      const { bucket, longEdge, fits } = classifyQuality(
-        data.video.width,
-        data.video.height,
-        task.quality,
-        rules.quality_thresholds
-      )
-      if (bucket !== null && !fits) {
-        warnings.add(
-          'warn_quality_mismatch',
-          task.relativePath,
-          `Quality mismatch — ${data.video.width}x${data.video.height} (long edge ${longEdge}px) ` +
-            `doesn't fit bucket '${bucket.name}' (` +
-            `${bucket.min_width !== undefined ? `min ${bucket.min_width}` : 'no min'}, ` +
-            `${bucket.max_width !== undefined ? `max ${bucket.max_width}` : 'no max'}` +
-            `) for quality '${task.quality}' (category '${task.category}')`
-        )
-      }
-    }
+    reportQualityMismatches(probed, identities, rules, warnings)
   }
 
   const qualityOrder = resolveCategories(rules.categories).map(c => c.name)

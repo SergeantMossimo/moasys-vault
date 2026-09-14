@@ -13,6 +13,7 @@ import {
   sanitizeEpisodeTitle,
   splitStem,
   validatePlan,
+  validateUndoManifest,
   type Plan,
   type PlanEntry,
 } from '../../../src/tools/rename-shows'
@@ -510,6 +511,110 @@ describe('renameFile', () => {
       expect(fs.readdirSync(root)).toEqual(['talespin.mp4'])
     } finally {
       spy.mockRestore()
+      cleanupLibrary(root)
+    }
+  })
+})
+
+// ─────────────────────────────────────────────
+// validateUndoManifest
+// ─────────────────────────────────────────────
+
+describe('validateUndoManifest', () => {
+  const manifest = (renames: Array<{ from: string; to: string }>) => ({
+    generated: '2026-01-01T00:00:00.000Z',
+    fix: 'show-prefix',
+    drive: 'Test',
+    renames,
+  })
+
+  it('accepts a manifest written by --apply after the renames happened', () => {
+    const root = buildLibrary({ 'new.mp4': '' }, 'moasys-undo-')
+    try {
+      const m = manifest([{ from: path.join(root, 'old.mp4'), to: path.join(root, 'new.mp4') }])
+      expect(validateUndoManifest(m)).toEqual([])
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+
+  it('accepts a case-only rename even though the original name "exists"', () => {
+    const root = buildLibrary({ 'TaleSpin.mp4': '' }, 'moasys-undo-')
+    try {
+      const m = manifest([
+        { from: path.join(root, 'talespin.mp4'), to: path.join(root, 'TaleSpin.mp4') },
+      ])
+      expect(validateUndoManifest(m)).toEqual([])
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+
+  it('refuses to overwrite a file that now sits at the original name', () => {
+    const root = buildLibrary({ 'old.mp4': 'someone else', 'new.mp4': '' }, 'moasys-undo-')
+    try {
+      const m = manifest([{ from: path.join(root, 'old.mp4'), to: path.join(root, 'new.mp4') }])
+      expect(validateUndoManifest(m)).toEqual([
+        expect.stringContaining('already exists — undoing would overwrite it'),
+      ])
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+
+  it('refuses to move a file between folders', () => {
+    const root = buildLibrary({ 'Season 01': { 'a.mp4': '' }, 'Season 02': {} }, 'moasys-undo-')
+    try {
+      const m = manifest([
+        { from: path.join(root, 'Season 02', 'a.mp4'), to: path.join(root, 'Season 01', 'a.mp4') },
+      ])
+      expect(validateUndoManifest(m)).toEqual([expect.stringContaining('between folders')])
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+
+  it('refuses two entries that restore to the same name', () => {
+    const root = buildLibrary({ 'b.mp4': '', 'c.mp4': '' }, 'moasys-undo-')
+    try {
+      const m = manifest([
+        { from: path.join(root, 'a.mp4'), to: path.join(root, 'b.mp4') },
+        { from: path.join(root, 'A.mp4'), to: path.join(root, 'c.mp4') },
+      ])
+      expect(validateUndoManifest(m)).toEqual([expect.stringContaining('is also restored by')])
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+
+  it('refuses relative paths, folders, and malformed manifests', () => {
+    const root = buildLibrary({ Folder: {} }, 'moasys-undo-')
+    try {
+      expect(validateUndoManifest(manifest([{ from: 'a.mp4', to: 'b.mp4' }]))).toEqual([
+        expect.stringContaining('must be absolute'),
+      ])
+      expect(
+        validateUndoManifest(
+          manifest([{ from: path.join(root, 'Renamed'), to: path.join(root, 'Folder') }])
+        )
+      ).toEqual([expect.stringContaining('is not a file')])
+      expect(validateUndoManifest({ nope: true })).toEqual([
+        'not an undo manifest (no "renames" list)',
+      ])
+      expect(validateUndoManifest(manifest([{ from: 1, to: null } as never]))).toEqual([
+        expect.stringContaining('must both be file paths'),
+      ])
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+
+  it('still allows entries whose renamed file is already gone (a partial run)', () => {
+    const root = buildLibrary({}, 'moasys-undo-')
+    try {
+      const m = manifest([{ from: path.join(root, 'old.mp4'), to: path.join(root, 'new.mp4') }])
+      expect(validateUndoManifest(m)).toEqual([])
+    } finally {
       cleanupLibrary(root)
     }
   })
