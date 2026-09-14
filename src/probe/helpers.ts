@@ -63,8 +63,8 @@ export interface ProbedFile {
 /**
  * Optional async reader for embedded tag data. Music probe passes one in to
  * also capture ID3 / Vorbis comment / MP4 tags during the same walk.
- * Other media types skip this — tags don't carry meaningful metadata for
- * movies, shows, or audiobooks in this project.
+ * The audiobooks probe does the same, to compare album/artist tags against
+ * book/author folders. Movies and shows skip this.
  */
 export type TagReader = (absolutePath: string) => Promise<TagData | null>
 
@@ -79,10 +79,22 @@ export async function probeOrCache(
   readTags?: TagReader
 ): Promise<ProbeData> {
   const cached = cache.get(task.relativePath, task.mtime, task.size)
-  if (cached) return cached
+  if (cached) {
+    // Backfill tags onto an entry cached before this pass read them — a tag
+    // read is a header parse, far cheaper than re-running ffprobe. Entries
+    // that already carry tags count as read even without the flag, so a
+    // music cache written before `tags_read` existed isn't re-read.
+    if (readTags && !cached.tags_read && cached.tags === null) {
+      cached.tags = await readTags(task.absolutePath)
+      cached.tags_read = true
+      cache.set(task.relativePath, task.mtime, task.size, cached)
+    }
+    return cached
+  }
   const data = await probeFile(task.absolutePath)
   if (readTags) {
     data.tags = await readTags(task.absolutePath)
+    data.tags_read = true
   }
   cache.set(task.relativePath, task.mtime, task.size, data)
   return data
@@ -95,7 +107,8 @@ export async function probeOrCache(
  * from the returned results.
  *
  * Pass a `readTags` callback when the caller wants embedded metadata
- * captured alongside the ffprobe data (music probe uses this).
+ * captured alongside the ffprobe data (music and audiobooks probes use this).
+ * Cached entries that were never tag-read get their tags backfilled.
  *
  * Pass `warnings` so failures reach warnings.json as `warn_probe_failed`
  * rather than only the console. A file ffprobe can't read is usually a file

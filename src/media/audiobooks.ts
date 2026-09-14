@@ -35,6 +35,8 @@ import { compilePattern, resolveCategories } from '../core/rules/helpers'
 import { finalizeVersions, distinctCategories } from '../core/versions'
 import { ProbeData } from '../probe/types'
 
+import { NamedBook, bookWarningPath, findNameIssues } from './audiobook-names'
+
 // ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
@@ -322,6 +324,7 @@ export function createAudiobooksModule(
             records.set(bookKey, {
               title: bookEntry.name,
               authors,
+              author_folder: authorEntry.name,
               chapter_count: chapterCount,
               versions: [],
             })
@@ -374,10 +377,28 @@ export function createAudiobooksModule(
     },
 
     /**
-     * Post-merge check: emit one warning per book that ended up in multiple
-     * categories. Runs once after all folders are scanned.
+     * Post-merge checks, run once after all folders are scanned:
+     *   - one warning per book that ended up in multiple categories
+     *   - library-wide name consistency (see media/audiobook-names.ts), which
+     *     needs every book at once to know which spelling is the majority
      */
     postScan(records: Map<string, BookRecord>, warnings: WarningCollector): void {
+      const named: NamedBook[] = [...records.values()].map(book => ({
+        title: book.title,
+        authorFolder: book.author_folder,
+        authors: book.authors,
+        categories: categoryOrder.filter(c => distinctCategories(book.versions).includes(c)),
+      }))
+      for (const finding of findNameIssues(named, rules.checks)) {
+        const { book } = finding
+        warnings.add(finding.type, bookWarningPath(book), finding.issue, {
+          scope: {
+            categories: book.categories.filter(c => c !== 'default'),
+            levels: [book.authorFolder, book.title],
+          },
+        })
+      }
+
       if (!rules.checks.warn_duplicate_book) return
 
       for (const book of records.values()) {

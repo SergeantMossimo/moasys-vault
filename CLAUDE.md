@@ -44,11 +44,14 @@ After any `--apply`, verify against the filesystem rather than trusting the tool
 
 Several checks compare a filename or tag against its parent folder. These deliberately come in pairs — a strict check for genuinely different values and a separate, lower-severity check for capitalization-only drift, so cosmetic noise can't bury a real mismatch:
 
-| Type   | Different value            | Capitalization only    |
-| ------ | -------------------------- | ---------------------- |
-| Shows  | `warn_show_year_mismatch`  | `warn_show_title_case` |
-| Movies | `warn_title_mismatch`      | `warn_title_case`      |
-| Music  | `warn_folder_tag_mismatch` | `warn_folder_tag_case` |
+| Type                       | Different value                                          | Capitalization only                              |
+| -------------------------- | -------------------------------------------------------- | ------------------------------------------------ |
+| Shows                      | `warn_show_year_mismatch`                                | `warn_show_title_case`                           |
+| Movies                     | `warn_title_mismatch`                                    | `warn_title_case`                                |
+| Music                      | `warn_folder_tag_mismatch`                               | `warn_folder_tag_case`                           |
+| Audiobooks (book vs book)  | `warn_series_name_mismatch`, `warn_author_name_mismatch` | `warn_series_name_case`, `warn_author_name_case` |
+| Audiobooks (tag vs folder) | `warn_book_tag_mismatch`, `warn_author_tag_mismatch`     | `warn_book_tag_case`, `warn_author_tag_case`     |
+| Audiobooks (Open Library)  | `warn_openlibrary_title_mismatch`                        | `warn_openlibrary_title_case`                    |
 
 The precedent is `warn_tmdb_title_canonical`, which has always been case-sensitive and separate. If you add another folder-vs-file comparison, follow the same split — a bare `.toLowerCase()` comparison makes case drift permanently invisible, which is exactly how 174 files went unreported for months.
 
@@ -107,8 +110,9 @@ npm run audiobooks
 npm run scan:all      # All four sequentially
 npm run scan:all external # ...for every type that has an "External" root
 
-npm run validate:movies            # TMDB validation (movies + shows only)
+npm run validate:movies            # TMDB validation (movies + shows)
 npm run validate:movies external
+npm run validate:audiobooks        # Open Library validation — no API key
 npm run validate:all
 
 # The one write-capable command. Dry run by default; drive name is required.

@@ -14,7 +14,9 @@ function primeCache(cachePath: string, root: string, data: Record<string, ProbeD
   const cache = new ProbeCache(cachePath)
   for (const [relPath, probeData] of Object.entries(data)) {
     const stat = fs.statSync(path.join(root, relPath))
-    cache.set(relPath, stat.mtimeMs, stat.size, probeData)
+    // Primed entries count as tag-read, so `tags: null` means "no tags" rather
+    // than triggering a backfill read of the empty fixture file.
+    cache.set(relPath, stat.mtimeMs, stat.size, { tags_read: true, ...probeData })
   }
   return cache
 }

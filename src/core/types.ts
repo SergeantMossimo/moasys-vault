@@ -277,6 +277,12 @@ export interface ArtistOutput {
 export interface BookRecord {
   title: string
   authors: string[] // e.g. ["Terry Pratchett", "Neil Gaiman"]
+  /**
+   * The author folder name exactly as on disk. Internal only — the name
+   * checks need it to suggest a rename, and `authors.join(', ')` can't
+   * reproduce folders written `A, B, and C`.
+   */
+  author_folder: string
   chapter_count: number
   versions: Version[] // (category, codec) pairs; deduped on serialize
 }

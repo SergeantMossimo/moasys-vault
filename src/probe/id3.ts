@@ -4,8 +4,8 @@
  * Thin wrapper around the `music-metadata` package for reading ID3 (MP3),
  * Vorbis comment (FLAC/OGG), MP4 (M4A) and WMA tags from audio files.
  *
- * Only invoked by the music probe pass — movies, shows, and audiobooks
- * don't read tags (they don't carry meaningful metadata for our purposes).
+ * Invoked by the music and audiobooks probe passes — movies and shows don't
+ * read tags (they don't carry meaningful metadata for our purposes).
  *
  * The package normalizes tag names across container formats so we get a
  * consistent `common.*` shape regardless of how the source file is encoded.

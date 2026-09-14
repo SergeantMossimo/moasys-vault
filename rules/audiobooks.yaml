@@ -73,3 +73,21 @@ checks:
   warn_loose_files: true        # Audio files at unexpected nesting
   warn_extra_subfolders: true   # Unexpected subfolders inside a book folder
   warn_unexpected_entries: true # Non-audio, non-sidecar files
+  # Name consistency — compares books against each other, recommends the majority spelling
+  warn_series_name_mismatch: true # Same series spelled differently (Gaunt's Ghost / Gaunt's Ghosts)
+  warn_series_name_case: true     # Series or title prefix capitalized differently (HALO / Halo)
+  warn_author_name_mismatch: true # Same author spelled differently (Tobias S. Buckell / Tobias Buckell)
+  warn_author_name_case: true     # Author capitalized differently
+  warn_encoded_characters: true   # HTML entities like &quot; in a folder name
+  warn_mixed_punctuation: true    # Curly vs straight quotes against the library majority
+  # Embedded tags — compares album/artist tags to the book/author folders
+  warn_book_tag_mismatch: true    # Album tag names a different book than the folder
+  warn_book_tag_case: true        # Album tag and folder differ only in capitalization
+  warn_author_tag_mismatch: true  # Artist tag names different authors than the folder
+  warn_author_tag_case: true      # Artist tag and folder differ only in capitalization
+  warn_missing_book_tags: true    # No chapter has an album or artist tag
+  # Open Library — only run by `npm run validate:audiobooks`
+  warn_openlibrary_not_found: false       # No match at all (off: patchy coverage of tie-in fiction)
+  warn_openlibrary_title_mismatch: true   # Title is a typo's distance from a same-author book
+  warn_openlibrary_title_case: false      # Capitalization only (off: Open Library capitalizes inconsistently)
+  warn_openlibrary_author_mismatch: true  # Title matches but none of the authors do

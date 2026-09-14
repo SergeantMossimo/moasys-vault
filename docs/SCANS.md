@@ -2,12 +2,12 @@
 
 MOASYS-Vault has two passes you can run against your library:
 
-| Pass         | Command                           | What it does                                                                                          |
-| ------------ | --------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| **Scan**     | `npm run <type> [drive]`          | Walks your folders and inspects every file. Produces your catalog plus a list of hygiene issues.      |
-| **Validate** | `npm run validate:<type> [drive]` | Cross-checks your catalog against TheMovieDB to catch title typos, wrong years, and missing episodes. |
+| Pass         | Command                           | What it does                                                                                                          |
+| ------------ | --------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **Scan**     | `npm run <type> [drive]`          | Walks your folders and inspects every file. Produces your catalog plus a list of hygiene issues.                      |
+| **Validate** | `npm run validate:<type> [drive]` | Cross-checks your catalog against TheMovieDB or Open Library to catch title typos, wrong years, and missing episodes. |
 
-The **scan** pass runs for every media type. The **validate** pass is **movies and shows only** — it needs TMDB, and TMDB doesn't cover music or audiobooks. Validate is also fully optional; you don't need it for the scanner to work.
+The **scan** pass runs for every media type. The **validate** pass covers **movies and shows** (against TheMovieDB, which needs a free API key) and **audiobooks** (against Open Library, which needs no key). Music has no validate pass — its tag checks run during the scan. Validate is also fully optional; you don't need it for the scanner to work.
 
 ## Picking a drive
 
@@ -41,9 +41,11 @@ npm run scan:all
 # 3.1 If a type spans several drives, scan each one
 npm run scan:all external
 
-# 3.2 (Optional) Validate movies/shows against TMDB — needs a TMDB API key
+# 3.2 (Optional) Validate movies/shows against TMDB — needs a TMDB API key —
+#     and audiobooks against Open Library, which needs nothing
 npm run validate:movies
 npm run validate:shows
+npm run validate:audiobooks
 
 # 4. Review the warnings, fix what you want to fix in your library, re-scan
 npm run scan:all
@@ -70,7 +72,8 @@ You changed something in your library — what do you need to re-run?
 | You changed...                                   | Re-run                                                               |
 | ------------------------------------------------ | -------------------------------------------------------------------- |
 | Renamed/moved folders or files                   | `npm run <type>` — scan                                              |
-| Updated embedded music tags                      | `npm run music`                                                      |
+| Updated embedded music or audiobook tags         | `npm run music` / `npm run audiobooks`                               |
+| Fixed an audiobook title or author               | `npm run audiobooks` then `npm run validate:audiobooks`              |
 | Replaced a media file (different format/bitrate) | `npm run <type>` — the cache invalidates on modification time + size |
 | Fixed a movie/show title or year                 | `npm run <type>` then `npm run validate:<type>`                      |
 | Added new content                                | `npm run <type>` — only the new files get inspected                  |
@@ -81,7 +84,7 @@ You changed something in your library — what do you need to re-run?
 
 The scan pass for one media type on one drive does three things in order:
 
-1. **Inspect every file.** Walks every primary file and records video dimensions, audio codec/bitrate/sample rate, and (for music) the artist/album/track info embedded in the file. Results are cached, so subsequent runs skip unchanged files.
+1. **Inspect every file.** Walks every primary file and records video dimensions, audio codec/bitrate/sample rate, and (for music and audiobooks) the artist/album/track info embedded in the file. A cache entry from before tags were read for that type gets its tags backfilled once — a quick header read, not a re-inspection. Results are cached, so subsequent runs skip unchanged files.
 2. **Walk the folder tree.** Goes through the configured `categories` (or `root_path` directly if no categories are set) and parses each file's name and folder structure. Combines the inspection data to derive each version's quality.
 3. **Write three files** under `output/<drive>/<type>/`:
    - `<type>.json` — your clean catalog
@@ -181,7 +184,7 @@ If you find a stack of these in your warnings, that's the pattern.
 
 ## Validate pass — `npm run validate:<type> [drive]`
 
-Cross-checks your scan output against TheMovieDB. **Movies and shows only** — TMDB doesn't cover music or audiobooks.
+Cross-checks your scan output against TheMovieDB (movies, shows) or Open Library (audiobooks — see [Audiobooks against Open Library](#audiobooks-against-open-library) below). Music has no validate pass.
 
 Reads `output/<drive>/<type>/<type>.json`, so run the scan for that same drive first. Writes alongside it:
 
@@ -293,6 +296,24 @@ The flag accepts a number of days with optional `d` suffix (`30` and `30d` are e
 ### Rate limiting
 
 The scanner throttles to 4 requests per second (TMDB allows 40 per 10 seconds). Well under the limit, so no tuning needed. If TMDB ever returns a 429, the throttle honors the `Retry-After` header automatically.
+
+### Audiobooks against Open Library
+
+```bash
+npm run validate:audiobooks
+```
+
+No key and no setup. Each book is searched on [Open Library](https://openlibrary.org/) by title and first author, falling back to the title alone (which is what catches a misspelled author folder) and then to the title's first segment. Series segments (`Gaunt's Ghosts, Book 2`, `Book Two in the Dune Chronicles`) and all-parenthetical edition segments are dropped before searching.
+
+Open Library is community-edited and inconsistent: one book appears as several editions titled `The Flood (Halo)`, `Halo` with subtitle `the flood`, `Star Wars - Thrawn Trilogy - Dark Force Rising`. So the folder title is compared against **every** result, and one matching edition is enough. Case, punctuation, a colon where the folder has a dash, a franchise prefix Open Library leaves off, and series text Open Library pads in are all ignored. What's left to warn about:
+
+- **`warn_openlibrary_title_mismatch`** — nothing matches, but a book by the same author is within a couple of characters. The shape of a typo; the message gives Open Library's spelling.
+- **`warn_openlibrary_author_mismatch`** — the title matches but none of your folder's authors do. Usually an author-folder typo, occasionally a different book with the same title.
+- **`warn_openlibrary_title_case`** and **`warn_openlibrary_not_found`** — both **off by default**. Open Library's capitalization is unreliable, and translated books are often listed only under their original title (the Witcher novels appear as `Krew elfów` and friends), so these are mostly noise. Turn them on in `rules/audiobooks.local.yaml` for a one-off audit.
+
+Results are cached in `cache/openlibrary-search.json`, shared across drives. Like the TMDB pass, an empty result is never cached, so a book Open Library didn't know is asked again next run. `--refresh-older-than=Nd` works the same way. Requests are held to one per second as Open Library asks; a first run over ~110 books takes about two minutes, and warm runs make no requests.
+
+The scan pass has its own offline name checks for audiobooks that don't need Open Library at all — series and author spelling drift across books, HTML entities in folder names, and embedded tags that disagree with the folders. See the [Audiobooks warning table](OUTPUT.md#audiobooks).
 
 ---
 
