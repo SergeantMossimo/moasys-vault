@@ -101,7 +101,7 @@ async function main(): Promise<void> {
   console.log(`    [INPUT] Plex pull from ${new Date(libraries.generated).toLocaleString()}`)
   const unfiltered = noIgnoreRequested()
   if (unfiltered) {
-    console.log(`    [INPUT] ${NO_IGNORE_FLAG}: ignore lists skipped — writing *.unfiltered.json`)
+    console.log(`    [INPUT] ${NO_IGNORE_FLAG}: ignore lists skipped — writing to unfiltered/`)
   }
 
   const { config, client } = await openPlexSession()

@@ -39,8 +39,8 @@
  *      default-to-first-root, so a forgotten argument is an error rather than
  *      a silent run against the primary server.
  *   2. Dry run by default. A full plan is built, summarized, and written to
- *      output/<drive>/shows/rename-plan.json. Nothing is renamed without
- *      --apply.
+ *      output/<drive>/shows/fixes/rename-plan.json. Nothing is renamed
+ *      without --apply.
  *   3. All-or-nothing on UNSAFE entries. Collisions, illegal characters, and
  *      over-long paths abort the whole run before the first rename, so a
  *      season can never be left half-renamed.
@@ -53,7 +53,7 @@
  *   npm run fix:shows -- --fix show-prefix external
  *   npm run fix:shows -- --fix show-prefix external --apply
  *   npm run fix:shows -- --fix episode-titles external --show "Barry (2018)"
- *   npm run fix:shows -- --undo output/external/shows/rename-undo-<ts>.json
+ *   npm run fix:shows -- --undo output/external/shows/fixes/rename-undo-<ts>.json
  */
 
 import fs from 'fs'
@@ -64,6 +64,7 @@ import { toComparableFolderName } from '../core/files'
 import { canonicalEpisodeCode, compilePattern, resolveCategories } from '../core/rules/helpers'
 import { loadRules } from '../core/rules/loader'
 import { ShowsRules, ShowsRulesSchema, defaultShowsRules } from '../core/rules/shows'
+import { reportLegacyOutputFiles, typeOutputPaths } from '../core/output-paths'
 import { resolveRoot, rootNames } from '../core/runner-shared'
 import { AppConfig, MediaRootConfig } from '../core/types'
 import { TmdbSeasonDetails, ShowValidation } from '../validate/types'
@@ -543,7 +544,7 @@ export function planEpisodeTitles(
     if (tmdbId === undefined) {
       skipped.push({
         path: group.relDir,
-        reason: `${untitled.length} file(s) — no TMDB match in validation.json, run validate:shows`,
+        reason: `${untitled.length} file(s) — no TMDB match in data/validation.json, run validate:shows`,
       })
       continue
     }
@@ -753,7 +754,9 @@ function report(plan: Plan): void {
       console.log(`      +  ${entry.to}`)
     }
     if (plan.entries.length > samples.length) {
-      console.log(`    ... ${plan.entries.length - samples.length} more (see rename-plan.json)`)
+      console.log(
+        `    ... ${plan.entries.length - samples.length} more (see fixes/rename-plan.json)`
+      )
     }
   }
 
@@ -927,8 +930,8 @@ function main(): void {
   })
   const fileRegex = compilePattern(rules.patterns.file)
 
-  const slug = driveSlug(root.name)
-  const outputDir = path.join(SCRIPT_DIR, 'output', slug, 'shows')
+  const out = typeOutputPaths(SCRIPT_DIR, driveSlug(root.name), 'shows')
+  reportLegacyOutputFiles(out)
   const files = walkEpisodeFiles(root.root_path, rules, args.show)
 
   let built: Omit<Plan, 'generated' | 'fix' | 'drive' | 'root_path'>
@@ -940,7 +943,7 @@ function main(): void {
       built = planEpisodeTitles(
         files,
         fileRegex,
-        buildTmdbIdByShowFolder(path.join(outputDir, 'validation.json')),
+        buildTmdbIdByShowFolder(out.validation),
         loadSeasonEpisodeNames(path.join(SCRIPT_DIR, 'cache', 'tmdb-show-seasons.json'))
       )
       break
@@ -959,8 +962,8 @@ function main(): void {
 
   report(plan)
 
-  const planPath = path.join(outputDir, 'rename-plan.json')
-  fs.mkdirSync(outputDir, { recursive: true })
+  const planPath = path.join(out.fixesDir, 'rename-plan.json')
+  fs.mkdirSync(out.fixesDir, { recursive: true })
   fs.writeFileSync(planPath, JSON.stringify(plan, null, 2), 'utf-8')
   console.log(`  [PLAN] ${planPath}`)
 
@@ -983,7 +986,7 @@ function main(): void {
   }
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  apply(plan, root.root_path, path.join(outputDir, `rename-undo-${stamp}.json`))
+  apply(plan, root.root_path, path.join(out.fixesDir, `rename-undo-${stamp}.json`))
   console.log('')
 }
 

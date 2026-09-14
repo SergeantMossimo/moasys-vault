@@ -11,6 +11,7 @@ import path from 'path'
 import { MediaRootConfig, WarningCollector } from '../core/types'
 import { driveSlug } from '../core/config'
 import { loadIgnoreList } from '../core/ignored'
+import { reportLegacyOutputFiles, typeOutputPaths } from '../core/output-paths'
 import { compilePattern } from '../core/rules/helpers'
 import { loadRules } from '../core/rules/loader'
 import { MoviesRulesSchema, defaultMoviesRules } from '../core/rules/movies'
@@ -19,7 +20,7 @@ import { MusicRulesSchema, defaultMusicRules } from '../core/rules/music'
 import { AudiobooksRulesSchema, defaultAudiobooksRules } from '../core/rules/audiobooks'
 import { writeWarnings } from '../core/runner-shared'
 
-import { OUTPUT_DIR, SCRIPT_DIR } from './setup'
+import { SCRIPT_DIR } from './setup'
 import { MediaType } from './types'
 
 export const MEDIA_TYPES: MediaType[] = ['movies', 'shows', 'music', 'audiobooks']
@@ -36,9 +37,8 @@ export function noIgnoreRequested(argv: string[] = process.argv.slice(2)): boole
 }
 
 /**
- * Where a warnings file goes. A `--no-ignore` review writes
- * `<name>.unfiltered.json` beside the normal file, so it never replaces the
- * filtered output you work from.
+ * Where a warnings file goes. A `--no-ignore` review writes the same file name
+ * into `unfiltered/`, so it never replaces the filtered output you work from.
  */
 export function warningsPath(
   root: MediaRootConfig,
@@ -46,8 +46,9 @@ export function warningsPath(
   name: string,
   unfiltered: boolean
 ): string {
-  const file = unfiltered ? `${name}.unfiltered.json` : `${name}.json`
-  return path.join(OUTPUT_DIR, driveSlug(root.name), mediaType, file)
+  const out = typeOutputPaths(SCRIPT_DIR, driveSlug(root.name), mediaType)
+  reportLegacyOutputFiles(out)
+  return path.join(unfiltered ? out.unfilteredDir : out.dir, `${name}.json`)
 }
 
 /** A collector with the drive's ignore list — or none, for a `--no-ignore` review. */

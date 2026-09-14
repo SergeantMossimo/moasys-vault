@@ -152,10 +152,10 @@ When you run `npm run scan:all`, for each media type the scanner does this in or
 1. **Inspect every primary file.** Reads video dimensions, audio codec/bitrate/sample rate, and (for music and audiobooks) the artist/album/track info embedded in the file. Results are cached, so subsequent runs skip unchanged files.
 2. **Walk the folder tree.** Parses every folder and file name against Plex naming conventions to spot mismatches and missing items.
 3. **Build the catalog.** Combines the file inspection with the folder/file structure to produce per-type catalogs — each entry lists title, year, where every copy lives, and (if your library is organized by quality) the quality of each copy.
-4. **Write three files to `output/<drive>/<type>/`**:
+4. **Write to `output/<drive>/<type>/`**:
    - `<type>.json` — your clean catalog
-   - `probe.json` — the rich per-file inspection data
    - `warnings.json` — every hygiene issue worth your attention
+   - `data/probe.json` — the rich per-file inspection data
 
 Then, optionally, run `npm run validate:movies` and `npm run validate:shows` to cross-check those types against TheMovieDB for title typos, wrong years, and missing episodes, and `npm run validate:audiobooks` to spell-check book titles and authors against Open Library. **Validation is fully optional** — movies and shows need a free TMDB API key in `.secrets.json`; audiobooks need nothing. The rest of the scanner works without either.
 
@@ -169,19 +169,23 @@ Each drive/media-type pair writes its files to its own subfolder inside `output/
 
 ```text
 output/<drive>/<type>/
-├── <type>.json
-├── probe.json
-├── warnings.json
-├── validation.json
-└── validation-warnings.json
+├── <type>.json                 your catalog
+├── warnings.json               scan
+├── validation-warnings.json    validate
+├── plex-warnings.json          plex:check
+├── plex-log-warnings.json      plex:logs
+├── data/                       probe.json, validation.json
+├── fixes/                      fix:shows plans + undo manifests
+└── unfiltered/                 --no-ignore reviews
 ```
 
 `<drive>` is the lowercased `name` of the root from `config.json` — so a two-drive movies library produces `output/server/movies/` and `output/external/movies/`. Drives are never merged.
 
 - **`<type>.json`** — your catalog. Title, year, quality, where each copy lives. This is the file a website or other tool would read.
-- **`probe.json`** — the rich detail behind the catalog. Codecs, bitrates, frame rates, sample rates, and embedded music tags. Useful when you want more than the catalog gives you, or for debugging.
-- **`warnings.json`** — your hygiene to-do list. Each entry has a `path`, a human-readable `issue`, and (where applicable) a recommended fix.
-- **`validation.json` / `validation-warnings.json`** — only appear after `npm run validate:<type>`. Contain TMDB (or, for audiobooks, Open Library) cross-check results and confidence-based warnings.
+- **The `*warnings.json` files** — your hygiene to-do lists, one per command so each can be worked through on its own. Each entry has a `path`, a human-readable `issue`, and (where applicable) a recommended fix.
+- **`data/`** — the detail behind the catalog: codecs, bitrates, frame rates and embedded tags (`probe.json`), and TMDB / Open Library match results (`validation.json`). Other commands read these; you rarely need to.
+
+Files only appear once their command has run. See [Output](docs/OUTPUT.md#output-files) for the full layout.
 
 ---
 
@@ -220,6 +224,8 @@ The rest is for contributors:
 ## Recent additions
 
 A terse log of what's landed lately. Not formal release notes — just pointers to "what's new" if you're returning after time away.
+
+- **v0.11** — Tidier output folders: the top of `output/<drive>/<type>/` now holds only the catalog and the warnings files. `probe.json` and `validation.json` moved to `data/`, `fix:shows` plans and undo manifests to `fixes/`, and `--no-ignore` output to `unfiltered/`. Commands point out old top-level files that can be deleted — re-run the scan and validate passes to regenerate `data/`. `cache/tmdb-show-seasons.json` now keeps only episode numbers, titles and air dates (~90 MB → ~2 MB); existing caches shrink on the next `validate:shows`. `config.json` is now gitignored — copy `config.example.json`.
 
 - **v0.10** — `npm run plex:logs` downloads the server's logs and ties Plex's errors to library files by item id (`warn_plex_log_error`; `warn_plex_log_warning`, off by default), with a server-wide `output/plex/logs-summary.json`. `--no-ignore` on both Plex commands writes `*.unfiltered.json` to review what ignore lists hide. The Plex title check ignores bare year suffixes (`Space King 2024`), and collection pulls stay under Plex's 120-item page limit. JSON Schemas for every Plex output under [`schemas/`](schemas/).
 - **v0.9** — Plex integration: `npm run plex:pull` writes each library's catalog and collections under `output/plex/<library>/`; `npm run plex:check` compares them with the scan (missing, orphaned, trashed, unmatched, wrongly matched, and duplicate items, plus folders no library covers). Read-only GET client; token in `.secrets.json`, server address in `config.json`. See [Plex](docs/PLEX.md).

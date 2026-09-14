@@ -86,10 +86,10 @@ The scan pass for one media type on one drive does three things in order:
 
 1. **Inspect every file.** Walks every primary file and records video dimensions, audio codec/bitrate/sample rate, and (for music and audiobooks) the artist/album/track info embedded in the file. A cache entry from before tags were read for that type gets its tags backfilled once — a quick header read, not a re-inspection. Results are cached, so subsequent runs skip unchanged files.
 2. **Walk the folder tree.** Goes through the configured `categories` (or `root_path` directly if no categories are set) and parses each file's name and folder structure. Combines the inspection data to derive each version's quality.
-3. **Write three files** under `output/<drive>/<type>/`:
+3. **Write its output** under `output/<drive>/<type>/`:
    - `<type>.json` — your clean catalog
-   - `probe.json` — the rich per-file inspection data (codec, bitrate, sample rate, embedded tags, etc.)
    - `warnings.json` — every hygiene issue from steps 1 and 2
+   - `data/probe.json` — the rich per-file inspection data (codec, bitrate, sample rate, embedded tags, etc.), which the validate and Plex commands read
 
 ### Speed
 
@@ -155,13 +155,13 @@ The precise version of this check lives in the validate pass — see [TMDB runti
 
 ### Audio quality summary (music)
 
-Each album in `output/<drive>/music/probe.json` gets a derived `audio_quality_summary` field — short, human-readable strings like `"FLAC 16/44.1"`, `"MP3 ~288"`, or `"AAC 256"`. The summary collapses tracks that share a codec and roughly the same bitrate target into one entry, so a VBR-encoded album doesn't list ten different bitrates.
+Each album in `output/<drive>/music/data/probe.json` gets a derived `audio_quality_summary` field — short, human-readable strings like `"FLAC 16/44.1"`, `"MP3 ~288"`, or `"AAC 256"`. The summary collapses tracks that share a codec and roughly the same bitrate target into one entry, so a VBR-encoded album doesn't list ten different bitrates.
 
 Albums where the tracks have truly mismatched quality (FLAC mixed with MP3, or a very wide bitrate spread) get a `warn_quality_inconsistent` warning so you know which albums to clean up.
 
 ### Embedded music tags
 
-Music files carry metadata embedded inside them — title, artist, album, year, track number, genre, and so on. The scanner reads these tags during the file inspection pass and stores them per track in `output/<drive>/music/probe.json` under a `tags` field.
+Music files carry metadata embedded inside them — title, artist, album, year, track number, genre, and so on. The scanner reads these tags during the file inspection pass and stores them per track in `output/<drive>/music/data/probe.json` under a `tags` field.
 
 Four warnings are driven from the tag data:
 
@@ -188,8 +188,8 @@ Cross-checks your scan output against TheMovieDB (movies, shows) or Open Library
 
 Reads `output/<drive>/<type>/<type>.json`, so run the scan for that same drive first. Writes alongside it:
 
-- `output/<drive>/<type>/validation.json` — per-record TMDB resolution (canonical title, year, TMDB ID, alternatives)
 - `output/<drive>/<type>/validation-warnings.json` — confidence warnings and canonical-title rename suggestions
+- `output/<drive>/<type>/data/validation.json` — per-record TMDB resolution (canonical title, year, TMDB ID, alternatives), read by `plex:check` and `fix:shows`
 
 ### Setup
 
@@ -211,7 +211,7 @@ See [Configuration](CONFIG.md#secretsjson) for details.
 
 #### TMDB runtime cross-check (movies)
 
-`warn_tmdb_runtime_mismatch` compares each file's measured runtime (from `probe.json`, so the scan must have run first) against TMDB's, and fires when they differ by more than `runtime_tolerance_percent` — 50% by default, symmetric in both directions.
+`warn_tmdb_runtime_mismatch` compares each file's measured runtime (from `data/probe.json`, so the scan must have run first) against TMDB's, and fires when they differ by more than `runtime_tolerance_percent` — 50% by default, symmetric in both directions.
 
 This is the precise counterpart to [`warn_short_duration`](#short-runtime-movies). Where that check flags everything under 30 minutes and buries real problems under 200 legitimate short films, this one knows how long the film is _supposed_ to be:
 
@@ -326,10 +326,10 @@ It **only ever renames files**. No deletes, no moves between folders, no folder 
 ### Safety model
 
 - **The drive name is required.** Unlike `npm run shows`, there is no default-to-first-root — a forgotten argument is an error, not a silent run against your main server.
-- **Dry run unless you pass `--apply`.** Every run writes the complete plan to `output/<drive>/shows/rename-plan.json` for review.
+- **Dry run unless you pass `--apply`.** Every run writes the complete plan to `output/<drive>/shows/fixes/rename-plan.json` for review.
 - **Unsafe entries abort the whole run.** A name collision, an illegal character, or an over-long path stops everything before the first rename, so a season is never left half-done.
 - **Missing data is not a failure.** Files the tool has no title for are listed as _skipped_ and left alone; the rest of the batch proceeds.
-- **Every run writes an undo manifest** to `output/<drive>/shows/rename-undo-<timestamp>.json` before touching anything.
+- **Every run writes an undo manifest** to `output/<drive>/shows/fixes/rename-undo-<timestamp>.json` before touching anything.
 
 ### Modes
 
@@ -339,7 +339,7 @@ It **only ever renames files**. No deletes, no moves between folders, no folder 
 | `episode-titles` | Appends the trailing `- <Episode Title>` from the TMDB cache                                                 | `warn_missing_episode_title`                      |
 | `episode-code`   | Normalizes the season/episode code to your `episode_code_case` and the canonical `-e02` multi-episode suffix | `warn_episode_code_case`                          |
 
-`episode-titles` reads `output/<drive>/shows/validation.json` and `cache/tmdb-show-seasons.json`, so **run `npm run validate:shows <drive>` first**. It makes no network calls of its own.
+`episode-titles` reads `output/<drive>/shows/data/validation.json` and `cache/tmdb-show-seasons.json`, so **run `npm run validate:shows <drive>` first**. It makes no network calls of its own.
 
 ### Workflow
 
@@ -358,7 +358,7 @@ npm run fix:shows -- --fix episode-titles external --show "Barry (2018)"
 To reverse a run:
 
 ```bash
-npm run fix:shows -- --undo output/external/shows/rename-undo-2026-09-07T21-57-53-887Z.json
+npm run fix:shows -- --undo output/external/shows/fixes/rename-undo-2026-09-07T21-57-53-887Z.json
 ```
 
 ### The season guard on `episode-titles`

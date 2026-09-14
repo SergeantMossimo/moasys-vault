@@ -144,7 +144,7 @@ The pull prints a line for any library folder that matches no root, or matches m
 
 Compares the last pull with the last scan of every media type on one drive — no connection to Plex needed. Omit the drive for the first root of each type, just like the scan commands.
 
-It reads `output/plex/` and each type's `output/<drive>/<type>/probe.json`, and writes:
+It reads `output/plex/` and each type's `output/<drive>/<type>/data/probe.json`, and writes:
 
 ```text
 output/<drive>/<type>/plex-warnings.json
@@ -174,7 +174,7 @@ An ignore-list entry silences **every** warning at or below its level — includ
 npm run plex:check -- --no-ignore
 ```
 
-This writes `plex-warnings.unfiltered.json` beside `plex-warnings.json` and leaves the normal file untouched. Compare the two to see what's being hidden. `plex:logs` takes the same flag.
+This writes `unfiltered/plex-warnings.json` and leaves the normal `plex-warnings.json` untouched. Compare the two to see what's being hidden. `plex:logs` takes the same flag.
 
 ### Warnings
 
@@ -193,7 +193,7 @@ Toggle any of these in `rules/plex.yaml` (or `rules/plex.local.yaml` for persona
 
 ### What it compares
 
-- **Files on disk** come from `probe.json`, which lists every _primary-format_ file the scan inspected. A file in a non-primary format that's missing from Plex isn't reported; one Plex has that isn't in `probe.json` is checked directly on disk before being called an orphan.
+- **Files on disk** come from `data/probe.json`, which lists every _primary-format_ file the scan inspected. A file in a non-primary format that's missing from Plex isn't reported; one Plex has that isn't in `data/probe.json` is checked directly on disk before being called an orphan.
 - **Title checks** run for movies and shows only, once per folder (editions share one), using the folder pattern from `rules/movies.yaml` / `rules/shows.yaml`. Run `npm run validate:movies` / `validate:shows` first for the more precise TMDB-id comparison; only high- and medium-confidence validation matches are used. Music and audiobook titles in Plex come from embedded tags, which the scan already compares with folders.
 - **Only this drive.** Plex files that map to a different drive, or to no configured root, are left out.
 

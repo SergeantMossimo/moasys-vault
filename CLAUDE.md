@@ -27,7 +27,7 @@ Its guarantees, all of which must survive any change you make to it:
 
 - **Renames files, nothing else.** `fs.renameSync` file → file inside one directory. No `unlink`, `rmdir`, `cp`, or content write; folder names are never touched.
 - **The drive name is mandatory** — it reuses `resolveRoot()` but deliberately drops the default-to-first-root fallback the scan runners have, so a forgotten argument can't silently target the primary server.
-- **Dry run unless `--apply`.** Every run writes the full plan to `output/<drive>/shows/rename-plan.json` first.
+- **Dry run unless `--apply`.** Every run writes the full plan to `output/<drive>/shows/fixes/rename-plan.json` first.
 - **All-or-nothing on unsafe entries.** Collisions, illegal characters, or over-long paths abort before the first rename; a season is never left half-renamed. Files with no data are _skipped_, which is separate and non-blocking.
 - **An undo manifest is written before the first rename**, replayable with `--undo`.
 - **Case-only renames go through a two-step temporary name.** See `renameFile()` — a plain `fs.renameSync` is a silent no-op for these on case-insensitive filesystems, and the user's External drive is exFAT. This bit once: a run reported 726 successful renames while leaving 174 files untouched.
@@ -61,7 +61,9 @@ The user already has Plex; the point isn't to replicate Plex's functionality. It
 
 ## Architecture in one paragraph
 
-`config.json` carries per-machine "where" data — an array of named roots (`{root_path, name}`) per media type, validated by Zod in `src/core/config.ts`. `rules/<type>.yaml` carries "how" data (regex patterns, file extensions, naming conventions, per-warning toggles, the `categories` list of subfolders to walk). Each media module (`src/media/<type>.ts`) is a **factory** that takes the validated rules and returns a `MediaModule` object. The merged runner `src/scan.ts` resolves the requested drive, then per type: loads the probe cache, runs `probe<Type>` (ffprobe + ID3 for music), then calls `scan()` in `src/core/scanner.ts` which iterates `module.getCategories()` and calls `module.scanCategory()` for each — passing a `probeByPath` map so movies/shows derive each version's quality from ffprobe dimensions via `deriveQuality()`. One run produces `<type>.json` (catalog with `versions: [{category, quality}]`), `probe.json` (rich raw data), and `warnings.json` (everything from both passes). Validation is via Zod in `src/core/rules/`.
+`config.json` carries per-machine "where" data — an array of named roots (`{root_path, name}`) per media type, validated by Zod in `src/core/config.ts`. `rules/<type>.yaml` carries "how" data (regex patterns, file extensions, naming conventions, per-warning toggles, the `categories` list of subfolders to walk). Each media module (`src/media/<type>.ts`) is a **factory** that takes the validated rules and returns a `MediaModule` object. The merged runner `src/scan.ts` resolves the requested drive, then per type: loads the probe cache, runs `probe<Type>` (ffprobe + ID3 for music), then calls `scan()` in `src/core/scanner.ts` which iterates `module.getCategories()` and calls `module.scanCategory()` for each — passing a `probeByPath` map so movies/shows derive each version's quality from ffprobe dimensions via `deriveQuality()`. One run produces `<type>.json` (catalog with `versions: [{category, quality}]`), `warnings.json` (everything from both passes), and `data/probe.json` (rich raw data). Validation is via Zod in `src/core/rules/`.
+
+**Output layout.** `src/core/output-paths.ts` (`typeOutputPaths()`) is the single source for every per-drive, per-type output path — use it rather than joining `output/` paths by hand. The top of `output/<drive>/<type>/` holds only what the user opens: the catalog and one warnings file per command (`warnings.json`, `validation-warnings.json`, `plex-warnings.json`, `plex-log-warnings.json`). Data other commands read goes in `data/` (`probe.json`, `validation.json`), `fix:shows` plans and undo manifests in `fixes/`, `--no-ignore` output in `unfiltered/`. Runners call `reportLegacyOutputFiles()` to point at files left by the old flat layout; it never deletes them.
 
 **Multi-drive.** A run targets exactly one root, named positionally (`npm run movies external`) or defaulting to the first entry in that type's array. Everything drive-specific is namespaced by `driveSlug(name)` (lowercased): `output/<drive>/<type>/`, `cache/<drive>/<type>-probe.json`, `ignored/<drive>/<type>.yaml`. TMDB caches stay un-sharded at `cache/tmdb-*.json` — keyed by title/year, not path. Drives are never merged and there are no cross-drive checks. Below the runner nothing knows about drives: `MoviesConfig` and friends stay aliases of `BaseMediaConfig` (`{root_path}`), which a `MediaRootConfig` satisfies structurally, so `scanner.ts`, the probe walkers, and the media modules took no changes. `resolveRoot()` / `rootNames()` in `src/core/runner-shared.ts` are shared by both runners; an unknown drive name errors on a single-type run and `[SKIP]`s under `--all`.
 
@@ -113,12 +115,12 @@ npm run validate:all
 npm run plex:pull                  # Plex libraries → output/plex/<library>/ (read-only GETs)
 npm run plex:check                 # Compare the pull with scan output → output/<drive>/<type>/plex-warnings.json
 npm run plex:logs                  # Download Plex's logs, tie errors to files → plex-log-warnings.json + output/plex/logs-summary.json
-npm run plex:check -- --no-ignore  # Either Plex command without ignore lists → *.unfiltered.json
+npm run plex:check -- --no-ignore  # Either Plex command without ignore lists → unfiltered/
 
 # The one write-capable command. Dry run by default; drive name is required.
 npm run fix:shows -- --fix show-prefix external          # preview
 npm run fix:shows -- --fix episode-titles external --apply
-npm run fix:shows -- --undo output/external/shows/rename-undo-<ts>.json
+npm run fix:shows -- --undo output/external/shows/fixes/rename-undo-<ts>.json
 
 npm run typecheck     # tsc --noEmit
 npm run lint          # eslint
@@ -139,8 +141,8 @@ When making bulk changes across all 4 media types, use `Edit` with `replace_all:
 
 There's no formal roadmap; `README.md` → `## Recent additions` logs what has landed. The big-ticket items so far, all shipped:
 
-- **Music quality summary** — per-album `audio_quality_summary` in `output/<drive>/music/probe.json` (`"FLAC 16/44.1"`, `"MP3 ~288"`). VBR tolerance collapses same-codec same-quality-target tracks into one entry.
-- **ID3 tag reading for music** — per-track `tags` in `output/<drive>/music/probe.json` via `music-metadata`. Four warnings: compilation_detected, folder_tag_mismatch, missing_tags, track_number_mismatch.
+- **Music quality summary** — per-album `audio_quality_summary` in `output/<drive>/music/data/probe.json` (`"FLAC 16/44.1"`, `"MP3 ~288"`). VBR tolerance collapses same-codec same-quality-target tracks into one entry.
+- **ID3 tag reading for music** — per-track `tags` in `output/<drive>/music/data/probe.json` via `music-metadata`. Four warnings: compilation_detected, folder_tag_mismatch, missing_tags, track_number_mismatch.
 - **TMDB validation for movies + shows** — `npm run validate:movies` / `validate:shows`. Cross-checks titles, years, and (for shows) per-season episode counts. API key in `.secrets.json` (gitignored). Cache in `cache/tmdb-*.json`.
 - **Audiobook name checks + Open Library validation** — series/author consistency and embedded-tag comparison in the scan; `npm run validate:audiobooks` against Open Library (no key). Cache in `cache/openlibrary-search.json`.
 - **Plex integration** — `plex:pull` (per-library catalogs + collections), `plex:check` (Plex vs disk), `plex:logs` (server log errors tied to files by item id). Read-only GET client in `src/plex/client.ts`; token in `.secrets.json`, URL in `config.json`. See `docs/PLEX.md`.

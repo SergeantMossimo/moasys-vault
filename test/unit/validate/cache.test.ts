@@ -55,6 +55,28 @@ describe('JsonCache', () => {
     expect(reader.get('a')).toEqual({ id: 1, name: 'A' })
   })
 
+  it('applies normalize to loaded entries and keeps their fetched_at', () => {
+    const file = path.join(tmpDir, 'cache.json')
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        entries: {
+          a: {
+            value: { id: 1, name: 'A', bulky: 'x'.repeat(100) },
+            fetched_at: '2020-01-01T00:00:00Z',
+          },
+        },
+      })
+    )
+
+    const cache = new JsonCache<SampleEntry>(file, 1, v => ({ id: v.id, name: v.name }))
+    expect(cache.get('a')).toEqual({ id: 1, name: 'A' })
+
+    // Old timestamp survives, so a slimmed entry still ages out on schedule.
+    expect(cache.pruneOlderThan(1)).toBe(1)
+  })
+
   it('discards cache when version mismatches', () => {
     const file = path.join(tmpDir, 'cache.json')
     fs.writeFileSync(
