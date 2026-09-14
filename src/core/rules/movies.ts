@@ -108,9 +108,8 @@ export const MoviesRulesSchema = z.object({
    * Set to 0 to disable the check entirely.
    *
    * Expect legitimate hits: short films, animated TV specials, and stand-up
-   * sets are all genuinely under 30 minutes. Silence those per-path in
-   * `ignored/<drive>/movies.yaml` with `types: [warn_short_duration]` rather
-   * than lowering the threshold.
+   * sets are all genuinely under 30 minutes. List those under `movies:` in
+   * `ignored/<drive>/movies.yaml` rather than lowering the threshold.
    */
   min_duration_minutes: z.number().int().nonnegative(),
 
@@ -161,10 +160,9 @@ export const MoviesRulesSchema = z.object({
     /**
      * The file's runtime is at or below `min_duration_minutes`. Usually a
      * truncated or failed encode. This is a review list, not an error list —
-     * short films, TV specials and stand-up sets fire legitimately, so silence
-     * those per-path in `ignored/<drive>/movies.yaml` with
-     * `types: [warn_short_duration]`, which leaves their naming and TMDB
-     * warnings visible.
+     * short films, TV specials and stand-up sets fire legitimately. Off by
+     * default: `warn_tmdb_runtime_mismatch` in the validate pass is the precise
+     * version, since it knows how long each film is supposed to be.
      */
     warn_short_duration: z.boolean(),
     /**
@@ -274,7 +272,7 @@ export const defaultMoviesRules: MoviesRules = MoviesRulesSchema.parse({
     warn_duplicate_quality: true,
     warn_multi_quality: true,
     warn_quality_mismatch: true,
-    warn_short_duration: true,
+    warn_short_duration: false,
     warn_loose_files: true,
     warn_extra_subfolders: true,
     warn_unexpected_entries: true,

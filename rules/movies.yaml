@@ -60,8 +60,18 @@ video_extensions:
 
 # Sidecar = silently allowed alongside movies (poster art, subtitles, NFOs).
 sidecar_extensions:
+  - .nfo
+  - .jpg
+  - .jpeg
+  - .png
+  - .webp
+  - .tbn
   - .srt
-
+  - .ass
+  - .ssa
+  - .vtt
+  - .sub
+  - .idx
 
 # ── Year range ──────────────────────────────────────────────────────────────
 # Files with a year outside this range get warn_suspicious_year.
@@ -78,13 +88,13 @@ quality_thresholds: []
 
 # ── Minimum movie duration ──────────────────────────────────────────────────
 # Runtime floor in minutes. A movie file at or below this fires
-# warn_short_duration — the target is a truncated or failed encode. Set to 0
-# to disable the check.
+# warn_short_duration (off by default) — the target is a truncated or failed
+# encode. Set to 0 to disable the check.
 #
 # Expect legitimate hits at 30: short films, animated TV specials and stand-up
-# sets are genuinely this short. Silence those per-path in
-# ignored/<drive>/movies.yaml with `types: [warn_short_duration]` rather than
-# lowering the threshold and losing the truncated-encode signal.
+# sets are genuinely this short. warn_tmdb_runtime_mismatch below is the
+# precise version; if you use this one instead, list genuine shorts under
+# `movies:` in ignored/<drive>/movies.yaml rather than lowering the threshold.
 min_duration_minutes: 30
 
 # ── TMDB runtime tolerance ──────────────────────────────────────────────────
@@ -112,7 +122,7 @@ acceptable_quality_combos:
 
 # ── Per-warning toggles ─────────────────────────────────────────────────────
 # Set any to false to silence that warning everywhere. To silence on specific
-# paths only, use ignored/movies.yaml instead.
+# items only, use ignored/<drive>/movies.yaml instead.
 checks:
   warn_non_primary: true          # File isn't the configured primary format
   warn_no_videos: true            # Movie folder has no video files

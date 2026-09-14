@@ -1,0 +1,18 @@
+{
+  "_notes": {
+    "_": "Copy this file to 'config.json' (without the .example) and edit it. config.json is gitignored, so your paths stay on your machine.",
+    "roots": "Each media type is a list of named roots, one per drive. 'name' becomes a folder under output/, cache/ and ignored/, and is how you pick a drive: npm run movies external. Leave the drive off to use the first root.",
+    "unused_types": "Every type needs at least one root. If you don't have a type, leave its placeholder — nothing is read unless you run that type's command.",
+    "plex": "Optional. Only the plex:* commands use it. The token goes in .secrets.json, not here. See docs/PLEX.md."
+  },
+  "movies": [
+    { "root_path": "M:\\Movies", "name": "Server" },
+    { "root_path": "D:\\Movies", "name": "External" }
+  ],
+  "shows": [{ "root_path": "M:\\Shows", "name": "Server" }],
+  "music": [{ "root_path": "M:\\Music", "name": "Server" }],
+  "audiobooks": [{ "root_path": "M:\\Audiobooks", "name": "Server" }],
+  "plex": {
+    "url": "http://192.168.1.50:32400"
+  }
+}

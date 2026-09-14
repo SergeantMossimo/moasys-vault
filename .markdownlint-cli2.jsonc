@@ -1,0 +1,9 @@
+// MOASYS-Vault markdownlint config (npm run lint:md).
+{
+  "config": {
+    // Prettier owns formatting. Docs are written one paragraph per line, which
+    // the default 80-column limit would flag on nearly every line.
+    "MD013": false
+  },
+  "ignores": ["node_modules/**", "output/**", "cache/**", "coverage/**"]
+}
