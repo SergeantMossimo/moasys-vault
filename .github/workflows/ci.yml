@@ -1,0 +1,33 @@
+# Typecheck, lint, test and format-check on every push and pull request.
+# Same checks as `npm run check` locally. Nothing here touches a media library —
+# the tests build their fixture libraries in temp directories.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # Windows matches the machine the scanner runs on (drive-letter roots,
+    # case-insensitive paths), so path handling is tested where it matters.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run prettier
+      - run: npm run lint:md

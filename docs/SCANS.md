@@ -32,7 +32,7 @@ Each drive is scanned independently, into its own `output/<drive>/<type>/` folde
 npm install
 
 # 2. Point the scanner at your library
-# Open config.json and list a named root for each media type you have
+# Copy config.example.json to config.json and list a named root for each media type you have
 # (one entry per drive if a type spans more than one)
 
 # 3. First scan — this is the slow one (every file gets inspected to build a cache)
@@ -132,13 +132,13 @@ See [Configuration](CONFIG.md#three-configuration-shapes) for the full configura
 
 ### Short runtime (movies)
 
-The probe pass also knows how long each file actually is, and `warn_short_duration` flags any movie file whose runtime is **at or below** `min_duration_minutes` (default 30). The thing worth catching is a truncated or failed encode — a 4-minute file where a 2-hour film should be, or a zero-length container that won't play at all.
+The probe pass also knows how long each file actually is, and `warn_short_duration` flags any movie file whose runtime is **at or below** `min_duration_minutes` (default 30). It's **off by default** because the [TMDB runtime cross-check](#tmdb-runtime-cross-check-movies) does the same job more precisely; turn it on with `checks.warn_short_duration: true` if you don't run validation. The thing worth catching is a truncated or failed encode — a 4-minute file where a 2-hour film should be, or a zero-length container that won't play at all.
 
 Unlike `warn_quality_mismatch`, this isn't gated on the category's quality, so it fires in general-tag categories like `Documentary/` too. Files whose duration ffprobe couldn't read are skipped — those already fire `warn_probe_failed`. Set `min_duration_minutes: 0` to turn the check off.
 
 #### A known false positive: legitimate short films
 
-Plenty of things in a movie library are genuinely under 30 minutes. On this library the check fires on 239 files on `server` and 179 on `external`, and most of them are fine: Pixar shorts (_Luxo Jr._ 2m, _For the Birds_ 3m), animated TV specials (_The Snowman_ 27m, _Shrek the Halls_ 28m), Marvel one-shots (_Team Thor_ 2m), and stand-up specials (_Louis C.K. One Night Stand_ 29m).
+Plenty of things in a movie library are genuinely under 30 minutes — on a large library expect this check to fire on a couple of hundred files, most of them fine: Pixar shorts (_Luxo Jr._ 2m, _For the Birds_ 3m), animated TV specials (_The Snowman_ 27m, _Shrek the Halls_ 28m), Marvel one-shots (_Team Thor_ 2m), and stand-up specials (_Louis C.K. One Night Stand_ 29m).
 
 So treat this one as a **review list, not an error list** — walk it once, confirm the genuinely short titles, and list them in `ignored/<drive>/movies.yaml`:
 

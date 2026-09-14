@@ -214,7 +214,8 @@ export function loadConfig(projectRoot: string): AppConfig {
 
   if (!fs.existsSync(configPath)) {
     console.error(`\n  Error: config.json not found at ${configPath}`)
-    console.error('  Create it with one or more named roots per media type. Minimal example:')
+    console.error('  Copy config.example.json to config.json and edit the paths, or create it')
+    console.error('  with one or more named roots per media type. Minimal example:')
     console.error(EXAMPLE_CONFIG)
     process.exit(1)
   }

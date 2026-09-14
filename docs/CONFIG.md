@@ -12,6 +12,12 @@ Each rules file contains the default rules for its media type. You only need to 
 
 ## `config.json`
 
+`config.json` is gitignored, since it holds your own paths. Start by copying the committed template:
+
+```bash
+cp config.example.json config.json
+```
+
 One section per media type. Each section is a **list of named roots**, so a media type can span several drives:
 
 ```json
@@ -388,14 +394,13 @@ quality_thresholds:
 
 **Why you'd change it:** Lower it if you keep a lot of legitimate short content and only care about catastrophic truncation; raise it if your library is all feature films.
 
-**Related warnings:** `warn_short_duration`.
+**Related warnings:** `warn_short_duration`, which is **off by default** — turn it on with `checks.warn_short_duration: true`. [`runtime_tolerance_percent`](#runtime_tolerance_percent) is the precise version of this check.
 
-**Expect legitimate hits.** Short films, animated TV specials, and stand-up sets are genuinely under 30 minutes, so this is a review list rather than an error list. Silence the ones you've checked per-path in `ignored/<drive>/movies.yaml`, scoped to the one warning type so the film's naming and TMDB warnings stay visible:
+**Expect legitimate hits.** Short films, animated TV specials, and stand-up sets are genuinely under 30 minutes, so this is a review list rather than an error list. List the ones you've checked under `movies:` in `ignored/<drive>/movies.yaml` (this silences that movie's other warnings too):
 
 ```yaml
-- path: HD/Luxo Jr. (1986)
-  types:
-    - warn_short_duration
+movies:
+  - Luxo Jr. (1986)
 ```
 
 **Example:**

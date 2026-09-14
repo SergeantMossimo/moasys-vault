@@ -150,8 +150,8 @@ export const MusicRulesSchema = z.object({
      * a downloaded preview, or an intentional historical recording.
      *
      * Legitimate mono albums (early jazz/blues, mono masters, etc.) can
-     * be silenced per-album via `ignored/music.yaml` with the type-scoped
-     * form (`types: [warn_mono_audio]`).
+     * be silenced per-album under `albums:` in `ignored/<drive>/music.yaml`
+     * (which silences that album's other warnings too).
      */
     warn_mono_audio: z.boolean(),
   }),

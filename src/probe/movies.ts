@@ -295,8 +295,8 @@ export async function probeMovies(
           `${rules.min_duration_minutes}-minute threshold (min_duration_minutes). ` +
           `Usually a truncated or failed encode; play the file through to the end and ` +
           `re-encode from source if it's cut short. If it's a genuine short film, TV ` +
-          `special, or stand-up set, silence it in ignored/<drive>/movies.yaml with ` +
-          `types: [warn_short_duration]`
+          `special, or stand-up set, list the movie under \`movies:\` in ` +
+          `ignored/<drive>/movies.yaml`
       )
     }
   }

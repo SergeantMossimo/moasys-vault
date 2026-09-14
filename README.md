@@ -117,7 +117,8 @@ npm install
 
 ```bash
 # 1. Tell the scanner where your library lives
-#    Edit config.json — list a named root per media type you have.
+#    Copy config.example.json to config.json (it's gitignored), then
+#    list a named root per media type you have.
 #    A type that spans drives gets one entry per drive.
 
 # 2. First scan — see the "Estimated scan times" table below
@@ -188,8 +189,8 @@ output/<drive>/<type>/
 
 ```text
 MOASYS-Vault/
-├── config.json
-├── .secrets.json
+├── config.json          (from config.example.json)
+├── .secrets.json        (from .secrets.json.example)
 ├── rules/
 ├── ignored/
 ├── output/
@@ -201,7 +202,7 @@ MOASYS-Vault/
 
 For day-to-day use, you'll only touch the top few:
 
-- **`config.json`** — the paths to your library: a list of named roots per media type, one per drive. You always edit this.
+- **`config.json`** — the paths to your library: a list of named roots per media type, one per drive. Copy it from `config.example.json`; it's gitignored so your paths stay local.
 - **`.secrets.json`** — your TMDB API key and Plex token. Each is only needed by the commands that use it. Gitignored.
 - **`rules/`** — per-type rules. Default committed values; override in `rules/<type>.local.yaml` (gitignored) for your library. Rules are per type, shared across drives.
 - **`ignored/`** — per-drive, per-type warning silencers. List names by level in `ignored/<drive>/<type>.yaml` (`shows: Firefly (2002)`) to suppress warnings you don't want to act on. Each type ships with a commented `.yaml.example` reference at the top level.

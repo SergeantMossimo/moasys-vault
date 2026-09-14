@@ -6,13 +6,7 @@ Context for Claude (and any other AI assistant) when working in this repo.
 
 **The scanner — and you while modifying it — must never modify, move, rename, or delete files under any user's `root_path`.** The user owns all changes to their media library.
 
-This rule applies to every root listed in `config.json`. Each media type is an array of `{root_path, name}` entries — one per drive:
-
-- Movies (`config.movies[]` — `M:\Movies` "Server", `D:\Movies` "External")
-- Shows (`config.shows[]` — `M:\Shows` "Server", `D:\Shows` "External")
-- Music (`config.music[]` — `M:\Audio` "Server")
-- Audiobooks (`config.audiobooks[]` — `M:\Audiobooks` "Server")
-- Any other path configured in `config.json`
+This rule applies to every root listed in `config.json`. Each media type is an array of `{root_path, name}` entries — one per drive (`config.movies[]`, `config.shows[]`, `config.music[]`, `config.audiobooks[]`). `config.json` is gitignored and per-machine; read it for the current roots rather than assuming. `config.example.json` is the committed template.
 
 What the scanner does instead: **emits warnings** in `output/<drive>/<type>/warnings.json` describing what it would suggest changing, with recommended fixes. The user reads the warnings and does the actual filesystem changes themselves.
 
@@ -133,7 +127,7 @@ npm run lint:fix
 
 npm forwards bare positionals, so the drive name needs no `--` separator.
 
-The smoke test pattern is to run the scan against the user's real library and confirm entry counts + warning counts don't regress. `M:\` is "Server" (the full library, all categories); `D:\` is "External" (movies + shows only, `HD`/`SD` categories).
+The smoke test pattern is to run the scan against the user's real library and confirm entry counts + warning counts don't regress. "Server" (`M:\`) is the full library, all categories; "External" (`D:\`) is a partial copy whose roots change over time — check `config.json` before smoke-testing it.
 
 ## Don't waste tokens
 

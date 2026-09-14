@@ -28,6 +28,9 @@ function primeCache(cachePath: string, root: string, data: Record<string, ProbeD
   return cache
 }
 
+/** warn_short_duration ships off by default, so its tests switch it on. */
+const SHORT_DURATION_ON = { ...defaultMoviesRules.checks, warn_short_duration: true }
+
 describe('probeMovies', () => {
   let tmpDir: string
   let logSpy: ReturnType<typeof vi.spyOn>
@@ -154,7 +157,7 @@ describe('probeMovies', () => {
   it('emits warn_short_duration for a file at or below min_duration_minutes', async () => {
     const { rules, root, cache, warnings } = setup({
       spec: { HD: { 'Short (2000)': { 'Short (2000).mp4': '' } } },
-      rules: { min_duration_minutes: 30 },
+      rules: { min_duration_minutes: 30, checks: SHORT_DURATION_ON },
       probes: {
         'HD/Short (2000)/Short (2000).mp4': fakeProbe({
           duration_seconds: 125,
@@ -172,7 +175,7 @@ describe('probeMovies', () => {
   it('fires warn_short_duration exactly at the threshold (at-or-below, not strictly-below)', async () => {
     const { rules, root, cache, warnings } = setup({
       spec: { HD: { 'X (2000)': { 'X (2000).mp4': '' } } },
-      rules: { min_duration_minutes: 30 },
+      rules: { min_duration_minutes: 30, checks: SHORT_DURATION_ON },
       probes: {
         'HD/X (2000)/X (2000).mp4': fakeProbe({
           duration_seconds: 1800,
@@ -188,7 +191,7 @@ describe('probeMovies', () => {
   it('stays silent one second over the threshold', async () => {
     const { rules, root, cache, warnings } = setup({
       spec: { HD: { 'X (2000)': { 'X (2000).mp4': '' } } },
-      rules: { min_duration_minutes: 30 },
+      rules: { min_duration_minutes: 30, checks: SHORT_DURATION_ON },
       probes: {
         'HD/X (2000)/X (2000).mp4': fakeProbe({
           duration_seconds: 1801,
@@ -205,7 +208,7 @@ describe('probeMovies', () => {
     // The most valuable hit this check produces — a broken encode.
     const { rules, root, cache, warnings } = setup({
       spec: { HD: { 'X (2000)': { 'X (2000).mp4': '' } } },
-      rules: { min_duration_minutes: 30 },
+      rules: { min_duration_minutes: 30, checks: SHORT_DURATION_ON },
       probes: {
         'HD/X (2000)/X (2000).mp4': fakeProbe({
           duration_seconds: 0,
@@ -222,7 +225,7 @@ describe('probeMovies', () => {
     // Unreadable files are warn_probe_failed's job, not this check's.
     const { rules, root, cache, warnings } = setup({
       spec: { HD: { 'X (2000)': { 'X (2000).mp4': '' } } },
-      rules: { min_duration_minutes: 30 },
+      rules: { min_duration_minutes: 30, checks: SHORT_DURATION_ON },
       probes: {
         'HD/X (2000)/X (2000).mp4': fakeProbe({
           duration_seconds: null,
@@ -235,10 +238,26 @@ describe('probeMovies', () => {
     expect(warnings.all().some(w => w.type === 'warn_short_duration')).toBe(false)
   })
 
+  it('ships warn_short_duration off by default', async () => {
+    const { rules, root, cache, warnings } = setup({
+      spec: { HD: { 'X (2000)': { 'X (2000).mp4': '' } } },
+      rules: { min_duration_minutes: 30 },
+      probes: {
+        'HD/X (2000)/X (2000).mp4': fakeProbe({
+          duration_seconds: 60,
+          video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 },
+        }),
+      },
+    })
+
+    await probeMovies({ root_path: root }, rules, cache, warnings)
+    expect(warnings.all().some(w => w.type === 'warn_short_duration')).toBe(false)
+  })
+
   it('disables warn_short_duration when min_duration_minutes is 0', async () => {
     const { rules, root, cache, warnings } = setup({
       spec: { HD: { 'X (2000)': { 'X (2000).mp4': '' } } },
-      rules: { min_duration_minutes: 0 },
+      rules: { min_duration_minutes: 0, checks: SHORT_DURATION_ON },
       probes: {
         'HD/X (2000)/X (2000).mp4': fakeProbe({
           duration_seconds: 60,
@@ -270,10 +289,10 @@ describe('probeMovies', () => {
     expect(warnings.all().some(w => w.type === 'warn_short_duration')).toBe(false)
   })
 
-  it('points warn_short_duration at the ignore-file escape hatch', async () => {
+  it('points warn_short_duration at the level-keyed ignore list', async () => {
     const { rules, root, cache, warnings } = setup({
       spec: { HD: { 'X (2000)': { 'X (2000).mp4': '' } } },
-      rules: { min_duration_minutes: 30 },
+      rules: { min_duration_minutes: 30, checks: SHORT_DURATION_ON },
       probes: {
         'HD/X (2000)/X (2000).mp4': fakeProbe({
           duration_seconds: 60,
@@ -285,7 +304,9 @@ describe('probeMovies', () => {
     await probeMovies({ root_path: root }, rules, cache, warnings)
     const hit = warnings.all().find(w => w.type === 'warn_short_duration')
     expect(hit?.issue).toMatch(/ignored\/<drive>\/movies\.yaml/)
-    expect(hit?.issue).toMatch(/types: \[warn_short_duration\]/)
+    expect(hit?.issue).toMatch(/under `movies:`/)
+    // The per-type `types:` form was removed from ignore lists and now fails to load.
+    expect(hit?.issue).not.toMatch(/types:/)
   })
 
   it('fires warn_short_duration in a general-tag category, unlike warn_quality_mismatch', async () => {
@@ -296,6 +317,7 @@ describe('probeMovies', () => {
       rules: {
         categories: [{ name: 'Documentary' }],
         min_duration_minutes: 30,
+        checks: SHORT_DURATION_ON,
       },
       probes: {
         'Documentary/X (2000)/X (2000).mp4': fakeProbe({

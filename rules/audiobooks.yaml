@@ -48,7 +48,12 @@ audio_extensions:
 
 # Sidecar = silently allowed alongside chapters (cover art, cuesheets, PDFs).
 sidecar_extensions:
+  - .nfo
   - .jpg
+  - .jpeg
+  - .png
+  - .webp
+  - .cue
   - .pdf
 
 # ── Acceptable cross-category book combos ───────────────────────────────────
@@ -63,7 +68,7 @@ acceptable_book_combos: []
 
 # ── Per-warning toggles ─────────────────────────────────────────────────────
 # Set any to false to silence that warning everywhere. To silence on specific
-# paths only, use ignored/audiobooks.yaml instead.
+# items only, use ignored/<drive>/audiobooks.yaml instead.
 checks:
   warn_non_primary: true        # File isn't the configured primary format
   warn_no_audio: true           # Book folder has no audio files

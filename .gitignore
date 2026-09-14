@@ -20,11 +20,18 @@ ignored/**/*.yaml
 ignored/**/*.bak
 !ignored/*.yaml.example
 
+# Per-machine library paths and Plex address. Copy config.example.json to
+# config.json and edit it; the example is what's committed.
+config.json
+
 # Secrets — TMDB API key etc. NEVER commit this.
 .secrets.json
 
 # TypeScript build output
 dist/
+
+# Test coverage report (npm run test:coverage)
+coverage/
 
 # Node modules
 node_modules/

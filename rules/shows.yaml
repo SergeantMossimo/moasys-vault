@@ -83,8 +83,18 @@ episode_code_case: any
 
 # Sidecar = silently allowed alongside episodes (poster art, subtitles, NFOs).
 sidecar_extensions:
+  - .nfo
   - .jpg
+  - .jpeg
+  - .png
+  - .webp
+  - .tbn
   - .srt
+  - .ass
+  - .ssa
+  - .vtt
+  - .sub
+  - .idx
 
 # ── Quality buckets ─────────────────────────────────────────────────────────
 # Only used when categories are organized by quality (shape A above).
@@ -107,7 +117,7 @@ acceptable_quality_combos:
 
 # ── Per-warning toggles ─────────────────────────────────────────────────────
 # Set any to false to silence that warning everywhere. To silence on specific
-# paths only, use ignored/shows.yaml instead.
+# items only, use ignored/<drive>/shows.yaml instead.
 checks:
   warn_non_primary: true                        # File isn't the configured primary format
   warn_no_videos: true                          # Season folder has no video files
@@ -131,4 +141,4 @@ checks:
   warn_tmdb_title_canonical: true               # Folder title differs from TMDB filename-safe canonical
   warn_missing_episode_title: true              # Episode files omit trailing " - Episode Title" (summary per season)
   warn_tmdb_episode_name_mismatch: true         # Local episode title doesn't match TMDB's title for that S/E
-  warn_tmdb_episode_name_multi_episode: true    # Also check multi-episode files (S01E01-E02) — off by default (noisy)
+  warn_tmdb_episode_name_multi_episode: false   # Also check multi-episode files (S01E01-E02) — off by default (noisy)
