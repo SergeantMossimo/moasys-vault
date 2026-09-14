@@ -129,7 +129,7 @@ checks:
   warn_episode_code_case: true                  # Episode code isn't the episode_code_case style (summary per season)
   warn_season_mismatch: true                    # File's season number vs parent season folder
   warn_episode_gaps: true                       # Gap detected in episode numbers
-  warn_quality_mismatch: true                   # File dimensions don't fit its category's quality bucket
+  warn_quality_mismatch: true                   # Episode dimensions don't fit the category's quality bucket (summary per season)
   warn_duplicate_quality: true                  # A season in two folders of the SAME quality tier (HD + Other HD) — not whitelistable
   warn_multi_quality: true                      # A single season exists in multiple distinct qualities
   warn_loose_files: true                        # Video files at unexpected nesting

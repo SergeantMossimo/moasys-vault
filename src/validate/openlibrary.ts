@@ -97,7 +97,7 @@ export class OpenLibraryClient {
         headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
       })
     } catch (err) {
-      throw new Error(`Open Library network error: ${(err as Error).message}`)
+      throw new Error(`Open Library network error: ${(err as Error).message}`, { cause: err })
     } finally {
       this.lastRequestAt = Date.now()
       this.requestCount++

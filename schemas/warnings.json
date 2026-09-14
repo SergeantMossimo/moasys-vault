@@ -43,6 +43,11 @@
         "extension": {
           "type": "string",
           "description": "Optional file extension. Only present for non-primary file warnings (warn_non_primary)."
+        },
+        "ignore": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The narrowest ignore-list entry that would silence this row, as `<key>: <name>` — e.g. `shows: Firefly (2002)` means add `- Firefly (2002)` under `shows:` in ignored/<drive>/<type>.yaml. Absent when no entry can reach the row."
         }
       },
       "required": ["path", "issue"],

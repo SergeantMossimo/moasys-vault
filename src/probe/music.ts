@@ -132,10 +132,8 @@ function collectTasks(
 
   for (const cat of resolveCategories(rules.categories)) {
     const folderPath = path.join(config.root_path, cat.folderName)
-    if (!fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) {
-      console.log(`    [SKIP] Category folder not found: ${folderPath}`)
-      continue
-    }
+    // Missing folders are reported once, by the scan pass (core/scanner.ts).
+    if (!fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) continue
 
     for (const artistEntry of fs.readdirSync(folderPath, { withFileTypes: true })) {
       if (!artistEntry.isDirectory()) continue

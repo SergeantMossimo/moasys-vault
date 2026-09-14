@@ -47,7 +47,8 @@
  *   4. SKIPPED entries are not failures. Files the tool has no data for are
  *      reported and left alone; they never block the rest of the batch.
  *   5. An undo manifest is written BEFORE the first rename, and `--undo`
- *      replays it in reverse.
+ *      replays it in reverse — after `validateUndoManifest` confirms every
+ *      entry stays inside one folder and overwrites nothing, all-or-nothing.
  *
  * Usage:
  *   npm run fix:shows -- --fix show-prefix external
@@ -867,9 +868,74 @@ function apply(plan: Plan, rootPath: string, manifestPath: string): void {
 }
 
 /**
+ * Check an undo manifest before replaying any of it — the same guarantees
+ * `validatePlan` gives `--apply`. A manifest is a plain JSON file: one that was
+ * hand-edited, truncated, or copied from another run must not be able to move
+ * a file into a different folder or rename it over a file that exists, which
+ * on Windows replaces (destroys) that file.
+ *
+ * Returns human-readable problems; empty means safe to replay. All-or-nothing:
+ * the caller renames nothing if anything is wrong.
+ */
+export function validateUndoManifest(manifest: unknown): string[] {
+  if (
+    typeof manifest !== 'object' ||
+    manifest === null ||
+    !Array.isArray((manifest as UndoManifest).renames)
+  ) {
+    return ['not an undo manifest (no "renames" list)']
+  }
+
+  const problems: string[] = []
+  const restoring = new Map<string, string>()
+
+  for (const [i, rename] of (manifest as UndoManifest).renames.entries()) {
+    const where = `renames[${i}]`
+    if (typeof rename?.from !== 'string' || typeof rename?.to !== 'string') {
+      problems.push(`${where}: "from" and "to" must both be file paths`)
+      continue
+    }
+    if (!path.isAbsolute(rename.from) || !path.isAbsolute(rename.to)) {
+      problems.push(`${where}: paths must be absolute — ${rename.to}`)
+      continue
+    }
+
+    const from = path.resolve(rename.from)
+    const to = path.resolve(rename.to)
+    if (path.dirname(from).toLowerCase() !== path.dirname(to).toLowerCase()) {
+      problems.push(`${where}: would move a file between folders — ${to} → ${from}`)
+      continue
+    }
+
+    const key = from.toLowerCase()
+    const previous = restoring.get(key)
+    if (previous !== undefined) {
+      problems.push(`${where}: ${from} is also restored by ${previous}`)
+      continue
+    }
+    restoring.set(key, where)
+
+    // Undoing restores `to` back to `from`. If something now sits at `from`
+    // (and it isn't the same file under a case-only rename), the rename
+    // would overwrite it.
+    const caseOnly = from.toLowerCase() === to.toLowerCase()
+    if (!caseOnly && fs.existsSync(from)) {
+      problems.push(`${where}: ${from} already exists — undoing would overwrite it`)
+      continue
+    }
+    if (fs.existsSync(to) && !fs.statSync(to).isFile()) {
+      problems.push(`${where}: ${to} is not a file`)
+    }
+  }
+
+  return problems
+}
+
+/**
  * Replay a manifest in reverse. Entries whose target is already gone are
  * reported and stepped over — that's the expected shape of undoing a run that
- * failed partway through.
+ * failed partway through. Nothing is renamed unless every entry passes
+ * `validateUndoManifest`.
  */
 function undo(manifestPath: string): void {
   if (!fs.existsSync(manifestPath)) {
@@ -877,7 +943,24 @@ function undo(manifestPath: string): void {
     process.exit(1)
   }
 
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as UndoManifest
+  let manifest: UndoManifest
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as UndoManifest
+  } catch (err) {
+    console.error(`\n  Error: ${manifestPath} is not valid JSON (${(err as Error).message})`)
+    process.exit(1)
+  }
+
+  const problems = validateUndoManifest(manifest)
+  if (problems.length > 0) {
+    console.error(
+      `\n  ABORTED — ${problems.length} unsafe entr${problems.length === 1 ? 'y' : 'ies'} in the manifest. Nothing was changed.\n`
+    )
+    for (const problem of problems.slice(0, 25)) console.error(`    ${problem}`)
+    if (problems.length > 25) console.error(`    ... ${problems.length - 25} more`)
+    process.exit(1)
+  }
+
   console.log(
     `\n  Undoing ${manifest.fix} on ${manifest.drive} (${manifest.renames.length} rename(s))`
   )

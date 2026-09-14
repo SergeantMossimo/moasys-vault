@@ -78,6 +78,8 @@ npm run scan:all external   # every type that has an "External" root
 
 Naming a drive that isn't configured for a type — or running a type that isn't in `config.json` at all — is an error on a single-type command. The `--all` commands (`scan:all`, `validate:all`, `plex:check`, `npm run all`) skip that type with a note instead. That's what lets `npm run scan:all external` work when only movies and shows live on the external drive.
 
+If a root's `root_path` doesn't exist — the drive is disconnected, or the folder moved — the scan and `plex:check` stop for that root instead of treating it as an empty library, so nothing is overwritten and the probe cache isn't pruned. Update `root_path` if the folder moved.
+
 ### Per-drive files
 
 The root's name (lowercased) becomes a folder segment, so drives never share state:
@@ -572,6 +574,8 @@ ignored/
 ```
 
 Each `.yaml.example` at the top level ships with commented usage patterns. To use: copy it to `ignored/<drive>/<type>.yaml` (lowercase drive name, drop the `.example` suffix) and uncomment / edit the entries you need. A drive with nothing to silence needs no file — and no folder — at all.
+
+**You rarely need to write an entry from scratch.** Every row in a `*warnings.json` file carries an `ignore` field with the narrowest entry that silences it — `"ignore": "seasons: Firefly (2002)/Season 01"` means add `- Firefly (2002)/Season 01` under `seasons:`. See [Silencing a row](OUTPUT.md#silencing-a-row).
 
 ### Entries are bare names, grouped by level
 

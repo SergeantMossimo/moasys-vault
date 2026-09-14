@@ -26,7 +26,7 @@ import { PlexRules } from '../core/rules/plex'
 import { loadTypeRules } from '../core/rules/registry'
 import { typeOutputPaths } from '../core/output-paths'
 import { PROJECT_ROOT } from '../core/project'
-import { parseRunnerArgs, printBanner, selectRoot } from '../core/runner-shared'
+import { parseRunnerArgs, printBanner, rootPathAvailable, selectRoot } from '../core/runner-shared'
 import type {
   ArtistProbeOutput,
   BookProbeOutput,
@@ -212,7 +212,11 @@ function main(): void {
   const types = acrossAllTypes ? MEDIA_TYPES : [parsed.type as MediaType]
   for (const mediaType of types) {
     const root = selectRoot(config, mediaType, parsed.drive, acrossAllTypes)
-    if (root) runType(mediaType, root, libraries, plexRules, unfiltered)
+    // The check stats files under root_path; a missing root would report
+    // every Plex file as an orphan.
+    if (root && rootPathAvailable(mediaType, root, acrossAllTypes)) {
+      runType(mediaType, root, libraries, plexRules, unfiltered)
+    }
   }
 
   console.log()

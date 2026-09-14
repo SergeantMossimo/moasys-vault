@@ -11,6 +11,8 @@
  * a behavior change ripples to every command without copy-paste.
  */
 
+import fs from 'fs'
+
 import { rootsFor } from './config'
 import { writeFileAtomic } from './atomic-write'
 import { MediaType } from './project'
@@ -142,6 +144,32 @@ export function selectRoot(
   if (rootsFor(config, mediaType).length === 0) {
     console.error(`    Add a "${mediaType}" list to config.json — see config.example.json.`)
   }
+  process.exit(1)
+}
+
+/**
+ * Check that a root's folder is reachable before a command reads it. A
+ * missing `root_path` — a disconnected drive, or a folder that was moved —
+ * would otherwise scan as an empty library. Same policy as `selectRoot`:
+ * skip with a note under `--all`, exit on a single-type run.
+ */
+export function rootPathAvailable(
+  mediaType: MediaType,
+  root: MediaRootConfig,
+  acrossAllTypes: boolean
+): boolean {
+  if (fs.statSync(root.root_path, { throwIfNoEntry: false })?.isDirectory()) return true
+
+  const problem = `${mediaType} root '${root.name}' not found at ${root.root_path}`
+  const hint =
+    'Is the drive connected? If the folder moved, update root_path in config.json. Nothing was scanned or changed.'
+  if (acrossAllTypes) {
+    console.log(`\n  [SKIP] ${problem}`)
+    console.log(`    ${hint}`)
+    return false
+  }
+  console.error(`\n  Error: ${problem}`)
+  console.error(`    ${hint}`)
   process.exit(1)
 }
 

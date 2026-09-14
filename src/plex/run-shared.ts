@@ -54,8 +54,10 @@ export function plexWarningCollector(
   unfiltered: boolean
 ): WarningCollector {
   const { hasCategories } = typeRules(mediaType)
+  // An empty list rather than none, so unfiltered rows still carry their
+  // ready-to-paste ignore entry.
   return unfiltered
-    ? new WarningCollector(undefined, hasCategories)
+    ? new WarningCollector({ mediaType, entries: [] }, hasCategories)
     : new WarningCollector(
         loadIgnoreList(PROJECT_ROOT, driveSlug(root.name), mediaType),
         hasCategories

@@ -1,6 +1,6 @@
 {
   "name": "moasys-vault",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "MOASYS-Vault — Plex Media Library Scanner",
   "scripts": {
     "movies": "tsx src/scan.ts --type movies",
@@ -29,29 +29,29 @@
     "check": "npm run typecheck && npm run lint && npm test && npm run prettier && npm run lint:md"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12"
   },
   "overrides": {
     "smol-toml": "^1.8.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^20.11.5",
-    "@typescript-eslint/eslint-plugin": "^8.0.0",
-    "@typescript-eslint/parser": "^8.0.0",
-    "@vitest/coverage-v8": "^4.1.11",
-    "eslint": "^8.57.0",
+    "@types/node": "^22.20.2",
+    "@vitest/coverage-v8": "^5.0.0",
+    "eslint": "^10.10.0",
     "markdownlint-cli2": "^0.23.2",
-    "prettier": "^3.2.5",
-    "tsx": "^4.7.0",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.13",
     "typescript": "^5.3.3",
-    "vitest": "^4.1.11"
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^5.0.0"
   },
   "dependencies": {
     "fflate": "^0.8.3",
     "ffprobe-static": "^3.1.0",
     "js-yaml": "^4.3.2",
-    "music-metadata": "^11.12.3",
-    "zod": "^4.4.3"
+    "music-metadata": "^11.15.0",
+    "zod": "^4.6.5"
   }
 }

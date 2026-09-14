@@ -202,6 +202,64 @@ describe('ProbeCache', () => {
       expect(cache.size()).toBe(1)
     })
 
+    it('skips the disk check for paths the probe pass just saw, with the same result', () => {
+      const root = path.join(tmpDir, 'media')
+      fs.mkdirSync(root, { recursive: true })
+      fs.writeFileSync(path.join(root, 'on-disk.mp4'), '')
+
+      const cache = new ProbeCache(path.join(tmpDir, 'cache.json'))
+      cache.set('on-disk.mp4', 1, 1, sampleData())
+      cache.set('seen-but-not-stat-checked.mp4', 1, 1, sampleData())
+      cache.set('gone.mp4', 1, 1, sampleData())
+
+      const exists = vi.spyOn(fs, 'existsSync')
+      const removed = cache.pruneOrphans(root, [], new Set(['seen-but-not-stat-checked.mp4']))
+      const checked = exists.mock.calls.map(c => String(c[0]))
+      exists.mockRestore()
+
+      expect(removed).toBe(1)
+      expect(cache.get('gone.mp4', 1, 1)).toBeNull()
+      expect(cache.get('seen-but-not-stat-checked.mp4', 1, 1)).not.toBeNull()
+      expect(checked.some(p => p.endsWith('seen-but-not-stat-checked.mp4'))).toBe(false)
+    })
+
+    it('prunes nothing when the root folder itself is missing (disconnected drive, moved folder)', () => {
+      const cache = new ProbeCache(path.join(tmpDir, 'cache.json'))
+      cache.set('HD/Show (2020)/Season 01/a.mp4', 1, 1, sampleData())
+      cache.set('SD/Other (2019)/Season 01/b.mp4', 1, 1, sampleData())
+
+      expect(cache.pruneOrphans(path.join(tmpDir, 'no-such-root'))).toBe(0)
+      expect(cache.size()).toBe(2)
+    })
+
+    it('keeps entries under a missing category folder but prunes real orphans elsewhere', () => {
+      const root = path.join(tmpDir, 'media')
+      fs.mkdirSync(path.join(root, 'HD'), { recursive: true })
+      fs.writeFileSync(path.join(root, 'HD', 'kept.mp4'), '')
+
+      const cache = new ProbeCache(path.join(tmpDir, 'cache.json'))
+      cache.set('HD/kept.mp4', 1, 1, sampleData())
+      cache.set('HD/deleted.mp4', 1, 1, sampleData())
+      cache.set('SD/whole-folder-missing.mp4', 1, 1, sampleData())
+
+      expect(cache.pruneOrphans(root, ['SD'])).toBe(1)
+      expect(cache.get('HD/deleted.mp4', 1, 1)).toBeNull()
+      expect(cache.get('SD/whole-folder-missing.mp4', 1, 1)).not.toBeNull()
+    })
+
+    it('matches keep prefixes case-insensitively and only on whole folder names', () => {
+      const root = path.join(tmpDir, 'media')
+      fs.mkdirSync(root, { recursive: true })
+
+      const cache = new ProbeCache(path.join(tmpDir, 'cache.json'))
+      cache.set('Other SD/a.mp4', 1, 1, sampleData())
+      cache.set('SD Extras/b.mp4', 1, 1, sampleData())
+
+      expect(cache.pruneOrphans(root, ['other sd'])).toBe(1)
+      expect(cache.get('Other SD/a.mp4', 1, 1)).not.toBeNull()
+      expect(cache.get('SD Extras/b.mp4', 1, 1)).toBeNull()
+    })
+
     it('is a no-op on an empty cache', () => {
       const cache = new ProbeCache(path.join(tmpDir, 'cache.json'))
       expect(cache.pruneOrphans(tmpDir)).toBe(0)

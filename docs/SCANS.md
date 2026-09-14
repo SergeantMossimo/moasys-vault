@@ -342,6 +342,8 @@ To reverse a run:
 npm run fix:shows -- --undo output/external/shows/fixes/rename-undo-2026-09-07T21-57-53-887Z.json
 ```
 
+The manifest is checked in full before anything is renamed. If any entry would move a file to a different folder, rename it over a file that now exists, or collide with another entry, the undo is aborted and nothing changes — so a hand-edited or stale manifest can't destroy a file.
+
 ### The season guard on `episode-titles`
 
 Episode titles are looked up by **episode number**, so the mapping is only trustworthy while your season and TMDB's agree about which episodes the season contains. If they disagree, the numbering may be offset and every title in that season is suspect — not just the ones that fail to resolve.

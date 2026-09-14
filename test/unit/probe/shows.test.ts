@@ -101,6 +101,69 @@ describe('probeShows', () => {
     expect(warnings.all().some(w => w.issue.match(/Quality mismatch/))).toBe(true)
   })
 
+  it('summarizes warn_quality_mismatch once per season, with counts, resolutions and codes', async () => {
+    const ep = (s: string, e: string) => `Show (2020) - S${s}E${e}.mp4`
+    const sd = (w = 720, h = 404) =>
+      fakeProbe({ video: { codec: 'h264', width: w, height: h, frame_rate: 24 } })
+    const hd = () =>
+      fakeProbe({ video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 } })
+    const { rules, root, cache, warnings } = setup({
+      spec: {
+        HD: {
+          'Show (2020)': {
+            'Season 01': { [ep('01', '01')]: '', [ep('01', '02')]: '', [ep('01', '03')]: '' },
+            'Season 02': { [ep('02', '01')]: '', [ep('02', '02')]: '' },
+          },
+        },
+      },
+      probes: {
+        [`HD/Show (2020)/Season 01/${ep('01', '01')}`]: sd(),
+        [`HD/Show (2020)/Season 01/${ep('01', '02')}`]: sd(640, 480),
+        [`HD/Show (2020)/Season 01/${ep('01', '03')}`]: hd(),
+        [`HD/Show (2020)/Season 02/${ep('02', '01')}`]: hd(),
+        [`HD/Show (2020)/Season 02/${ep('02', '02')}`]: hd(),
+      },
+    })
+
+    await probeShows({ root_path: root }, rules, cache, warnings)
+    const rows = warnings.all().filter(w => w.type === 'warn_quality_mismatch')
+
+    // Season 02 fits entirely, so only Season 01 is reported — once.
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.path).toBe('HD/Show (2020)/Season 01')
+    expect(rows[0]!.issue).toMatch(
+      /^Quality mismatch — 2 of 3 episode file\(s\) don't fit bucket 'HD'/
+    )
+    expect(rows[0]!.issue).toContain('640x480 (fits SD) ×1')
+    expect(rows[0]!.issue).toContain('720x404 (fits SD) ×1')
+    expect(rows[0]!.issue).toContain('Episodes: S01E01, S01E02.')
+  })
+
+  it('groups repeated resolutions and caps the samples it lists', async () => {
+    const files: Record<string, string> = {}
+    const probes: Record<string, ProbeData> = {}
+    const widths = [720, 720, 720, 640, 480, 320]
+    widths.forEach((w, i) => {
+      const name = `Show (2020) - S01E0${i + 1}.mp4`
+      files[name] = ''
+      probes[`HD/Show (2020)/Season 01/${name}`] = fakeProbe({
+        video: { codec: 'h264', width: w, height: 400, frame_rate: 24 },
+      })
+    })
+    const { rules, root, cache, warnings } = setup({
+      spec: { HD: { 'Show (2020)': { 'Season 01': files } } },
+      probes,
+    })
+
+    await probeShows({ root_path: root }, rules, cache, warnings)
+    const issue = warnings.all().find(w => w.type === 'warn_quality_mismatch')!.issue
+
+    expect(issue).toMatch(/6 of 6 episode file/)
+    expect(issue).toContain('720x400 (fits SD) ×3')
+    expect(issue).toContain(', +1 more.')
+    expect(issue).toContain('Episodes: S01E01, S01E02, S01E03, +3 more.')
+  })
+
   it('respects ignored_season_names for named seasons', async () => {
     const { rules, root, cache, warnings } = setup({
       spec: {
