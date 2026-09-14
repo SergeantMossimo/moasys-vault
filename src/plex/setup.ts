@@ -9,6 +9,7 @@
 import path from 'path'
 
 import { loadConfig, PLEX_OUTPUT_SEGMENT } from '../core/config'
+import { PROJECT_ROOT } from '../core/project'
 import { AppConfig } from '../core/types'
 import { loadSecrets } from '../validate/secrets'
 
@@ -17,8 +18,7 @@ import { PlexClient } from './client'
 import { PathMapper, rootRefs } from './paths'
 import { PlexIdentity, PlexSection } from './types'
 
-export const SCRIPT_DIR = path.join(__dirname, '..', '..')
-const OUTPUT_DIR = path.join(SCRIPT_DIR, 'output')
+const OUTPUT_DIR = path.join(PROJECT_ROOT, 'output')
 /** output/plex/ — library pulls, independent of any drive. */
 export const PLEX_OUTPUT_DIR = path.join(OUTPUT_DIR, PLEX_OUTPUT_SEGMENT)
 
@@ -48,9 +48,9 @@ function requirePlexConfig(config: AppConfig): NonNullable<AppConfig['plex']> {
  * mapped to a configured root.
  */
 export async function openPlexSession(): Promise<PlexSession> {
-  const config = loadConfig(SCRIPT_DIR)
+  const config = loadConfig(PROJECT_ROOT)
   const plex = requirePlexConfig(config)
-  const { token } = loadSecrets(SCRIPT_DIR, 'plex')
+  const { token } = loadSecrets(PROJECT_ROOT, 'plex')
   const client = new PlexClient(plex.url, token)
 
   let identity: PlexIdentity

@@ -13,17 +13,13 @@ import { driveSlug } from '../core/config'
 import { loadIgnoreList } from '../core/ignored'
 import { reportLegacyOutputFiles, typeOutputPaths } from '../core/output-paths'
 import { compilePattern } from '../core/rules/helpers'
-import { loadRules } from '../core/rules/loader'
-import { MoviesRulesSchema, defaultMoviesRules } from '../core/rules/movies'
-import { ShowsRulesSchema, defaultShowsRules } from '../core/rules/shows'
-import { MusicRulesSchema, defaultMusicRules } from '../core/rules/music'
-import { AudiobooksRulesSchema, defaultAudiobooksRules } from '../core/rules/audiobooks'
-import { writeWarnings } from '../core/runner-shared'
+import { loadTypeRules } from '../core/rules/registry'
+import { PROJECT_ROOT } from '../core/project'
+import { warningBreakdown, writeWarnings } from '../core/runner-shared'
 
-import { SCRIPT_DIR } from './setup'
 import { MediaType } from './types'
 
-export const MEDIA_TYPES: MediaType[] = ['movies', 'shows', 'music', 'audiobooks']
+export { MEDIA_TYPES } from '../core/project'
 
 // ─────────────────────────────────────────────
 // --no-ignore
@@ -46,7 +42,7 @@ export function warningsPath(
   name: string,
   unfiltered: boolean
 ): string {
-  const out = typeOutputPaths(SCRIPT_DIR, driveSlug(root.name), mediaType)
+  const out = typeOutputPaths(PROJECT_ROOT, driveSlug(root.name), mediaType)
   reportLegacyOutputFiles(out)
   return path.join(unfiltered ? out.unfilteredDir : out.dir, `${name}.json`)
 }
@@ -61,7 +57,7 @@ export function plexWarningCollector(
   return unfiltered
     ? new WarningCollector(undefined, hasCategories)
     : new WarningCollector(
-        loadIgnoreList(SCRIPT_DIR, driveSlug(root.name), mediaType),
+        loadIgnoreList(PROJECT_ROOT, driveSlug(root.name), mediaType),
         hasCategories
       )
 }
@@ -79,49 +75,21 @@ export function typeRules(mediaType: MediaType): {
   hasCategories: boolean
   folderPattern: RegExp | null
 } {
+  const hasCategories = loadTypeRules(mediaType).categories.length > 0
   switch (mediaType) {
-    case 'movies': {
-      const rules = loadRules({
-        mediaType,
-        schema: MoviesRulesSchema,
-        defaults: defaultMoviesRules,
-        projectRoot: SCRIPT_DIR,
-      })
+    case 'movies':
       return {
-        hasCategories: rules.categories.length > 0,
-        folderPattern: compilePattern(rules.patterns.folder),
+        hasCategories,
+        folderPattern: compilePattern(loadTypeRules('movies').patterns.folder),
       }
-    }
-    case 'shows': {
-      const rules = loadRules({
-        mediaType,
-        schema: ShowsRulesSchema,
-        defaults: defaultShowsRules,
-        projectRoot: SCRIPT_DIR,
-      })
+    case 'shows':
       return {
-        hasCategories: rules.categories.length > 0,
-        folderPattern: compilePattern(rules.patterns.show_folder),
+        hasCategories,
+        folderPattern: compilePattern(loadTypeRules('shows').patterns.show_folder),
       }
-    }
-    case 'music': {
-      const rules = loadRules({
-        mediaType,
-        schema: MusicRulesSchema,
-        defaults: defaultMusicRules,
-        projectRoot: SCRIPT_DIR,
-      })
-      return { hasCategories: rules.categories.length > 0, folderPattern: null }
-    }
-    case 'audiobooks': {
-      const rules = loadRules({
-        mediaType,
-        schema: AudiobooksRulesSchema,
-        defaults: defaultAudiobooksRules,
-        projectRoot: SCRIPT_DIR,
-      })
-      return { hasCategories: rules.categories.length > 0, folderPattern: null }
-    }
+    case 'music':
+    case 'audiobooks':
+      return { hasCategories, folderPattern: null }
   }
 }
 
@@ -134,10 +102,7 @@ export function writePlexWarnings(outputPath: string, warnings: WarningCollector
   writeWarnings(outputPath, warnings)
   const silenced = warnings.silencedCount()
   if (warnings.count() > 0 || silenced > 0) {
-    const breakdown = warnings
-      .countByType()
-      .map(({ type, count }) => `${type} (${count})`)
-      .join(', ')
+    const breakdown = warningBreakdown(warnings)
     const silencedNote = silenced > 0 ? `${silenced} silenced via ignore list` : ''
     console.log(`    ${[breakdown, silencedNote].filter(Boolean).join(' — ')}`)
   }

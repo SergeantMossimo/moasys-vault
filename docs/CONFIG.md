@@ -49,9 +49,18 @@ One section per media type. Each section is a **list of named roots**, so a medi
 
 `plex` is reserved — `output/plex/` holds Plex library pulls, so no drive can use that name.
 
+**`probe_concurrency`** _(optional)_ — how many files the scan inspects at once on that root, from 1 to 16. The default, 1, is right for spinning disks, where parallel reads fight over the drive head. SSDs and network shares usually get through a first scan several times faster at 4–8. It only matters for files that aren't in the probe cache yet, so re-scans are fast either way. Set it per root, because drives differ:
+
+```json
+"movies": [
+  { "root_path": "M:\\Movies", "name": "Server", "probe_concurrency": 6 },
+  { "root_path": "D:\\Movies", "name": "External" }
+]
+```
+
 An optional **`plex`** block holds your Plex server address (`url`) and, when needed, `path_map` entries translating Plex's paths to yours. See [Plex](PLEX.md#setup). The Plex token goes in [`.secrets.json`](#secretsjson), not here.
 
-Every section needs at least one root. If you don't have a media type at all, give it a placeholder — it's never touched unless you run that type's command.
+**Leave out any media type you don't have** — a config with only `music` is fine, as long as at least one type is listed. `scan:all` and the other `--all` commands skip unconfigured types; running one directly (`npm run shows`) explains how to add it.
 
 The scanner walks the subfolders defined in the rules files under `categories`, or — if `categories` is empty in the rules file — it walks `root_path` directly and labels every record's category as `"default"`. Categories are defined per _type_, not per drive, so the same `rules/<type>.yaml` applies to every root. A category folder missing from one drive is just skipped.
 

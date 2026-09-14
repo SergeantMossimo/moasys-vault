@@ -23,7 +23,6 @@ export default defineConfig({
         // Mocking these is high-effort, low-value vs. the smoke test.
         'src/probe/ffprobe.ts',
         'src/probe/id3.ts',
-        'src/validate/tmdb.ts',
         // Type-only files — coverage % is misleading.
         'src/probe/types.ts',
         'src/validate/types.ts',

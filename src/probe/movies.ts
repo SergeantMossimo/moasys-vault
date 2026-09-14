@@ -252,7 +252,8 @@ export async function probeMovies(
       }
     },
     undefined,
-    warnings
+    warnings,
+    config.probe_concurrency
   )
 
   // Quality mismatch check — runs after probing so we have real dimensions.

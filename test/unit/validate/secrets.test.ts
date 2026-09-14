@@ -3,7 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
-import { SecretsSchema, loadSecrets } from '../../../src/validate/secrets'
+import { SecretsSchema, hasSecrets, loadSecrets } from '../../../src/validate/secrets'
 
 const validKey = 'abc1234567890123456789' // 22 chars, passes min(20)
 const validToken = 'xYz123AbC456dEf' // passes min(10)
@@ -116,5 +116,49 @@ describe('loadSecrets', () => {
     const output = errorSpy.mock.calls.flat().join('\n')
     expect(output).toMatch(/failed schema validation/)
     expect(output).toMatch(/tmdb\.api_key/)
+  })
+})
+
+describe('hasSecrets', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'moasys-has-secrets-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  const write = (contents: string) => fs.writeFileSync(path.join(tmpDir, '.secrets.json'), contents)
+
+  it('is false when .secrets.json does not exist', () => {
+    expect(hasSecrets(tmpDir, 'tmdb')).toBe(false)
+  })
+
+  it('is false for malformed JSON, without printing or exiting', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    write('{ nope')
+    expect(hasSecrets(tmpDir, 'tmdb')).toBe(false)
+    expect(errorSpy).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
+  it('is false when the block is missing or still the example placeholder', () => {
+    write(JSON.stringify({ plex: { token: 'abcdefghijklmnop' } }))
+    expect(hasSecrets(tmpDir, 'tmdb')).toBe(false)
+    write(JSON.stringify({ tmdb: { api_key: 'PASTE-YOUR-TMDB-V3-API-KEY-HERE' } }))
+    expect(hasSecrets(tmpDir, 'tmdb')).toBe(false)
+  })
+
+  it('is true for a valid block, independent of other blocks', () => {
+    write(
+      JSON.stringify({
+        tmdb: { api_key: '0123456789abcdef0123456789abcdef' },
+        plex: { token: 'PASTE-YOUR-PLEX-TOKEN-HERE' },
+      })
+    )
+    expect(hasSecrets(tmpDir, 'tmdb')).toBe(true)
+    expect(hasSecrets(tmpDir, 'plex')).toBe(false)
   })
 })

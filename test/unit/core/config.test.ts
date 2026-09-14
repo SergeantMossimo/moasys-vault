@@ -39,7 +39,7 @@ describe('AppConfigSchema', () => {
     const result = AppConfigSchema.safeParse(multi)
     expect(result.success).toBe(true)
     if (result.success) {
-      expect(result.data.movies.map(r => r.name)).toEqual(['External', 'Server'])
+      expect(result.data.movies?.map(r => r.name)).toEqual(['External', 'Server'])
     }
   })
 
@@ -52,28 +52,35 @@ describe('AppConfigSchema', () => {
     ).toBe(true)
   })
 
-  it('rejects when movies is missing', () => {
-    const { movies: _movies, ...rest } = validConfig
-    const result = AppConfigSchema.safeParse(rest)
+  it.each(['movies', 'shows', 'music', 'audiobooks'] as const)(
+    'accepts a config that leaves out %s',
+    type => {
+      const rest: Record<string, unknown> = { ...validConfig }
+      delete rest[type]
+      expect(AppConfigSchema.safeParse(rest).success).toBe(true)
+    }
+  )
+
+  it('accepts a config with a single media type', () => {
+    expect(AppConfigSchema.safeParse({ music: validConfig.music }).success).toBe(true)
+  })
+
+  it('rejects a config with no media types at all', () => {
+    const result = AppConfigSchema.safeParse({ plex: { url: 'http://192.168.1.50:32400' } })
     expect(result.success).toBe(false)
     if (!result.success) {
-      expect(result.error.issues.some(i => i.path.includes('movies'))).toBe(true)
+      expect(result.error.issues[0]?.message).toMatch(/at least one of: movies, shows/)
     }
   })
 
-  it('rejects when shows is missing', () => {
-    const { shows: _shows, ...rest } = validConfig
-    expect(AppConfigSchema.safeParse(rest).success).toBe(false)
+  it('accepts probe_concurrency on a root', () => {
+    const cfg = { movies: [{ root_path: 'M:\\Movies', name: 'Server', probe_concurrency: 4 }] }
+    expect(AppConfigSchema.safeParse(cfg).success).toBe(true)
   })
 
-  it('rejects when music is missing', () => {
-    const { music: _music, ...rest } = validConfig
-    expect(AppConfigSchema.safeParse(rest).success).toBe(false)
-  })
-
-  it('rejects when audiobooks is missing', () => {
-    const { audiobooks: _audiobooks, ...rest } = validConfig
-    expect(AppConfigSchema.safeParse(rest).success).toBe(false)
+  it.each([0, 17, 2.5])('rejects probe_concurrency %s', value => {
+    const cfg = { movies: [{ root_path: 'M:\\Movies', name: 'Server', probe_concurrency: value }] }
+    expect(AppConfigSchema.safeParse(cfg).success).toBe(false)
   })
 
   it('rejects an empty root list', () => {
@@ -251,9 +258,9 @@ describe('loadConfig', () => {
 
     const loaded = loadConfig(tmpDir)
     expect(loaded.movies).toHaveLength(2)
-    expect(loaded.movies[0]?.root_path).toBe('M:\\Movies')
-    expect(loaded.movies[1]?.name).toBe('External')
-    expect(loaded.audiobooks[0]?.root_path).toBe('M:\\Audiobooks')
+    expect(loaded.movies?.[0]?.root_path).toBe('M:\\Movies')
+    expect(loaded.movies?.[1]?.name).toBe('External')
+    expect(loaded.audiobooks?.[0]?.root_path).toBe('M:\\Audiobooks')
   })
 
   it('exits with a helpful message when config.json is missing', () => {

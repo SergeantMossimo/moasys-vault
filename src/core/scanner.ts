@@ -12,6 +12,7 @@
 import fs from 'fs'
 import path from 'path'
 
+import { writeFileAtomic } from './atomic-write'
 import { WarningCollector, MediaModule, BaseMediaConfig } from './types'
 import { ProbeData } from '../probe/types'
 
@@ -91,6 +92,6 @@ export function writeJson<TRecord, TOutput, TConfig extends BaseMediaConfig>(
   outputPath: string
 ): void {
   const data = mediaModule.serialize(records)
-  fs.writeFileSync(outputPath, JSON.stringify(data, null, 2), 'utf-8')
+  writeFileAtomic(outputPath, JSON.stringify(data, null, 2))
   console.log(`    [OUT] ${outputPath}  (${data.length} entries)`)
 }

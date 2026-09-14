@@ -209,3 +209,104 @@ describe('probeBatch', () => {
     errorSpy.mockRestore()
   })
 })
+
+describe('probeBatch — probe_concurrency', () => {
+  let tmpDir: string
+  let cachePath: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'moasys-probe-concurrency-'))
+    cachePath = path.join(tmpDir, 'cache.json')
+  })
+
+  afterEach(async () => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    const { probeFile } = await import('../../../src/probe/ffprobe')
+    vi.mocked(probeFile).mockImplementation(async () => sampleData())
+  })
+
+  const task = (i: number): ProbeTask => ({
+    relativePath: `HD/Movie${i}.mp4`,
+    absolutePath: `/fake/Movie${i}.mp4`,
+    category: 'HD',
+    quality: 'HD',
+    mtime: 500 + i,
+    size: 5000 + i,
+  })
+
+  /** Make each probe take a different time so completions interleave, and track overlap. */
+  async function mockSlowProbes() {
+    const { probeFile } = await import('../../../src/probe/ffprobe')
+    let running = 0
+    let peak = 0
+    vi.mocked(probeFile).mockImplementation(async (absolutePath: string) => {
+      running++
+      peak = Math.max(peak, running)
+      const i = Number(absolutePath.match(/(\d+)\.mp4$/)?.[1])
+      await new Promise(resolve => setTimeout(resolve, (6 - (i % 6)) * 3))
+      running--
+      return sampleData({ size_bytes: i })
+    })
+    return () => peak
+  }
+
+  it('runs at most `concurrency` probes at once', async () => {
+    const peak = await mockSlowProbes()
+    await probeBatch(
+      Array.from({ length: 12 }, (_, i) => task(i)),
+      new ProbeCache(cachePath),
+      undefined,
+      undefined,
+      undefined,
+      3
+    )
+    expect(peak()).toBe(3)
+  })
+
+  it('stays sequential by default', async () => {
+    const peak = await mockSlowProbes()
+    await probeBatch(
+      Array.from({ length: 6 }, (_, i) => task(i)),
+      new ProbeCache(cachePath)
+    )
+    expect(peak()).toBe(1)
+  })
+
+  it('returns results in input order even when probes finish out of order', async () => {
+    await mockSlowProbes()
+    const tasks = Array.from({ length: 12 }, (_, i) => task(i))
+    const probed = await probeBatch(
+      tasks,
+      new ProbeCache(cachePath),
+      undefined,
+      undefined,
+      undefined,
+      4
+    )
+    expect(probed.map(p => p.task.relativePath)).toEqual(tasks.map(t => t.relativePath))
+    expect(probed.map(p => p.data.size_bytes)).toEqual(tasks.map((_, i) => i))
+  })
+
+  it('reports progress once per file with a monotonically increasing count', async () => {
+    await mockSlowProbes()
+    const progress = vi.fn()
+    await probeBatch(
+      Array.from({ length: 8 }, (_, i) => task(i)),
+      new ProbeCache(cachePath),
+      progress,
+      undefined,
+      undefined,
+      4
+    )
+    expect(progress.mock.calls.map(c => c[0])).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+  })
+
+  it('handles more workers than tasks, and an empty task list', async () => {
+    await mockSlowProbes()
+    const cache = new ProbeCache(cachePath)
+    await expect(
+      probeBatch([task(1)], cache, undefined, undefined, undefined, 8)
+    ).resolves.toHaveLength(1)
+    await expect(probeBatch([], cache, undefined, undefined, undefined, 8)).resolves.toEqual([])
+  })
+})

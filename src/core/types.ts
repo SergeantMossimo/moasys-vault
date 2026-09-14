@@ -33,6 +33,8 @@ export type { Category, ResolvedCategory }
  */
 export interface BaseMediaConfig {
   root_path: string
+  /** Files the probe pass inspects at once. Omitted = 1 (sequential). */
+  probe_concurrency?: number
 }
 
 /**
@@ -65,13 +67,14 @@ export type AudiobooksConfig = BaseMediaConfig
 /**
  * The full shape of config.json. Each media type is a list of named roots,
  * ordered — the first entry is the default when a run doesn't name a drive.
+ * A type you don't have is simply left out; read lists through `rootsFor()`.
  */
 export interface AppConfig {
   _notes?: Record<string, string> // Optional documentation keys — ignored by scanner
-  movies: MediaRootConfig[]
-  shows: MediaRootConfig[]
-  music: MediaRootConfig[]
-  audiobooks: MediaRootConfig[]
+  movies?: MediaRootConfig[]
+  shows?: MediaRootConfig[]
+  music?: MediaRootConfig[]
+  audiobooks?: MediaRootConfig[]
   /** Optional Plex connection settings — see `PlexConfigSchema` in core/config.ts. */
   plex?: {
     url: string

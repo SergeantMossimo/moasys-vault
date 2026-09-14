@@ -46,6 +46,10 @@ Optional:
 ## Useful commands
 
 ```bash
+# Everything routine in one go: scan → validate → Plex pull → Plex check
+# (steps that aren't set up — no TMDB key, no Plex — are skipped with a note)
+npm run all
+
 # Catalog one media type — slow first run, cached after
 npm run movies
 npm run shows
@@ -80,6 +84,7 @@ If a media type spans several drives, add the drive's name from `config.json`. L
 npm run movies external
 npm run scan:all external
 npm run validate:movies external
+npm run all external
 ```
 
 ---
@@ -224,6 +229,8 @@ The rest is for contributors:
 ## Recent additions
 
 A terse log of what's landed lately. Not formal release notes — just pointers to "what's new" if you're returning after time away.
+
+- **v0.12** — `npm run all [drive]` runs scan → validate → Plex pull → Plex check in one go, skipping steps that aren't set up. Media types in `config.json` are now optional — leave out any you don't have. New per-root `probe_concurrency` speeds up first scans on SSDs and network shares. Cache and output files are written atomically, so an interrupted run can't corrupt the probe cache. `validate:all` skips movies and shows instead of failing when there's no TMDB key; TMDB requests now time out and stop retrying after repeated rate limits.
 
 - **v0.11** — Tidier output folders: the top of `output/<drive>/<type>/` now holds only the catalog and the warnings files. `probe.json` and `validation.json` moved to `data/`, `fix:shows` plans and undo manifests to `fixes/`, and `--no-ignore` output to `unfiltered/`. Commands point out old top-level files that can be deleted — re-run the scan and validate passes to regenerate `data/`. `cache/tmdb-show-seasons.json` now keeps only episode numbers, titles and air dates (~90 MB → ~2 MB); existing caches shrink on the next `validate:shows`. `config.json` is now gitignored — copy `config.example.json`.
 

@@ -305,7 +305,8 @@ export async function probeMusic(
       }
     },
     readTags,
-    warnings
+    warnings,
+    config.probe_concurrency
   )
 
   const mediaTypeOrder = resolveCategories(rules.categories).map(c => c.name)

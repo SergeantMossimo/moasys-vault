@@ -9,10 +9,9 @@
  * fixes that — same boot-time validation pattern we use for `.secrets.json`
  * and rules YAMLs.
  *
- * All four media types are required to match the existing registry-based
- * dispatch in `src/scan.ts`. If you have a library that doesn't include one
- * of the types, give it a placeholder root (it won't be touched unless you
- * run that media type's commands).
+ * Every media type is optional — leave out a type you don't have — but at
+ * least one must be configured. Commands skip unconfigured types under
+ * `--all` and explain the fix on a single-type run.
  *
  * Each media type is a LIST of named roots so a library can span drives:
  *
@@ -30,7 +29,8 @@ import path from 'path'
 
 import { z } from 'zod'
 
-import { AppConfig } from './types'
+import { MEDIA_TYPES, MediaType } from './project'
+import { AppConfig, MediaRootConfig } from './types'
 
 // ─────────────────────────────────────────────
 // Schema
@@ -69,6 +69,18 @@ const MediaRootSchema = z.object({
       value => value.toLowerCase() !== PLEX_OUTPUT_SEGMENT,
       `name cannot be '${PLEX_OUTPUT_SEGMENT}' — output/${PLEX_OUTPUT_SEGMENT}/ is reserved for Plex library pulls`
     ),
+  /**
+   * How many files the probe pass inspects at once on this root. Default 1
+   * (sequential), which is right for spinning disks where parallel reads
+   * thrash. SSDs and network shares usually finish a first scan much faster
+   * at 4–8. Only affects files not already in the probe cache.
+   */
+  probe_concurrency: z
+    .number()
+    .int('probe_concurrency must be a whole number')
+    .min(1, 'probe_concurrency must be at least 1')
+    .max(16, 'probe_concurrency above 16 only adds contention')
+    .optional(),
 })
 
 /**
@@ -135,14 +147,18 @@ const MediaRootListSchema = z
  * `_notes` is allowed for self-documentation (some config files use it for
  * inline comments since JSON has none) — the scanner ignores it.
  */
-export const AppConfigSchema = z.object({
-  _notes: z.record(z.string(), z.string()).optional(),
-  movies: MediaRootListSchema,
-  shows: MediaRootListSchema,
-  music: MediaRootListSchema,
-  audiobooks: MediaRootListSchema,
-  plex: PlexConfigSchema.optional(),
-})
+export const AppConfigSchema = z
+  .object({
+    _notes: z.record(z.string(), z.string()).optional(),
+    movies: MediaRootListSchema.optional(),
+    shows: MediaRootListSchema.optional(),
+    music: MediaRootListSchema.optional(),
+    audiobooks: MediaRootListSchema.optional(),
+    plex: PlexConfigSchema.optional(),
+  })
+  .refine(config => MEDIA_TYPES.some(type => config[type] !== undefined), {
+    message: `config.json must list roots for at least one of: ${MEDIA_TYPES.join(', ')}`,
+  })
 
 // ─────────────────────────────────────────────
 // Drive names
@@ -158,11 +174,14 @@ export function driveSlug(name: string): string {
   return name.toLowerCase()
 }
 
+/** A type's configured roots, or an empty list when config.json leaves the type out. */
+export function rootsFor(config: AppConfig, mediaType: MediaType): MediaRootConfig[] {
+  return config[mediaType] ?? []
+}
+
 // ─────────────────────────────────────────────
 // Loader
 // ─────────────────────────────────────────────
-
-const MEDIA_TYPE_KEYS = ['movies', 'shows', 'music', 'audiobooks'] as const
 
 const EXAMPLE_CONFIG = `    {
       "movies":     [{ "root_path": "M:\\\\Movies",     "name": "Server" },
@@ -186,7 +205,7 @@ function reportLegacyShape(raw: unknown): void {
   if (typeof raw !== 'object' || raw === null) return
 
   const record = raw as Record<string, unknown>
-  const legacy = MEDIA_TYPE_KEYS.filter(key => {
+  const legacy = MEDIA_TYPES.filter(key => {
     const section = record[key]
     return typeof section === 'object' && section !== null && !Array.isArray(section)
   })
