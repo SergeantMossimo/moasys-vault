@@ -141,21 +141,24 @@ The user's library: ~2,500 movies, ~130 shows, ~220 music albums, ~110 audiobook
 
 When making bulk changes across all 4 media types, use `Edit` with `replace_all: true` rather than reading each file separately. Most cross-cutting changes have an identical shape per file.
 
-## Roadmap (in `README.md` under `## Roadmap`)
+## Roadmap
 
-The three big-ticket items are all shipped:
+There's no formal roadmap; `README.md` → `## Recent additions` logs what has landed. The big-ticket items so far, all shipped:
 
-- **Music quality summary** — per-album `audio_quality_summary` in `output/music/probe.json` (`"FLAC 16/44.1"`, `"MP3 ~288"`). VBR tolerance collapses same-codec same-quality-target tracks into one entry.
-- **ID3 tag reading for music** — per-track `tags` in `output/music/probe.json` via `music-metadata`. Four warnings: compilation_detected, folder_tag_mismatch, missing_tags, track_number_mismatch.
+- **Music quality summary** — per-album `audio_quality_summary` in `output/<drive>/music/probe.json` (`"FLAC 16/44.1"`, `"MP3 ~288"`). VBR tolerance collapses same-codec same-quality-target tracks into one entry.
+- **ID3 tag reading for music** — per-track `tags` in `output/<drive>/music/probe.json` via `music-metadata`. Four warnings: compilation_detected, folder_tag_mismatch, missing_tags, track_number_mismatch.
 - **TMDB validation for movies + shows** — `npm run validate:movies` / `validate:shows`. Cross-checks titles, years, and (for shows) per-season episode counts. API key in `.secrets.json` (gitignored). Cache in `cache/tmdb-*.json`.
+- **Audiobook name checks + Open Library validation** — series/author consistency and embedded-tag comparison in the scan; `npm run validate:audiobooks` against Open Library (no key). Cache in `cache/openlibrary-search.json`.
+- **Plex integration** — `plex:pull` (per-library catalogs + collections), `plex:check` (Plex vs disk), `plex:logs` (server log errors tied to files by item id). Read-only GET client in `src/plex/client.ts`; token in `.secrets.json`, URL in `config.json`. See `docs/PLEX.md`.
 
-Future ideas not formally on the roadmap: deeper music quality analysis (per-track bitrate distribution, encoding metadata), audiobook chapter/duration validation, custom user-defined checks via a DSL.
+Future ideas: deeper music quality analysis (per-track bitrate distribution, encoding metadata), audiobook chapter/duration validation, custom user-defined checks via a DSL.
 
 ## Documentation layout
 
 Docs are split between README and `docs/`. When the user asks something or you need to point them at existing docs, use this map:
 
-- **README.md** — quickstart, the three passes overview, project structure, roadmap
+- **README.md** — quickstart, the three passes overview, project structure, recent additions
+- **schemas/** — hand-maintained JSON Schemas for every output file; update the matching one when an output shape changes
 - **docs/CONFIG.md** — `config.json` + `rules/<type>.yaml` reference, override mechanism, `.secrets.json` setup
 - **docs/CONVENTIONS.md** — Plex folder/file naming per media type (hierarchies, examples, gotchas)
 - **docs/SCANS.md** — Runbook for scan / probe / validate. Suggested workflow + re-run scenarios.

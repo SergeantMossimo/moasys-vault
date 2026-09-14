@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moasys.local/vault/schemas/plex-common.json",
+  "title": "MOASYS-Vault — shared Plex definitions",
+  "description": "Definitions shared by the Plex pull outputs under output/plex/. Not a file shape on its own.",
+  "$defs": {
+    "MediaType": {
+      "type": "string",
+      "enum": ["movies", "shows", "music", "audiobooks"],
+      "description": "A config.json media type."
+    },
+    "Library": {
+      "type": "object",
+      "description": "One Plex library (section) and how it maps to this machine's configured roots.",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Plex section key."
+        },
+        "title": { "type": "string" },
+        "plex_type": {
+          "type": "string",
+          "description": "Plex section type: movie, show, artist, or photo."
+        },
+        "slug": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Folder name under output/plex/ — the title lowercased with unsafe characters replaced, plus the key on collision."
+        },
+        "agent": {
+          "type": ["string", "null"],
+          "description": "Metadata agent identifier, e.g. tv.plex.agents.movie."
+        },
+        "locations": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Library folders as the server sees them."
+        },
+        "mapped_locations": {
+          "type": "array",
+          "description": "Each library folder that maps to a configured root. Unmapped folders are omitted.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "plex_path": { "type": "string" },
+              "drive": {
+                "type": "string",
+                "description": "Root name from config.json."
+              },
+              "library_path": {
+                "type": "string",
+                "description": "Path relative to that root, forward slashes. Empty when the folder is the root itself."
+              }
+            },
+            "required": ["plex_path", "drive", "library_path"],
+            "additionalProperties": false
+          }
+        },
+        "media_type": {
+          "oneOf": [{ "$ref": "#/$defs/MediaType" }, { "type": "null" }],
+          "description": "The media type the library's folders map to; null when none map. Follows the folder, not the Plex library type — a Music library holding audiobooks is audiobooks."
+        },
+        "item_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Items in the last pull of this library."
+        },
+        "collection_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "key",
+        "title",
+        "plex_type",
+        "slug",
+        "agent",
+        "locations",
+        "mapped_locations",
+        "media_type",
+        "item_count",
+        "collection_count"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
