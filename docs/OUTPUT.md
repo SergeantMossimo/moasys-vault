@@ -10,7 +10,7 @@ This page is the complete reference for what the scanner writes and every warnin
 
 ## Output files
 
-Every run writes its files under `output/<drive>/<type>/`, where `<drive>` is the lowercased `name` of the root you scanned (see [Configuration](CONFIG.md#configjson)). There are up to five files per media type, per drive:
+Every run writes its files under `output/<drive>/<type>/`, where `<drive>` is the lowercased `name` of the root you scanned (see [Configuration](CONFIG.md#configjson)). There are up to six files per media type, per drive:
 
 | File                       | Written by                           | What it is                                                               |
 | -------------------------- | ------------------------------------ | ------------------------------------------------------------------------ |
@@ -19,8 +19,11 @@ Every run writes its files under `output/<drive>/<type>/`, where `<drive>` is th
 | `warnings.json`            | scan                                 | Every hygiene finding from the scan pass                                 |
 | `validation.json`          | validate (movies, shows, audiobooks) | TMDB cross-check results (Open Library for audiobooks)                   |
 | `validation-warnings.json` | validate (movies, shows, audiobooks) | Confidence warnings and title/year/author mismatches                     |
+| `plex-warnings.json`       | `npm run plex:check`                 | Plex compared with the scan — see [Plex](PLEX.md#warnings)               |
 
-The validate files only appear after you run `npm run validate:<type>`. Movies and shows validate against TMDB, audiobooks against Open Library; music has no validate pass and never produces validate files.
+The validate files only appear after you run `npm run validate:<type>`. Movies and shows validate against TMDB, audiobooks against Open Library; music has no validate pass and never produces validate files. `plex-warnings.json` only appears after `npm run plex:check`, and shares the `warnings.json` shape.
+
+Plex library pulls aren't tied to a drive, so they live apart, one folder per Plex library: `output/plex/libraries.json` plus `output/plex/<library>/catalog.json` and `collections.json`. Their shapes are described in [Plex](PLEX.md#npm-run-plexpull-library).
 
 Full layout, for a config with a `Server` root on every type and an `External` root on movies and shows:
 

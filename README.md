@@ -14,6 +14,7 @@ Built for **MOASYS** _(Mossimo's Oasis System)_ and designed to be shared.
 - **One command catalogs your whole library.** Run `npm run scan:all` and you get a clean JSON catalog of every movie, show, album, and audiobook you own — plus a list of every hygiene issue worth your attention.
 - **Catches problems you'd never notice manually.** Folder/file name mismatches, missing episodes, duplicate movies across quality folders, music files whose embedded artist/album info disagrees with their folder, files sitting in the wrong quality bucket — surfaced with recommended fixes.
 - **TMDB cross-check (optional).** Compare your movies + shows against [TheMovieDB](https://www.themoviedb.org/) to catch title typos, wrong years, and missing episodes. Sign up for a free TMDB API key to use this feature.
+- **Plex tools (optional).** Pull every Plex library's catalog and collections, then compare Plex with what's on disk — files Plex never picked up, stale entries, unmatched or wrongly matched titles, and duplicates. Read-only: Plex is never changed. See [Plex](docs/PLEX.md).
 - **Customize without touching code.** Per-type rule files let you adjust how the scanner reads your library, and a per-type ignore list lets you silence warnings you don't want to act on.
 - **Never touches your media.** The scanner only reads. Every check produces warnings — you decide what to fix and do the renames/moves yourself.
 
@@ -28,6 +29,7 @@ Built for **MOASYS** _(Mossimo's Oasis System)_ and designed to be shared.
 Optional:
 
 - A free [TMDB API v3 key](https://developer.themoviedb.org/docs/getting-started) for the validate pass
+- A Plex Media Server address and token for the Plex tools
 
 ---
 
@@ -37,6 +39,7 @@ Optional:
 - **[Conventions](docs/CONVENTIONS.md)** — Plex folder and file naming conventions per media type, with examples and gotchas.
 - **[Scans](docs/SCANS.md)** — Detailed runbook for the scan and validate passes, including what to re-run when things change.
 - **[Output](docs/OUTPUT.md)** — Output file shapes and the complete list of warnings per media type.
+- **[Plex](docs/PLEX.md)** — Connecting to your Plex server, pulling library catalogs and collections, and comparing Plex with your scans.
 
 ---
 
@@ -58,6 +61,11 @@ npm run validate:movies
 npm run validate:shows
 npm run validate:audiobooks   # Open Library — no key needed
 npm run validate:all
+
+# Pull Plex library catalogs + collections, then compare Plex with your scans
+# (needs plex.url in config.json and plex.token in .secrets.json)
+npm run plex:pull
+npm run plex:check
 
 # Repair show filenames the scanner flagged. The one write-capable command —
 # dry run by default, and the drive name is required.
@@ -193,17 +201,17 @@ MOASYS-Vault/
 For day-to-day use, you'll only touch the top few:
 
 - **`config.json`** — the paths to your library: a list of named roots per media type, one per drive. You always edit this.
-- **`.secrets.json`** — your TMDB API key. Only needed if you want to run validation. Gitignored.
+- **`.secrets.json`** — your TMDB API key and Plex token. Each is only needed by the commands that use it. Gitignored.
 - **`rules/`** — per-type rules. Default committed values; override in `rules/<type>.local.yaml` (gitignored) for your library. Rules are per type, shared across drives.
 - **`ignored/`** — per-drive, per-type warning silencers. List names by level in `ignored/<drive>/<type>.yaml` (`shows: Firefly (2002)`) to suppress warnings you don't want to act on. Each type ships with a commented `.yaml.example` reference at the top level.
-- **`output/`** — generated catalogs + warnings, written every run under `output/<drive>/<type>/`. Gitignored.
+- **`output/`** — generated catalogs + warnings, written every run under `output/<drive>/<type>/`, plus Plex library pulls under `output/plex/`. Gitignored.
 - **`cache/`** — file-inspection caches (`cache/<drive>/<type>-probe.json`) and TMDB caches (`cache/tmdb-*.json`, shared across drives). Gitignored. Safe to delete a file under it to force a fresh inspection or fresh TMDB lookup.
 
 The rest is for contributors:
 
 - **`schemas/`** — JSON Schema (Draft 2020-12) definitions for every output file. Useful when building a downstream consumer (e.g. a personal website). See [`schemas/README.md`](schemas/README.md).
 - **`docs/`** — detailed reference for each topic (see [Documentation](#documentation) above).
-- **`src/`** — TypeScript source. Organized as `core/` (shared scaffolding), `media/` (scan logic per type), `probe/` (ffprobe + ID3), `validate/` (TMDB), `tools/` (the one write-capable utility), plus `scan.ts` as the entry point.
+- **`src/`** — TypeScript source. Organized as `core/` (shared scaffolding), `media/` (scan logic per type), `probe/` (ffprobe + ID3), `validate/` (TMDB, Open Library), `plex/` (read-only Plex client, pull, and check), `tools/` (the one write-capable utility), plus `scan.ts` as the entry point.
 
 ---
 

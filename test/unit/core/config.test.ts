@@ -131,6 +131,33 @@ describe('AppConfigSchema', () => {
     }
   })
 
+  it("rejects 'plex' as a name in any case (output/plex/ is reserved)", () => {
+    for (const name of ['plex', 'Plex', 'PLEX']) {
+      const bad = { ...validConfig, movies: [{ root_path: 'M:\\Movies', name }] }
+      const result = AppConfigSchema.safeParse(bad)
+      expect(result.success).toBe(false)
+      if (!result.success) expect(result.error.issues[0]?.message).toMatch(/reserved/)
+    }
+  })
+
+  it('accepts an optional plex block', () => {
+    const ok = {
+      ...validConfig,
+      plex: {
+        url: 'http://192.168.1.50:32400',
+        path_map: [{ plex: '/volume1/Media', local: 'M:\\' }],
+      },
+    }
+    expect(AppConfigSchema.safeParse(ok).success).toBe(true)
+  })
+
+  it('rejects a plex url that is not http(s)', () => {
+    for (const url of ['192.168.1.50:32400', 'ftp://nas:32400']) {
+      const bad = { ...validConfig, plex: { url } }
+      expect(AppConfigSchema.safeParse(bad).success).toBe(false)
+    }
+  })
+
   it('still allows dots inside a name', () => {
     const ok = { ...validConfig, movies: [{ root_path: 'M:\\Movies', name: 'NAS.2' }] }
     expect(AppConfigSchema.safeParse(ok).success).toBe(true)

@@ -7,5 +7,8 @@
     { "root_path": "D:\\Shows\\Move", "name": "External" }
   ],
   "music": [{ "root_path": "M:\\Audio", "name": "Server" }],
-  "audiobooks": [{ "root_path": "M:\\Audiobooks", "name": "Server" }]
+  "audiobooks": [{ "root_path": "M:\\Audiobooks", "name": "Server" }],
+  "plex": {
+    "url": "http://192.168.50.184:32400"
+  }
 }

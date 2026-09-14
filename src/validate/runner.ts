@@ -487,7 +487,7 @@ async function main(): Promise<void> {
   // only for runs that use TMDB. Audiobooks validate against Open Library,
   // which needs no key, so `validate:audiobooks` must work without one.
   const needsTmdb = parsed.kind === 'all' || parsed.type !== 'audiobooks'
-  const tmdb = needsTmdb ? new TmdbClient(loadSecrets(SCRIPT_DIR).tmdb.api_key) : null
+  const tmdb = needsTmdb ? new TmdbClient(loadSecrets(SCRIPT_DIR, 'tmdb').api_key) : null
 
   if (parsed.kind === 'all') {
     const moviesRoot = rootFor('movies', parsed.drive, true)

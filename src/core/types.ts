@@ -72,6 +72,11 @@ export interface AppConfig {
   shows: MediaRootConfig[]
   music: MediaRootConfig[]
   audiobooks: MediaRootConfig[]
+  /** Optional Plex connection settings — see `PlexConfigSchema` in core/config.ts. */
+  plex?: {
+    url: string
+    path_map?: Array<{ plex: string; local: string }>
+  }
 }
 
 // ─────────────────────────────────────────────
