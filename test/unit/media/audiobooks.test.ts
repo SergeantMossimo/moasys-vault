@@ -303,3 +303,24 @@ describe('audiobooks module — warnings', () => {
     expect(result.warnings.some(w => w.issue.match(/loose audio/i))).toBe(false)
   })
 })
+
+describe('audiobooks module — name consistency', () => {
+  const spec: DirSpec = {
+    Audible: {
+      'Eric Nylund': { 'Halo - The Fall of Reach': { '01 - Chapter.mp3': '' } },
+      'Troy Denning': { 'Halo - Last Light': { '01 - Chapter.mp3': '' } },
+      'Matt Forbeck': { 'HALO - Legacy of Onyx': { '01 - Chapter.mp3': '' } },
+    },
+  }
+
+  it('emits name warnings at Category/Author/Book', () => {
+    const result = runAudiobooksScan({ spec })
+    const caseWarnings = result.warnings.filter(w => w.type === 'warn_series_name_case')
+    expect(caseWarnings.map(w => w.path)).toEqual(['Audible/Matt Forbeck/HALO - Legacy of Onyx'])
+  })
+
+  it('is silenced by a books: ignore entry', () => {
+    const result = runAudiobooksScan({ spec, ignored: { books: ['HALO - Legacy of Onyx'] } })
+    expect(result.warnings.filter(w => w.type === 'warn_series_name_case')).toEqual([])
+  })
+})

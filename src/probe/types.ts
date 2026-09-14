@@ -36,8 +36,8 @@ export interface AudioProbe {
 
 /**
  * Embedded tag metadata from an audio file's container (ID3 for MP3,
- * Vorbis comments for FLAC/OGG, MP4 tags for M4A, etc.). Only populated
- * by the music probe — movies/shows/audiobooks don't read tags.
+ * Vorbis comments for FLAC/OGG, MP4 tags for M4A, etc.). Populated by the
+ * music and audiobooks probes — movies and shows don't read tags.
  *
  * All fields are nullable since tag presence varies widely across libraries.
  * Fall back from `album_artist` to `artist` when comparing against folder
@@ -78,8 +78,16 @@ export interface ProbeData {
   bitrate: number | null
   video: VideoProbe | null
   audio: AudioProbe | null
-  /** Embedded metadata tags. Populated only by the music probe pass. */
+  /** Embedded metadata tags. Populated by the music and audiobooks probe passes. */
   tags: TagData | null
+  /**
+   * True once a tag read has been attempted for this file, whatever it found.
+   * Distinguishes "read, no tags" from "never read" — a cache entry written
+   * by a pass that didn't read tags also has `tags: null`, and without this
+   * flag enabling tags for that pass would never backfill them. Absent on
+   * entries that predate the flag.
+   */
+  tags_read?: boolean
 }
 
 // ─────────────────────────────────────────────

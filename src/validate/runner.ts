@@ -1,11 +1,13 @@
 /**
  * validate/runner.ts
  * ------------------
- * CLI entry point for the TMDB validation pass.
+ * CLI entry point for the validation pass — TMDB for movies and shows, Open
+ * Library for audiobooks.
  *
  *   npm run validate:movies             # first configured movies root
  *   npm run validate:movies external    # the root named "External"
  *   npm run validate:shows
+ *   npm run validate:audiobooks
  *   npm run validate:all
  *
  * Validation runs against one drive at a time, matching the scan pass — it
@@ -18,9 +20,10 @@
  *   cache/tmdb-search.json                  ← shared search-lookup cache
  *   cache/tmdb-movies.json                  ← movie-details cache
  *   cache/tmdb-shows.json                   ← show-details cache
+ *   cache/openlibrary-search.json           ← Open Library search results (audiobooks)
  *
- * Requires `.secrets.json` at repo root with a TMDB API v3 key. See
- * .secrets.json.example for the shape.
+ * Movies and shows require `.secrets.json` at repo root with a TMDB API v3
+ * key (see .secrets.json.example). Audiobooks need no key.
  */
 
 import fs from 'fs'
@@ -29,6 +32,7 @@ import path from 'path'
 import {
   AppConfig,
   MediaRootConfig,
+  BookOutput,
   MovieOutput,
   ShowOutput,
   WarningCollector,
@@ -47,12 +51,15 @@ import {
 
 import { MoviesRulesSchema, defaultMoviesRules } from '../core/rules/movies'
 import { ShowsRulesSchema, defaultShowsRules } from '../core/rules/shows'
+import { AudiobooksRulesSchema, defaultAudiobooksRules } from '../core/rules/audiobooks'
 
 import { loadSecrets } from './secrets'
 import { JsonCache } from './cache'
 import { TmdbClient } from './tmdb'
 import { validateMovies, movieDurationKey, type MovieDurations } from './movies'
 import { validateShows } from './shows'
+import { validateAudiobooks, OPENLIBRARY_CACHE_VERSION } from './audiobooks'
+import { OpenLibraryClient, type OpenLibraryDoc } from './openlibrary'
 import {
   ResolvedSearch,
   TmdbMovieDetails,
@@ -86,7 +93,7 @@ const CONFIG: AppConfig = loadConfig(SCRIPT_DIR)
  */
 function readScan<T>(
   slug: string,
-  mediaType: 'movies' | 'shows',
+  mediaType: ValidateType,
   driveName: string,
   fileName = `${mediaType}.json`
 ): T[] {
@@ -309,6 +316,76 @@ async function runShows(
   }
 }
 
+async function runAudiobooks(refreshOlderThanDays: number, root: MediaRootConfig): Promise<void> {
+  const slug = driveSlug(root.name)
+
+  console.log(`\n${'─'.repeat(50)}`)
+  console.log(`  MOASYS-Vault — Validate Audiobooks`)
+  console.log(`  ${new Date().toLocaleString()}`)
+  console.log('─'.repeat(50))
+  console.log(`\n  Drive: ${root.name}`)
+  console.log()
+
+  const rules = loadRules({
+    mediaType: 'audiobooks',
+    schema: AudiobooksRulesSchema,
+    defaults: defaultAudiobooksRules,
+    projectRoot: SCRIPT_DIR,
+  })
+
+  const books = readScan<BookOutput>(slug, 'audiobooks', root.name)
+  console.log(`    [INPUT] ${books.length} books from output/${slug}/audiobooks/audiobooks.json`)
+
+  const searchCache = new JsonCache<OpenLibraryDoc[]>(
+    path.join(CACHE_DIR, 'openlibrary-search.json'),
+    OPENLIBRARY_CACHE_VERSION
+  )
+  const pruned = searchCache.pruneOlderThan(refreshOlderThanDays)
+  const prunedSummary =
+    refreshOlderThanDays > 0 ? ` (pruned ${pruned} older than ${refreshOlderThanDays}d)` : ''
+  console.log(`    [CACHE] ${searchCache.size()} Open Library search entries${prunedSummary}`)
+
+  const warnings = new WarningCollector(
+    loadIgnoreList(SCRIPT_DIR, slug, 'audiobooks'),
+    rules.categories.length > 0
+  )
+
+  const client = new OpenLibraryClient()
+  const data = await validateAudiobooks(
+    books,
+    rules,
+    client,
+    searchCache,
+    warnings,
+    (done, total, cached) => {
+      if (done === total || done % 10 === 0) {
+        console.log(`    [OPENLIBRARY] ${done}/${total} (${cached} cached)`)
+      }
+    }
+  )
+
+  console.log('\n  Writing output...')
+  const outDir = path.join(OUTPUT_DIR, slug, 'audiobooks')
+  writeJsonOutput(path.join(outDir, 'validation.json'), data)
+  writeWarnings(path.join(outDir, 'validation-warnings.json'), warnings)
+
+  searchCache.save()
+
+  const silenced = warnings.silencedCount()
+  const silencedSummary = silenced > 0 ? `, ${silenced} silenced via ignore list` : ''
+  console.log(
+    `\n  Done — ${warnings.count()} validation warnings${silencedSummary}. ${client.totalRequests} Open Library requests.`
+  )
+  if (warnings.count() > 0) {
+    const breakdown = warnings
+      .countByType()
+      .map(({ type, count }) => `${type} (${count})`)
+      .join(', ')
+    console.log(`    ${breakdown}`)
+    console.log(`  → Review output/${slug}/audiobooks/validation-warnings.json`)
+  }
+}
+
 // ─────────────────────────────────────────────
 // CLI
 // ─────────────────────────────────────────────
@@ -320,7 +397,8 @@ function printHelp(): void {
   Usage:
     npm run validate:movies [drive]   Validate movies against TMDB
     npm run validate:shows [drive]    Validate shows against TMDB (incl. season episode counts)
-    npm run validate:all [drive]      Validate both
+    npm run validate:audiobooks [drive]  Validate audiobooks against Open Library (no key needed)
+    npm run validate:all [drive]      Validate all three
 
   [drive] names a root from config.json. Omit it to use the first root
   configured for that type. Reads output/<drive>/<type>/<type>.json and
@@ -335,7 +413,8 @@ function printHelp(): void {
     npm run validate:movies
     npm run validate:movies external
 
-  Requires .secrets.json with a TMDB API v3 key. See .secrets.json.example.
+  Movies and shows require .secrets.json with a TMDB API v3 key (see
+  .secrets.json.example). Audiobooks use Open Library, which needs no key.
   `)
 }
 
@@ -362,9 +441,9 @@ function extractRefreshOlderThanFlag(): number {
   return parseInt(match[1]!, 10)
 }
 
-// Only movies and shows have a validate pass — music and audiobooks aren't
-// in TMDB. This is intentional, not a TODO.
-const VALIDATE_TYPES = ['movies', 'shows'] as const
+// Movies and shows validate against TMDB, audiobooks against Open Library.
+// Music has no validate pass — its ID3 checks run during the scan instead.
+const VALIDATE_TYPES = ['movies', 'shows', 'audiobooks'] as const
 type ValidateType = (typeof VALIDATE_TYPES)[number]
 
 /**
@@ -404,19 +483,25 @@ async function main(): Promise<void> {
     process.exit(parsed.explicit ? 0 : 1)
   }
 
-  // Load secrets here so a missing API key fails BEFORE any work.
-  const secrets = loadSecrets(SCRIPT_DIR)
-  const client = new TmdbClient(secrets.tmdb.api_key)
+  // Load secrets up front so a missing TMDB key fails BEFORE any work — but
+  // only for runs that use TMDB. Audiobooks validate against Open Library,
+  // which needs no key, so `validate:audiobooks` must work without one.
+  const needsTmdb = parsed.kind === 'all' || parsed.type !== 'audiobooks'
+  const tmdb = needsTmdb ? new TmdbClient(loadSecrets(SCRIPT_DIR).tmdb.api_key) : null
 
   if (parsed.kind === 'all') {
     const moviesRoot = rootFor('movies', parsed.drive, true)
-    if (moviesRoot) await runMovies(client, refreshOlderThanDays, moviesRoot)
+    if (moviesRoot) await runMovies(tmdb!, refreshOlderThanDays, moviesRoot)
     const showsRoot = rootFor('shows', parsed.drive, true)
-    if (showsRoot) await runShows(client, refreshOlderThanDays, showsRoot)
+    if (showsRoot) await runShows(tmdb!, refreshOlderThanDays, showsRoot)
+    const audiobooksRoot = rootFor('audiobooks', parsed.drive, true)
+    if (audiobooksRoot) await runAudiobooks(refreshOlderThanDays, audiobooksRoot)
   } else if (parsed.type === 'movies') {
-    await runMovies(client, refreshOlderThanDays, rootFor('movies', parsed.drive, false)!)
+    await runMovies(tmdb!, refreshOlderThanDays, rootFor('movies', parsed.drive, false)!)
+  } else if (parsed.type === 'shows') {
+    await runShows(tmdb!, refreshOlderThanDays, rootFor('shows', parsed.drive, false)!)
   } else {
-    await runShows(client, refreshOlderThanDays, rootFor('shows', parsed.drive, false)!)
+    await runAudiobooks(refreshOlderThanDays, rootFor('audiobooks', parsed.drive, false)!)
   }
 
   console.log()

@@ -87,9 +87,9 @@ describe('probeOrCache', () => {
     expect(readTags).toHaveBeenCalledWith(task.absolutePath)
   })
 
-  it('does not call readTags when the cache hit', async () => {
+  it('does not call readTags when the cache hit was already tag-read', async () => {
     const cache = new ProbeCache(cachePath)
-    cache.set(task.relativePath, task.mtime, task.size, sampleData())
+    cache.set(task.relativePath, task.mtime, task.size, { ...sampleData(), tags_read: true })
     const readTags = vi.fn(async () => null)
 
     await probeOrCache(task, cache, readTags)

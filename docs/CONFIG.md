@@ -625,7 +625,7 @@ Done — 131 entries, 18 warnings, 5 silenced via ignore list.
 
 ## `.secrets.json`
 
-The TMDB validation pass ([Scans](SCANS.md)) needs an API key. It lives in `.secrets.json` at the project root. The file is gitignored so that you don't end up sharing your API key.
+The TMDB validation pass for movies and shows ([Scans](SCANS.md)) needs an API key. It lives in `.secrets.json` at the project root. The file is gitignored so that you don't end up sharing your API key. `npm run validate:audiobooks` uses Open Library, which needs no key, and runs without this file.
 
 To set it up:
 

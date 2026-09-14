@@ -81,6 +81,57 @@ export const AudiobooksRulesSchema = z.object({
      * OS artifacts. Catches stray files silently ignored elsewhere.
      */
     warn_unexpected_entries: z.boolean(),
+    /**
+     * The same series written two different ways across books — a typo or
+     * plural drift (`Gaunt's Ghost` vs `Gaunt's Ghosts`). The spelling most
+     * books use is recommended. See media/audiobook-names.ts.
+     */
+    warn_series_name_mismatch: z.boolean(),
+    /** Capitalization-only drift in a series name or title prefix (`HALO` vs `Halo`). */
+    warn_series_name_case: z.boolean(),
+    /**
+     * The same author written two different ways (`Tobias S. Buckell` vs
+     * `Tobias Buckell`, `J.R.R.` vs `J. R. R.`). Plex treats them as two people.
+     */
+    warn_author_name_mismatch: z.boolean(),
+    /** Capitalization-only drift in an author name. */
+    warn_author_name_case: z.boolean(),
+    /** HTML entities (`&quot;`, `&amp;`) left in a book or author folder name. */
+    warn_encoded_characters: z.boolean(),
+    /** A folder name using the library's minority quote style (curly vs straight). */
+    warn_mixed_punctuation: z.boolean(),
+    /**
+     * The book's album tag names a different book than its folder. Audible
+     * conventions — `(Unabridged)`, `: ` for ` - `, a folder that adds a
+     * subtitle — are normalized away first. See probe/audiobook-tags.ts.
+     */
+    warn_book_tag_mismatch: z.boolean(),
+    /** Album tag and book folder differ only in capitalization. */
+    warn_book_tag_case: z.boolean(),
+    /** The artist tag names different authors than the author folder (order and role suffixes ignored). */
+    warn_author_tag_mismatch: z.boolean(),
+    /** Artist tag and author folder differ only in capitalization. */
+    warn_author_tag_case: z.boolean(),
+    /** No chapter in the book carries an album or artist tag. */
+    warn_missing_book_tags: z.boolean(),
+    /**
+     * Validation pass (`npm run validate:audiobooks`): Open Library has no
+     * book matching the title and author. Off by default — Open Library's
+     * coverage of tie-in fiction is patchy, so this is mostly noise.
+     */
+    warn_openlibrary_not_found: z.boolean(),
+    /**
+     * Validation pass: no Open Library title matches, but one by the same
+     * author is a typo's distance away. See validate/audiobooks.ts.
+     */
+    warn_openlibrary_title_mismatch: z.boolean(),
+    /**
+     * Validation pass: Open Library's title differs only in capitalization.
+     * Off by default — Open Library capitalizes inconsistently itself.
+     */
+    warn_openlibrary_title_case: z.boolean(),
+    /** Validation pass: the title matches but none of the folder's authors do. */
+    warn_openlibrary_author_mismatch: z.boolean(),
   }),
 })
 
@@ -107,5 +158,20 @@ export const defaultAudiobooksRules: AudiobooksRules = AudiobooksRulesSchema.par
     warn_loose_files: true,
     warn_extra_subfolders: true,
     warn_unexpected_entries: true,
+    warn_series_name_mismatch: true,
+    warn_series_name_case: true,
+    warn_author_name_mismatch: true,
+    warn_author_name_case: true,
+    warn_encoded_characters: true,
+    warn_mixed_punctuation: true,
+    warn_book_tag_mismatch: true,
+    warn_book_tag_case: true,
+    warn_author_tag_mismatch: true,
+    warn_author_tag_case: true,
+    warn_missing_book_tags: true,
+    warn_openlibrary_not_found: false,
+    warn_openlibrary_title_mismatch: true,
+    warn_openlibrary_title_case: false,
+    warn_openlibrary_author_mismatch: true,
   },
 })

@@ -52,9 +52,11 @@ npm run audiobooks
 # Catalog all four sequentially
 npm run scan:all
 
-# Cross-check against TMDB — needs .secrets.json with a TMDB API key
+# Cross-check movies/shows against TMDB (needs .secrets.json with a TMDB API key)
+# and audiobooks against Open Library
 npm run validate:movies
 npm run validate:shows
+npm run validate:audiobooks   # Open Library — no key needed
 npm run validate:all
 
 # Repair show filenames the scanner flagged. The one write-capable command —
@@ -137,7 +139,7 @@ For the detailed runbook, see [Scans](docs/SCANS.md).
 
 When you run `npm run scan:all`, for each media type the scanner does this in order against one drive:
 
-1. **Inspect every primary file.** Reads video dimensions, audio codec/bitrate/sample rate, and (for music) the artist/album/track info embedded in the file. Results are cached, so subsequent runs skip unchanged files.
+1. **Inspect every primary file.** Reads video dimensions, audio codec/bitrate/sample rate, and (for music and audiobooks) the artist/album/track info embedded in the file. Results are cached, so subsequent runs skip unchanged files.
 2. **Walk the folder tree.** Parses every folder and file name against Plex naming conventions to spot mismatches and missing items.
 3. **Build the catalog.** Combines the file inspection with the folder/file structure to produce per-type catalogs — each entry lists title, year, where every copy lives, and (if your library is organized by quality) the quality of each copy.
 4. **Write three files to `output/<drive>/<type>/`**:
@@ -145,7 +147,7 @@ When you run `npm run scan:all`, for each media type the scanner does this in or
    - `probe.json` — the rich per-file inspection data
    - `warnings.json` — every hygiene issue worth your attention
 
-Then, optionally, run `npm run validate:movies` and `npm run validate:shows` to cross-check those types against TheMovieDB for title typos, wrong years, and missing episodes. **Validation is fully optional** — it needs a free TMDB API key in `.secrets.json`. The rest of the scanner works without one.
+Then, optionally, run `npm run validate:movies` and `npm run validate:shows` to cross-check those types against TheMovieDB for title typos, wrong years, and missing episodes, and `npm run validate:audiobooks` to spell-check book titles and authors against Open Library. **Validation is fully optional** — movies and shows need a free TMDB API key in `.secrets.json`; audiobooks need nothing. The rest of the scanner works without either.
 
 Detailed runbook and re-run scenarios in [Scans](docs/SCANS.md).
 
@@ -169,7 +171,7 @@ output/<drive>/<type>/
 - **`<type>.json`** — your catalog. Title, year, quality, where each copy lives. This is the file a website or other tool would read.
 - **`probe.json`** — the rich detail behind the catalog. Codecs, bitrates, frame rates, sample rates, and embedded music tags. Useful when you want more than the catalog gives you, or for debugging.
 - **`warnings.json`** — your hygiene to-do list. Each entry has a `path`, a human-readable `issue`, and (where applicable) a recommended fix.
-- **`validation.json` / `validation-warnings.json`** — only appear after `npm run validate:<type>`. Contain TMDB cross-check results and confidence-based warnings.
+- **`validation.json` / `validation-warnings.json`** — only appear after `npm run validate:<type>`. Contain TMDB (or, for audiobooks, Open Library) cross-check results and confidence-based warnings.
 
 ---
 

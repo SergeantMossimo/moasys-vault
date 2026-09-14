@@ -1,6 +1,16 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+import os from 'os'
+import path from 'path'
 
-import { classifyQuality, deriveQuality, type QualityBucket } from '../../../src/probe/helpers'
+import { ProbeCache } from '../../../src/probe/cache'
+import {
+  classifyQuality,
+  deriveQuality,
+  probeOrCache,
+  type ProbeTask,
+  type QualityBucket,
+} from '../../../src/probe/helpers'
+import type { ProbeData } from '../../../src/probe/types'
 
 const buckets: QualityBucket[] = [
   { name: 'UHD', min_width: 2000 },
@@ -119,5 +129,64 @@ describe('classifyQuality', () => {
     const result = classifyQuality(1920, 1080, 'UHD', buckets)
     expect(result.bucket?.name).toBe('UHD')
     expect(result.fits).toBe(false)
+  })
+})
+
+describe('probeOrCache — tag backfill', () => {
+  const tags = {
+    title: 'Chapter 1',
+    artist: 'Andy Weir',
+    album_artist: null,
+    album: 'The Martian',
+    year: null,
+    track: 1,
+    total_tracks: null,
+    disc: null,
+    total_discs: null,
+    genre: null,
+  }
+  const task: ProbeTask = {
+    relativePath: 'Audible/Andy Weir/The Martian/01 - Chapter 1.mp3',
+    absolutePath: '/nonexistent/01 - Chapter 1.mp3',
+    category: 'Audible',
+    quality: null,
+    mtime: 1,
+    size: 100,
+  }
+  const cached = (overrides: Partial<ProbeData> = {}): ProbeData => ({
+    size_bytes: 100,
+    duration_seconds: 60,
+    bitrate: 64_000,
+    video: null,
+    audio: null,
+    tags: null,
+    ...overrides,
+  })
+
+  function cacheWith(data: ProbeData): ProbeCache {
+    const cache = new ProbeCache(path.join(os.tmpdir(), 'moasys-never-written.json'))
+    cache.set(task.relativePath, task.mtime, task.size, data)
+    return cache
+  }
+
+  it('reads tags onto a cache hit that was never tag-read, without re-probing', async () => {
+    const cache = cacheWith(cached())
+    const readTags = vi.fn().mockResolvedValue(tags)
+    const data = await probeOrCache(task, cache, readTags)
+    expect(readTags).toHaveBeenCalledOnce()
+    expect(data.tags).toEqual(tags)
+    expect(cache.get(task.relativePath, task.mtime, task.size)?.tags_read).toBe(true)
+  })
+
+  it('does not re-read an entry already marked tags_read, even with no tags', async () => {
+    const readTags = vi.fn()
+    await probeOrCache(task, cacheWith(cached({ tags_read: true })), readTags)
+    expect(readTags).not.toHaveBeenCalled()
+  })
+
+  it('treats an entry that already carries tags as read', async () => {
+    const readTags = vi.fn()
+    await probeOrCache(task, cacheWith(cached({ tags })), readTags)
+    expect(readTags).not.toHaveBeenCalled()
   })
 })

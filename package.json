@@ -10,6 +10,7 @@
     "scan:all": "tsx src/scan.ts --all",
     "validate:movies": "tsx src/validate/runner.ts --type movies",
     "validate:shows": "tsx src/validate/runner.ts --type shows",
+    "validate:audiobooks": "tsx src/validate/runner.ts --type audiobooks",
     "validate:all": "tsx src/validate/runner.ts --all",
     "fix:shows": "tsx src/tools/rename-shows.ts",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",

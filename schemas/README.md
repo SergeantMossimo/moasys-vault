@@ -4,16 +4,17 @@ JSON Schema (Draft 2020-12) definitions for everything the scanner writes under 
 
 ## Files
 
-| Schema                                           | Describes                                                                              |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| [common.json](common.json)                       | Shared `Version` definition referenced by all four catalog schemas.                    |
-| [movies.json](movies.json)                       | `output/<drive>/movies/movies.json` — your movies catalog.                             |
-| [shows.json](shows.json)                         | `output/<drive>/shows/shows.json` — your shows catalog with seasons + episodes.        |
-| [music.json](music.json)                         | `output/<drive>/music/music.json` — your music catalog (artists → albums).             |
-| [audiobooks.json](audiobooks.json)               | `output/<drive>/audiobooks/audiobooks.json` — your audiobooks catalog.                 |
-| [warnings.json](warnings.json)                   | `output/<drive>/<type>/warnings.json` and `.../validation-warnings.json` (same shape). |
-| [validation-movies.json](validation-movies.json) | `output/<drive>/movies/validation.json` — TMDB cross-check results for movies.         |
-| [validation-shows.json](validation-shows.json)   | `output/<drive>/shows/validation.json` — TMDB cross-check results for shows.           |
+| Schema                                                   | Describes                                                                                      |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| [common.json](common.json)                               | Shared `Version` definition referenced by all four catalog schemas.                            |
+| [movies.json](movies.json)                               | `output/<drive>/movies/movies.json` — your movies catalog.                                     |
+| [shows.json](shows.json)                                 | `output/<drive>/shows/shows.json` — your shows catalog with seasons + episodes.                |
+| [music.json](music.json)                                 | `output/<drive>/music/music.json` — your music catalog (artists → albums).                     |
+| [audiobooks.json](audiobooks.json)                       | `output/<drive>/audiobooks/audiobooks.json` — your audiobooks catalog.                         |
+| [warnings.json](warnings.json)                           | `output/<drive>/<type>/warnings.json` and `.../validation-warnings.json` (same shape).         |
+| [validation-movies.json](validation-movies.json)         | `output/<drive>/movies/validation.json` — TMDB cross-check results for movies.                 |
+| [validation-shows.json](validation-shows.json)           | `output/<drive>/shows/validation.json` — TMDB cross-check results for shows.                   |
+| [validation-audiobooks.json](validation-audiobooks.json) | `output/<drive>/audiobooks/validation.json` — Open Library cross-check results for audiobooks. |
 
 ## Using these
 

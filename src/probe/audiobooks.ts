@@ -13,8 +13,10 @@ import { isPrimary } from '../core/files'
 import { AudiobooksRules } from '../core/rules/audiobooks'
 import { compilePattern, resolveCategories } from '../core/rules/helpers'
 
+import { analyzeBookTags } from './audiobook-tags'
 import { ProbeCache } from './cache'
 import { ProbeTask, ProbedFile, probeBatch } from './helpers'
+import { readTags } from './id3'
 import { BookProbeOutput, ChapterProbe, ProbeData, ProbeResult } from './types'
 
 // ─────────────────────────────────────────────
@@ -23,6 +25,7 @@ import { BookProbeOutput, ChapterProbe, ProbeData, ProbeResult } from './types'
 
 interface ChapterIdentity {
   title: string
+  authorFolder: string
   authors: string[]
   mediaType: string
   disc: number
@@ -136,6 +139,7 @@ function collectTasks(
             },
             identity: {
               title: bookEntry.name,
+              authorFolder: authorEntry.name,
               authors,
               mediaType: cat.name,
               disc: parsed.disc,
@@ -203,6 +207,49 @@ function aggregate(
 }
 
 // ─────────────────────────────────────────────
+// Tag checks
+// ─────────────────────────────────────────────
+
+/**
+ * Compare each book's embedded album/artist tags with its folders. See
+ * probe/audiobook-tags.ts for the normalization that keeps Audible-style
+ * tags (`Title (Unabridged)`, `Name - translator`) from firing on every book.
+ */
+function checkBookTags(
+  books: BookProbeOutput[],
+  identities: Map<string, ChapterIdentity>,
+  rules: AudiobooksRules,
+  warnings: WarningCollector
+): void {
+  for (const book of books) {
+    const first = book.chapters[0]
+    const identity = first ? identities.get(first.path) : undefined
+    if (!identity) continue
+
+    const findings = analyzeBookTags(
+      {
+        title: book.title,
+        authorFolder: identity.authorFolder,
+        authors: book.authors,
+        tags: book.chapters.map(c => c.tags),
+      },
+      rules.checks
+    )
+    // The path can show one category, but the scope carries all of them so a
+    // `folders:` entry matches regardless of which came first.
+    const categories = book.media_type.filter(c => c !== 'default')
+    const bookPath = categories[0]
+      ? path.join(categories[0], identity.authorFolder, book.title)
+      : path.join(identity.authorFolder, book.title)
+    for (const finding of findings) {
+      warnings.add(finding.type, bookPath, finding.issue, {
+        scope: { categories, levels: [identity.authorFolder, book.title] },
+      })
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
 // Entry point
 // ─────────────────────────────────────────────
 
@@ -227,7 +274,7 @@ export async function probeAudiobooks(
         console.log(`    [PROBE] ${done}/${total} (${cached} cached)`)
       }
     },
-    undefined,
+    readTags,
     warnings
   )
 
@@ -235,5 +282,8 @@ export async function probeAudiobooks(
   const byPath = new Map<string, ProbeData>()
   for (const { task, data } of probed) byPath.set(task.relativePath, data)
 
-  return { output: aggregate(probed, identities, mediaTypeOrder), byPath }
+  const output = aggregate(probed, identities, mediaTypeOrder)
+  checkBookTags(output, identities, rules, warnings)
+
+  return { output, byPath }
 }

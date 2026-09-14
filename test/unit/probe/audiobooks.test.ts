@@ -14,7 +14,9 @@ function primeCache(cachePath: string, root: string, data: Record<string, ProbeD
   const cache = new ProbeCache(cachePath)
   for (const [relPath, probeData] of Object.entries(data)) {
     const stat = fs.statSync(path.join(root, relPath))
-    cache.set(relPath, stat.mtimeMs, stat.size, probeData)
+    // Primed entries count as tag-read, so `tags: null` means "no tags" rather
+    // than triggering a backfill read of the empty fixture file.
+    cache.set(relPath, stat.mtimeMs, stat.size, { tags_read: true, ...probeData })
   }
   return cache
 }
@@ -117,7 +119,58 @@ describe('probeAudiobooks', () => {
     expect(chapters.map(c => `${c.disc}.${c.chapter}`)).toEqual(['1.1', '1.2', '2.1'])
   })
 
-  it('emits no warnings — audiobooks have no probe-side rules', async () => {
+  const tags = (album: string, artist: string) => ({
+    title: null,
+    artist,
+    album_artist: null,
+    album,
+    year: null,
+    track: null,
+    total_tracks: null,
+    disc: null,
+    total_discs: null,
+    genre: null,
+  })
+
+  it('emits no warnings when tags agree with the folders', async () => {
+    const { rules, root, cache, warnings } = setup({
+      spec: {
+        Audible: {
+          'Andy Weir': { 'The Martian': { '01 - Chapter.mp3': '' } },
+        },
+      },
+      probes: {
+        'Audible/Andy Weir/The Martian/01 - Chapter.mp3': fakeProbe({
+          tags: tags('The Martian (Unabridged)', 'Andy Weir'),
+        }),
+      },
+    })
+
+    await probeAudiobooks({ root_path: root }, rules, cache, warnings)
+    expect(warnings.all()).toEqual([])
+  })
+
+  it('emits tag warnings at Category/Author/Book', async () => {
+    const { rules, root, cache, warnings } = setup({
+      spec: {
+        Audible: {
+          'Cassandra Rose Clarke': { 'Halo - Battle Born': { '01 - Chapter.mp3': '' } },
+        },
+      },
+      probes: {
+        'Audible/Cassandra Rose Clarke/Halo - Battle Born/01 - Chapter.mp3': fakeProbe({
+          tags: tags('Halo: Battle Born (Unabridged)', 'Cassandra Rose Clark'),
+        }),
+      },
+    })
+
+    await probeAudiobooks({ root_path: root }, rules, cache, warnings)
+    expect(warnings.all().map(w => [w.type, w.path])).toEqual([
+      ['warn_author_tag_mismatch', 'Audible/Cassandra Rose Clarke/Halo - Battle Born'],
+    ])
+  })
+
+  it('emits warn_missing_book_tags when no chapter has tags', async () => {
     const { rules, root, cache, warnings } = setup({
       spec: {
         Audible: {
@@ -128,6 +181,6 @@ describe('probeAudiobooks', () => {
     })
 
     await probeAudiobooks({ root_path: root }, rules, cache, warnings)
-    expect(warnings.all()).toEqual([])
+    expect(warnings.all().map(w => w.type)).toEqual(['warn_missing_book_tags'])
   })
 })
