@@ -1,20 +1,25 @@
 # MOASYS-Vault — Output schemas
 
-JSON Schema (Draft 2020-12) definitions for everything the scanner writes under `output/<drive>/<type>/`. Useful when you're building a downstream consumer (e.g. the personal website) and want IDE autocomplete or runtime validation.
+JSON Schema (Draft 2020-12) definitions for everything the scanner writes under `output/<drive>/<type>/` and the Plex commands write under `output/plex/`. Useful when you're building a downstream consumer (e.g. the personal website) and want IDE autocomplete or runtime validation.
 
 ## Files
 
-| Schema                                                   | Describes                                                                                      |
-| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| [common.json](common.json)                               | Shared `Version` definition referenced by all four catalog schemas.                            |
-| [movies.json](movies.json)                               | `output/<drive>/movies/movies.json` — your movies catalog.                                     |
-| [shows.json](shows.json)                                 | `output/<drive>/shows/shows.json` — your shows catalog with seasons + episodes.                |
-| [music.json](music.json)                                 | `output/<drive>/music/music.json` — your music catalog (artists → albums).                     |
-| [audiobooks.json](audiobooks.json)                       | `output/<drive>/audiobooks/audiobooks.json` — your audiobooks catalog.                         |
-| [warnings.json](warnings.json)                           | `output/<drive>/<type>/warnings.json` and `.../validation-warnings.json` (same shape).         |
-| [validation-movies.json](validation-movies.json)         | `output/<drive>/movies/validation.json` — TMDB cross-check results for movies.                 |
-| [validation-shows.json](validation-shows.json)           | `output/<drive>/shows/validation.json` — TMDB cross-check results for shows.                   |
-| [validation-audiobooks.json](validation-audiobooks.json) | `output/<drive>/audiobooks/validation.json` — Open Library cross-check results for audiobooks. |
+| Schema                                                   | Describes                                                                                                                                                                                     |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [common.json](common.json)                               | Shared `Version` definition referenced by all four catalog schemas.                                                                                                                           |
+| [movies.json](movies.json)                               | `output/<drive>/movies/movies.json` — your movies catalog.                                                                                                                                    |
+| [shows.json](shows.json)                                 | `output/<drive>/shows/shows.json` — your shows catalog with seasons + episodes.                                                                                                               |
+| [music.json](music.json)                                 | `output/<drive>/music/music.json` — your music catalog (artists → albums).                                                                                                                    |
+| [audiobooks.json](audiobooks.json)                       | `output/<drive>/audiobooks/audiobooks.json` — your audiobooks catalog.                                                                                                                        |
+| [warnings.json](warnings.json)                           | `output/<drive>/<type>/warnings.json`, and `validation-warnings.json`, `plex-warnings.json`, `plex-log-warnings.json` (and their `.unfiltered.json` variants) beside it — all the same shape. |
+| [validation-movies.json](validation-movies.json)         | `output/<drive>/movies/validation.json` — TMDB cross-check results for movies.                                                                                                                |
+| [validation-shows.json](validation-shows.json)           | `output/<drive>/shows/validation.json` — TMDB cross-check results for shows.                                                                                                                  |
+| [validation-audiobooks.json](validation-audiobooks.json) | `output/<drive>/audiobooks/validation.json` — Open Library cross-check results for audiobooks.                                                                                                |
+| [plex-common.json](plex-common.json)                     | Shared `Library` and `MediaType` definitions referenced by the Plex schemas.                                                                                                                  |
+| [plex-libraries.json](plex-libraries.json)               | `output/plex/libraries.json` — index of every Plex library and how it maps to your roots.                                                                                                     |
+| [plex-catalog.json](plex-catalog.json)                   | `output/plex/<library>/catalog.json` — every item in one Plex library, with mapped file paths.                                                                                                |
+| [plex-collections.json](plex-collections.json)           | `output/plex/<library>/collections.json` — collections in one Plex library and their items.                                                                                                   |
+| [plex-logs-summary.json](plex-logs-summary.json)         | `output/plex/logs-summary.json` — every distinct problem in the Plex server's logs, with counts.                                                                                              |
 
 ## Using these
 
@@ -35,4 +40,4 @@ IDEs (VS Code, JetBrains) can use these directly via the `$schema` reference at 
 
 ## Drift
 
-These schemas are hand-maintained alongside the TypeScript types in [src/core/types.ts](../src/core/types.ts) and [src/validate/types.ts](../src/validate/types.ts). If you change a catalog shape, update the matching schema here in the same PR. The tradeoff vs. generating schemas from Zod: simpler dependencies and zero build step, at the cost of needing one extra file touch per shape change. Shape changes are rare.
+These schemas are hand-maintained alongside the TypeScript types in [src/core/types.ts](../src/core/types.ts), [src/validate/types.ts](../src/validate/types.ts), [src/plex/types.ts](../src/plex/types.ts), and [src/plex/log-checks.ts](../src/plex/log-checks.ts) (`PlexLogSummaryOutput`). If you change a catalog shape, update the matching schema here in the same PR. The tradeoff vs. generating schemas from Zod: simpler dependencies and zero build step, at the cost of needing one extra file touch per shape change. Shape changes are rare.

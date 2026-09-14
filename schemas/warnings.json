@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://moasys.local/vault/schemas/warnings.json",
-  "title": "MOASYS-Vault — warnings.json (and validation-warnings.json)",
-  "description": "The on-disk shape for every warnings file the scanner writes. Warnings are grouped by type under by_type — sparse, only types that fired appear as keys. Rows inside each bucket are sorted alphabetically by path, except warn_duplicate_quality, which groups by quality (UHD, then HD, then SD) and sorts by path within each group. The validation pass uses the same shape under output/<drive>/<type>/validation-warnings.json.",
+  "title": "MOASYS-Vault — warnings.json (and validation-warnings.json, plex-warnings.json, plex-log-warnings.json)",
+  "description": "The on-disk shape for every warnings file the scanner writes. Warnings are grouped by type under by_type — sparse, only types that fired appear as keys. Rows inside each bucket are sorted alphabetically by path, except warn_duplicate_quality, which groups by quality (UHD, then HD, then SD) and sorts by path within each group. The validation pass uses the same shape under output/<drive>/<type>/validation-warnings.json, and the Plex commands under plex-warnings.json (`npm run plex:check`) and plex-log-warnings.json (`npm run plex:logs`) — plus their *.unfiltered.json variants when run with --no-ignore.",
   "type": "object",
   "properties": {
     "generated": {

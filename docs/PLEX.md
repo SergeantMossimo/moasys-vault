@@ -104,6 +104,8 @@ npm run plex:pull movies "tv shows"
 
 Each item carries its Plex title, original title, year, agent guid, external ids (`imdb://`, `tmdb://`, `tvdb://`), parent/grandparent keys and titles, whether Plex lists it under **Duplicates**, and its files. Each file records the path as Plex sees it, the configured drive and library-relative path it maps to on this machine, and whether Plex has flagged it deleted.
 
+JSON Schemas for these files are in [`schemas/`](../schemas/): `plex-libraries.json`, `plex-catalog.json`, and `plex-collections.json`.
+
 A pull of a few thousand movies and a few hundred shows takes a minute or two. There's no cache — the pull output _is_ the snapshot `plex:check` reads, so re-pull whenever you want fresh data.
 
 ---
@@ -276,4 +278,4 @@ Every distinct ERROR and WARN problem in the logs, grouped by a signature with i
 }
 ```
 
-`totals` counts errors, warnings, lines tied to the library, and lines naming items the pull doesn't know; `covers` gives the time of the first and last problem line. Times are the server's local time, as Plex writes them. Samples are log lines as Plex wrote them, so they can include local IP addresses and your Plex username — the file stays in the gitignored `output/`.
+`totals` counts errors, warnings, lines tied to the library, and lines naming items the pull doesn't know; `covers` gives the time of the first and last problem line. Times are the server's local time, as Plex writes them. Samples are log lines as Plex wrote them, so they can include local IP addresses and your Plex username — the file stays in the gitignored `output/`. Its schema is [`schemas/plex-logs-summary.json`](../schemas/plex-logs-summary.json).
