@@ -39,10 +39,14 @@ export class JsonCache<T> {
    * @param version    expected schema version — mismatches discard the cache.
    *                   Default 1 keeps backward compatibility for caches that
    *                   were created before the version param existed.
+   * @param normalize  optional per-value transform applied as entries load,
+   *                   e.g. trimming fields an older version cached. The
+   *                   entry's `fetched_at` is kept, so nothing looks fresh.
    */
   constructor(
     private cachePath: string,
-    private version: number = 1
+    private version: number = 1,
+    private normalize?: (value: T) => T
   ) {
     this.load()
   }
@@ -79,7 +83,7 @@ export class JsonCache<T> {
     }
 
     for (const [k, v] of Object.entries(cf.entries)) {
-      this.entries.set(k, v)
+      this.entries.set(k, this.normalize ? { ...v, value: this.normalize(v.value) } : v)
     }
   }
 

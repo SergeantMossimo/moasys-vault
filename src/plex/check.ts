@@ -9,12 +9,12 @@
  *   output/<drive>/<type>/plex-warnings.json
  *
  * Needs no connection to Plex — it reads output/plex/ (from `plex:pull`) and
- * output/<drive>/<type>/probe.json (from the scan), and stats files on disk
- * only to confirm that a file Plex lists is really gone.
+ * output/<drive>/<type>/data/probe.json (from the scan), and stats files on
+ * disk only to confirm that a file Plex lists is really gone.
  *
  * Per-type ignore lists (ignored/<drive>/<type>.yaml) apply to Plex warnings
  * the same way they apply to scan warnings. `--no-ignore` skips them and
- * writes plex-warnings.unfiltered.json instead, to review what they hide.
+ * writes unfiltered/plex-warnings.json instead, to review what they hide.
  */
 
 import fs from 'fs'
@@ -24,6 +24,7 @@ import { AppConfig, MediaRootConfig } from '../core/types'
 import { driveSlug, loadConfig } from '../core/config'
 import { loadRules } from '../core/rules/loader'
 import { PlexRulesSchema, defaultPlexRules, PlexRules } from '../core/rules/plex'
+import { typeOutputPaths } from '../core/output-paths'
 import { parseRunnerArgs, resolveRoot, rootNames } from '../core/runner-shared'
 import type {
   ArtistProbeOutput,
@@ -43,7 +44,7 @@ import {
   warningsPath,
   writePlexWarnings,
 } from './run-shared'
-import { OUTPUT_DIR, PLEX_OUTPUT_DIR, SCRIPT_DIR } from './setup'
+import { PLEX_OUTPUT_DIR, SCRIPT_DIR } from './setup'
 import { MediaType, PlexCatalogOutput, PlexLibrariesOutput } from './types'
 
 // ─────────────────────────────────────────────
@@ -81,10 +82,9 @@ function probeFilePaths(mediaType: MediaType, probePath: string): string[] {
  */
 function readTmdbMatches(
   mediaType: MediaType,
-  slug: string
+  p: string
 ): Map<string, { id: number; title: string | null }> | undefined {
   if (mediaType !== 'movies' && mediaType !== 'shows') return undefined
-  const p = path.join(OUTPUT_DIR, slug, mediaType, 'validation.json')
   if (!fs.existsSync(p)) return undefined
 
   const entries = readJson<Array<MovieValidation | ShowValidation>>(p)
@@ -108,6 +108,7 @@ function runType(
   unfiltered: boolean
 ): void {
   const slug = driveSlug(root.name)
+  const out = typeOutputPaths(SCRIPT_DIR, slug, mediaType)
   console.log(`\n  ${mediaType} — ${root.name} (${root.root_path})`)
 
   const mapped = libraries.libraries.filter(l => l.media_type === mediaType)
@@ -129,25 +130,26 @@ function runType(
   }
   if (catalogs.length === 0) return
 
-  const probePath = path.join(OUTPUT_DIR, slug, mediaType, 'probe.json')
-  if (!fs.existsSync(probePath)) {
-    console.log(`    [SKIP] ${probePath} not found — run \`npm run ${mediaType} ${slug}\` first.`)
+  if (!fs.existsSync(out.probe)) {
+    console.log(
+      `    [SKIP] ${out.displayDir}/data/probe.json not found — run \`npm run ${mediaType} ${slug}\` first.`
+    )
     return
   }
 
   const { folderPattern } = typeRules(mediaType)
   const warnings = plexWarningCollector(root, mediaType, unfiltered)
 
-  const tmdbMatches = readTmdbMatches(mediaType, slug)
+  const tmdbMatches = readTmdbMatches(mediaType, out.validation)
   if (tmdbMatches) {
-    console.log(`    [INPUT] ${tmdbMatches.size} confident TMDB matches from validation.json`)
+    console.log(`    [INPUT] ${tmdbMatches.size} confident TMDB matches from data/validation.json`)
   }
 
   const stats = checkPlex({
     mediaType,
     drive: root.name,
     catalogs,
-    diskFiles: probeFilePaths(mediaType, probePath),
+    diskFiles: probeFilePaths(mediaType, out.probe),
     exists: relative => fs.existsSync(path.join(root.root_path, relative)),
     folderPattern,
     tmdbMatches,
@@ -176,8 +178,8 @@ function printHelp(): void {
 
   [drive] names a root from config.json; omit it for the first root of each
   type. Reads output/plex/ (run \`npm run plex:pull\` first) and each type's
-  probe.json (run the scan first). Writes output/<drive>/<type>/plex-warnings.json,
-  or plex-warnings.unfiltered.json with ${NO_IGNORE_FLAG}.
+  data/probe.json (run the scan first). Writes output/<drive>/<type>/plex-warnings.json,
+  or unfiltered/plex-warnings.json with ${NO_IGNORE_FLAG}.
   `)
 }
 
@@ -203,7 +205,7 @@ function main(): void {
   console.log(`    [INPUT] Plex pull from ${new Date(libraries.generated).toLocaleString()}`)
   const unfiltered = noIgnoreRequested()
   if (unfiltered) {
-    console.log(`    [INPUT] ${NO_IGNORE_FLAG}: ignore lists skipped — writing *.unfiltered.json`)
+    console.log(`    [INPUT] ${NO_IGNORE_FLAG}: ignore lists skipped — writing to unfiltered/`)
   }
 
   const config: AppConfig = loadConfig(SCRIPT_DIR)

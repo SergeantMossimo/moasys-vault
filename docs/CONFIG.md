@@ -73,9 +73,7 @@ Naming a drive that isn't configured for that type is an error — except under 
 The root's name (lowercased) becomes a folder segment, so drives never share state:
 
 ```text
-output/server/movies/movies.json      output/external/movies/movies.json
-output/server/movies/probe.json       output/external/movies/probe.json
-output/server/movies/warnings.json    output/external/movies/warnings.json
+output/server/movies/                 output/external/movies/
 cache/server/movies-probe.json        cache/external/movies-probe.json
 ignored/server/movies.yaml            ignored/external/movies.yaml
 ```

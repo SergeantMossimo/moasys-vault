@@ -18,7 +18,7 @@ import { PathMapper, rootRefs } from './paths'
 import { PlexIdentity, PlexSection } from './types'
 
 export const SCRIPT_DIR = path.join(__dirname, '..', '..')
-export const OUTPUT_DIR = path.join(SCRIPT_DIR, 'output')
+const OUTPUT_DIR = path.join(SCRIPT_DIR, 'output')
 /** output/plex/ — library pulls, independent of any drive. */
 export const PLEX_OUTPUT_DIR = path.join(OUTPUT_DIR, PLEX_OUTPUT_SEGMENT)
 

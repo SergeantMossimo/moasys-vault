@@ -12,8 +12,8 @@
  *
  * Validation runs against one drive at a time, matching the scan pass — it
  * reads that drive's scan output and writes alongside it:
- *   output/<drive>/<type>/validation.json           ← per-record TMDB resolution + alts
  *   output/<drive>/<type>/validation-warnings.json  ← low-confidence and mismatch warnings
+ *   output/<drive>/<type>/data/validation.json      ← per-record TMDB resolution + alts
  *
  * The TMDB caches stay un-sharded at the top of cache/ — they're keyed by
  * title/year, not by path, so every drive benefits from the same lookups:
@@ -41,6 +41,7 @@ import type { MovieProbeOutput } from '../probe/types'
 import { driveSlug, loadConfig } from '../core/config'
 import { loadRules } from '../core/rules/loader'
 import { loadIgnoreList } from '../core/ignored'
+import { TypeOutputPaths, reportLegacyOutputFiles, typeOutputPaths } from '../core/output-paths'
 import {
   parseRunnerArgs,
   resolveRoot,
@@ -55,7 +56,7 @@ import { AudiobooksRulesSchema, defaultAudiobooksRules } from '../core/rules/aud
 
 import { loadSecrets } from './secrets'
 import { JsonCache } from './cache'
-import { TmdbClient } from './tmdb'
+import { TmdbClient, slimSeasonDetails } from './tmdb'
 import { validateMovies, movieDurationKey, type MovieDurations } from './movies'
 import { validateShows } from './shows'
 import { validateAudiobooks, OPENLIBRARY_CACHE_VERSION } from './audiobooks'
@@ -74,7 +75,6 @@ import {
 // ─────────────────────────────────────────────
 
 const SCRIPT_DIR = path.join(__dirname, '..', '..')
-const OUTPUT_DIR = path.join(SCRIPT_DIR, 'output')
 const CACHE_DIR = path.join(SCRIPT_DIR, 'cache')
 
 // Needed to resolve the drive name to a configured root. Validation never
@@ -91,13 +91,7 @@ const CONFIG: AppConfig = loadConfig(SCRIPT_DIR)
  * validation depends on it (we don't re-scan inside the validator), and the
  * fix is to run the scan for that same drive first.
  */
-function readScan<T>(
-  slug: string,
-  mediaType: ValidateType,
-  driveName: string,
-  fileName = `${mediaType}.json`
-): T[] {
-  const p = path.join(OUTPUT_DIR, slug, mediaType, fileName)
+function readScan<T>(p: string, mediaType: ValidateType, driveName: string): T[] {
   if (!fs.existsSync(p)) {
     console.error(`\n  Error: ${p} not found.`)
     console.error(
@@ -110,10 +104,10 @@ function readScan<T>(
 
 /**
  * Build the movie→measured-runtime map that `warn_tmdb_runtime_mismatch`
- * compares against, from the same probe.json the scan pass wrote.
+ * compares against, from the same data/probe.json the scan pass wrote.
  */
-function readMovieDurations(slug: string, driveName: string): MovieDurations {
-  const probed = readScan<MovieProbeOutput>(slug, 'movies', driveName, 'probe.json')
+function readMovieDurations(out: TypeOutputPaths, driveName: string): MovieDurations {
+  const probed = readScan<MovieProbeOutput>(out.probe, 'movies', driveName)
   const map: MovieDurations = new Map()
   for (const movie of probed) {
     const files = movie.files
@@ -136,6 +130,7 @@ async function runMovies(
   root: MediaRootConfig
 ): Promise<void> {
   const slug = driveSlug(root.name)
+  const out = typeOutputPaths(SCRIPT_DIR, slug, 'movies')
 
   console.log(`\n${'─'.repeat(50)}`)
   console.log(`  MOASYS-Vault — Validate Movies`)
@@ -151,17 +146,17 @@ async function runMovies(
     projectRoot: SCRIPT_DIR,
   })
 
-  const movies = readScan<MovieOutput>(slug, 'movies', root.name)
-  console.log(`    [INPUT] ${movies.length} movies from output/${slug}/movies/movies.json`)
+  const movies = readScan<MovieOutput>(out.catalog, 'movies', root.name)
+  console.log(`    [INPUT] ${movies.length} movies from ${out.displayDir}/movies.json`)
 
   // Measured runtimes for warn_tmdb_runtime_mismatch. Only read when the
   // check is on, so a user who disabled it isn't forced to keep probe.json.
   const wantRuntimes =
     rules.checks.warn_tmdb_runtime_mismatch && rules.runtime_tolerance_percent > 0
-  const durations = wantRuntimes ? readMovieDurations(slug, root.name) : undefined
+  const durations = wantRuntimes ? readMovieDurations(out, root.name) : undefined
   if (durations) {
     const fileCount = [...durations.values()].reduce((n, f) => n + f.length, 0)
-    console.log(`    [INPUT] ${fileCount} measured runtimes from output/${slug}/movies/probe.json`)
+    console.log(`    [INPUT] ${fileCount} measured runtimes from ${out.displayDir}/data/probe.json`)
   }
 
   const searchCache = new JsonCache<ResolvedSearch>(
@@ -203,9 +198,9 @@ async function runMovies(
   )
 
   console.log('\n  Writing output...')
-  const outDir = path.join(OUTPUT_DIR, slug, 'movies')
-  writeJsonOutput(path.join(outDir, 'validation.json'), data)
-  writeWarnings(path.join(outDir, 'validation-warnings.json'), warnings)
+  writeWarnings(out.validationWarnings, warnings)
+  writeJsonOutput(out.validation, data)
+  reportLegacyOutputFiles(out)
 
   searchCache.save()
   detailsCache.save()
@@ -221,7 +216,7 @@ async function runMovies(
       .map(({ type, count }) => `${type} (${count})`)
       .join(', ')
     console.log(`    ${breakdown}`)
-    console.log(`  → Review output/${slug}/movies/validation-warnings.json`)
+    console.log(`  → Review ${out.displayDir}/validation-warnings.json`)
   }
 }
 
@@ -231,6 +226,7 @@ async function runShows(
   root: MediaRootConfig
 ): Promise<void> {
   const slug = driveSlug(root.name)
+  const out = typeOutputPaths(SCRIPT_DIR, slug, 'shows')
 
   console.log(`\n${'─'.repeat(50)}`)
   console.log(`  MOASYS-Vault — Validate Shows`)
@@ -246,8 +242,8 @@ async function runShows(
     projectRoot: SCRIPT_DIR,
   })
 
-  const shows = readScan<ShowOutput>(slug, 'shows', root.name)
-  console.log(`    [INPUT] ${shows.length} shows from output/${slug}/shows/shows.json`)
+  const shows = readScan<ShowOutput>(out.catalog, 'shows', root.name)
+  console.log(`    [INPUT] ${shows.length} shows from ${out.displayDir}/shows.json`)
 
   const searchCache = new JsonCache<ResolvedSearch>(
     path.join(CACHE_DIR, 'tmdb-search.json'),
@@ -259,7 +255,8 @@ async function runShows(
   )
   const seasonsCache = new JsonCache<TmdbSeasonDetails>(
     path.join(CACHE_DIR, 'tmdb-show-seasons.json'),
-    CACHE_VERSION
+    CACHE_VERSION,
+    slimSeasonDetails
   )
   const prunedSearch = searchCache.pruneOlderThan(refreshOlderThanDays)
   const prunedDetails = detailsCache.pruneOlderThan(refreshOlderThanDays)
@@ -293,9 +290,9 @@ async function runShows(
   )
 
   console.log('\n  Writing output...')
-  const outDir = path.join(OUTPUT_DIR, slug, 'shows')
-  writeJsonOutput(path.join(outDir, 'validation.json'), data)
-  writeWarnings(path.join(outDir, 'validation-warnings.json'), warnings)
+  writeWarnings(out.validationWarnings, warnings)
+  writeJsonOutput(out.validation, data)
+  reportLegacyOutputFiles(out)
 
   searchCache.save()
   detailsCache.save()
@@ -312,12 +309,13 @@ async function runShows(
       .map(({ type, count }) => `${type} (${count})`)
       .join(', ')
     console.log(`    ${breakdown}`)
-    console.log(`  → Review output/${slug}/shows/validation-warnings.json`)
+    console.log(`  → Review ${out.displayDir}/validation-warnings.json`)
   }
 }
 
 async function runAudiobooks(refreshOlderThanDays: number, root: MediaRootConfig): Promise<void> {
   const slug = driveSlug(root.name)
+  const out = typeOutputPaths(SCRIPT_DIR, slug, 'audiobooks')
 
   console.log(`\n${'─'.repeat(50)}`)
   console.log(`  MOASYS-Vault — Validate Audiobooks`)
@@ -333,8 +331,8 @@ async function runAudiobooks(refreshOlderThanDays: number, root: MediaRootConfig
     projectRoot: SCRIPT_DIR,
   })
 
-  const books = readScan<BookOutput>(slug, 'audiobooks', root.name)
-  console.log(`    [INPUT] ${books.length} books from output/${slug}/audiobooks/audiobooks.json`)
+  const books = readScan<BookOutput>(out.catalog, 'audiobooks', root.name)
+  console.log(`    [INPUT] ${books.length} books from ${out.displayDir}/audiobooks.json`)
 
   const searchCache = new JsonCache<OpenLibraryDoc[]>(
     path.join(CACHE_DIR, 'openlibrary-search.json'),
@@ -365,9 +363,9 @@ async function runAudiobooks(refreshOlderThanDays: number, root: MediaRootConfig
   )
 
   console.log('\n  Writing output...')
-  const outDir = path.join(OUTPUT_DIR, slug, 'audiobooks')
-  writeJsonOutput(path.join(outDir, 'validation.json'), data)
-  writeWarnings(path.join(outDir, 'validation-warnings.json'), warnings)
+  writeWarnings(out.validationWarnings, warnings)
+  writeJsonOutput(out.validation, data)
+  reportLegacyOutputFiles(out)
 
   searchCache.save()
 
@@ -382,7 +380,7 @@ async function runAudiobooks(refreshOlderThanDays: number, root: MediaRootConfig
       .map(({ type, count }) => `${type} (${count})`)
       .join(', ')
     console.log(`    ${breakdown}`)
-    console.log(`  → Review output/${slug}/audiobooks/validation-warnings.json`)
+    console.log(`  → Review ${out.displayDir}/validation-warnings.json`)
   }
 }
 
@@ -402,7 +400,8 @@ function printHelp(): void {
 
   [drive] names a root from config.json. Omit it to use the first root
   configured for that type. Reads output/<drive>/<type>/<type>.json and
-  writes validation.json alongside it, so run the matching scan first.
+  writes validation-warnings.json alongside it (plus data/validation.json),
+  so run the matching scan first.
 
   Flags:
     --refresh-older-than=Nd     Re-fetch any cache entries older than N days

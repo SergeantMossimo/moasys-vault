@@ -34,6 +34,7 @@ import { driveSlug, loadConfig } from './core/config'
 import { scan, writeJson } from './core/scanner'
 import { loadRules } from './core/rules/loader'
 import { loadIgnoreList } from './core/ignored'
+import { reportLegacyOutputFiles, typeOutputPaths } from './core/output-paths'
 import {
   parseRunnerArgs,
   resolveRoot,
@@ -64,7 +65,6 @@ import { probeAudiobooks } from './probe/audiobooks'
 // ─────────────────────────────────────────────
 
 const SCRIPT_DIR = path.join(__dirname, '..')
-const OUTPUT_DIR = path.join(SCRIPT_DIR, 'output')
 const CACHE_DIR = path.join(SCRIPT_DIR, 'cache')
 
 // CONFIG is loaded + Zod-validated by loadConfig(); see src/core/config.ts.
@@ -80,7 +80,7 @@ const CONFIG: AppConfig = loadConfig(SCRIPT_DIR)
  * that is independent of which drive is being scanned:
  *   - `module` walks folders and produces the catalog.
  *   - `probe` walks the same files with ffprobe (cache-aware) and produces
- *     the rich `probe.json` artifact + the probe-specific warnings.
+ *     the rich `data/probe.json` artifact + the probe-specific warnings.
  *
  * Drive-dependent paths (output dir, cache file, ignore list) are derived
  * per-run in `runType()` from the resolved root, since one media type can
@@ -191,13 +191,13 @@ type MediaType = (typeof VALID_TYPES)[number]
 
 /**
  * Run the merged pipeline for one media type against one named root:
- *   1. Probe pass — walks every primary file (cache-aware), writes probe.json
+ *   1. Probe pass — walks every primary file (cache-aware)
  *   2. Scan pass — walks folders, parses names, builds the catalog
- *   3. Write all three outputs — <type>.json, probe.json, warnings.json
+ *   3. Write all three outputs — <type>.json, warnings.json, data/probe.json
  *
  * Everything drive-specific is namespaced by the root's slug, so two drives
  * never share state:
- *   output/<drive>/<type>/{<type>,probe,warnings}.json
+ *   output/<drive>/<type>/            (layout: core/output-paths.ts)
  *   cache/<drive>/<type>-probe.json
  *   ignored/<drive>/<type>.yaml
  *
@@ -214,7 +214,7 @@ async function runType<TRecord, TOutput, TConfig extends BaseMediaConfig>(
   root: TConfig & MediaRootConfig
 ): Promise<void> {
   const slug = driveSlug(root.name)
-  const outputDir = path.join(OUTPUT_DIR, slug, mediaType)
+  const out = typeOutputPaths(SCRIPT_DIR, slug, mediaType)
   const cachePath = path.join(CACHE_DIR, slug, `${mediaType}-probe.json`)
 
   console.log(`\n${'─'.repeat(50)}`)
@@ -225,7 +225,7 @@ async function runType<TRecord, TOutput, TConfig extends BaseMediaConfig>(
   console.log(`  Root : ${root.root_path}`)
   console.log()
 
-  fs.mkdirSync(outputDir, { recursive: true })
+  fs.mkdirSync(out.dir, { recursive: true })
 
   // A single WarningCollector is shared across both passes so warnings.json
   // collects everything — naming hygiene from scan, quality / ID3 issues from
@@ -253,9 +253,10 @@ async function runType<TRecord, TOutput, TConfig extends BaseMediaConfig>(
 
   // ── Write outputs ─────────────────────────────────────────────────────
   console.log('\n  Writing output...')
-  writeJson(records, entry.module, path.join(outputDir, `${mediaType}.json`))
-  writeJsonOutput(path.join(outputDir, 'probe.json'), probeOutput)
-  writeWarnings(path.join(outputDir, 'warnings.json'), warnings)
+  writeJson(records, entry.module, out.catalog)
+  writeWarnings(out.warnings, warnings)
+  writeJsonOutput(out.probe, probeOutput)
+  reportLegacyOutputFiles(out)
 
   // Drop cache entries whose files no longer exist under root_path. Keeps
   // cache/<drive>/<type>-probe.json from growing without bound as files are
@@ -274,7 +275,7 @@ async function runType<TRecord, TOutput, TConfig extends BaseMediaConfig>(
       .map(({ type, count }) => `${type} (${count})`)
       .join(', ')
     console.log(`    ${breakdown}`)
-    console.log(`  → Review output/${slug}/${mediaType}/warnings.json for files needing attention.`)
+    console.log(`  → Review ${out.displayDir}/warnings.json for files needing attention.`)
   }
 }
 
@@ -344,8 +345,8 @@ function printHelp(): void {
   MOASYS-Vault — Plex Media Library Scanner
 
   Each run executes the merged pipeline (probe + scan) for the selected type,
-  producing <type>.json (catalog), probe.json (rich ffprobe data), and
-  warnings.json (all hygiene issues). The probe cache makes re-runs fast.
+  producing <type>.json (catalog), warnings.json (all hygiene issues), and
+  data/probe.json (rich ffprobe data). The probe cache makes re-runs fast.
 
   Usage:
     npm run <type> [drive]     Run the merged pipeline for one media type

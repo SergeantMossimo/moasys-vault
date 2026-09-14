@@ -10,58 +10,81 @@ This page is the complete reference for what the scanner writes and every warnin
 
 ## Output files
 
-Every run writes its files under `output/<drive>/<type>/`, where `<drive>` is the lowercased `name` of the root you scanned (see [Configuration](CONFIG.md#configjson)). There are up to seven files per media type, per drive:
+Every run writes its files under `output/<drive>/<type>/`, where `<drive>` is the lowercased `name` of the root you scanned (see [Configuration](CONFIG.md#configjson)).
+
+The top of each folder holds only what you open — your catalog and one warnings file per command:
 
 | File                       | Written by                           | What it is                                                                  |
 | -------------------------- | ------------------------------------ | --------------------------------------------------------------------------- |
 | `<type>.json`              | scan (`npm run <type>`)              | Your catalog — title, year, where each copy lives                           |
-| `probe.json`               | scan                                 | Raw per-file inspection data (codec, bitrate, dimensions, embedded tags)    |
 | `warnings.json`            | scan                                 | Every hygiene finding from the scan pass                                    |
-| `validation.json`          | validate (movies, shows, audiobooks) | TMDB cross-check results (Open Library for audiobooks)                      |
 | `validation-warnings.json` | validate (movies, shows, audiobooks) | Confidence warnings and title/year/author mismatches                        |
 | `plex-warnings.json`       | `npm run plex:check`                 | Plex compared with the scan — see [Plex](PLEX.md#warnings)                  |
 | `plex-log-warnings.json`   | `npm run plex:logs`                  | Errors from Plex's logs about files here — see [Plex](PLEX.md#log-warnings) |
 
-The validate files only appear after you run `npm run validate:<type>`. Movies and shows validate against TMDB, audiobooks against Open Library; music has no validate pass and never produces validate files. The Plex files only appear after their commands run, and share the `warnings.json` shape. Running either Plex command with `--no-ignore` writes `plex-warnings.unfiltered.json` / `plex-log-warnings.unfiltered.json` instead, leaving the filtered files untouched.
+Everything else sits in a subfolder:
+
+| Folder        | Contents                                       | What it is                                                                                                                                                        |
+| ------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `data/`       | `probe.json`, `validation.json`                | Detail behind the catalog: per-file inspection data (codec, bitrate, dimensions, embedded tags) and TMDB / Open Library match results. Other commands read these. |
+| `fixes/`      | `rename-plan.json`, `rename-undo-<ts>.json`    | Shows only — the plan and undo manifests from [`npm run fix:shows`](SCANS.md#fixing-filenames--npm-run-fixshows). Keep the undo manifests.                        |
+| `unfiltered/` | `plex-warnings.json`, `plex-log-warnings.json` | Only after a Plex command runs with `--no-ignore` — the same warnings with ignore lists skipped. See [Plex](PLEX.md#reviewing-what-your-ignore-lists-hide).       |
+
+Files only appear once their command has run. Movies and shows validate against TMDB, audiobooks against Open Library; music has no validate pass. Every warnings file shares the `warnings.json` shape.
+
+If you used a version from before these subfolders existed, the old top-level `probe.json`, `validation.json`, `rename-plan.json`, and `*.unfiltered.json` files are no longer read — each command prints a note listing them. Delete them, but keep any `rename-undo-*.json` you might still need (`--undo` accepts any path).
 
 Plex library pulls aren't tied to a drive, so they live apart, one folder per Plex library: `output/plex/libraries.json` plus `output/plex/<library>/catalog.json` and `collections.json`. Their shapes are described in [Plex](PLEX.md#npm-run-plexpull-library). `npm run plex:logs` adds `output/plex/logs-summary.json`, every distinct problem in the server's logs with counts — see [Plex](PLEX.md#logs-summaryjson).
 
-Full layout, for a config with a `Server` root on every type and an `External` root on movies and shows:
+Full layout, for a config with a `Server` root on every type and an `External` root on shows, after running every command:
 
 ```text
 output/
+├── plex/                         ← plex:pull and plex:logs (not tied to a drive)
 ├── server/
 │   ├── movies/
 │   │   ├── movies.json
-│   │   ├── probe.json
 │   │   ├── warnings.json
-│   │   ├── validation.json
-│   │   └── validation-warnings.json
+│   │   ├── validation-warnings.json
+│   │   ├── plex-warnings.json
+│   │   ├── plex-log-warnings.json
+│   │   └── data/
+│   │       ├── probe.json
+│   │       └── validation.json
 │   ├── shows/
 │   │   ├── shows.json
-│   │   ├── probe.json
 │   │   ├── warnings.json
-│   │   ├── validation.json
-│   │   └── validation-warnings.json
+│   │   ├── validation-warnings.json
+│   │   ├── plex-warnings.json
+│   │   ├── plex-log-warnings.json
+│   │   ├── data/
+│   │   │   ├── probe.json
+│   │   │   └── validation.json
+│   │   └── fixes/
+│   │       ├── rename-plan.json
+│   │       └── rename-undo-<timestamp>.json
 │   ├── music/
 │   │   ├── music.json
-│   │   ├── probe.json
-│   │   └── warnings.json
+│   │   ├── warnings.json
+│   │   ├── plex-warnings.json
+│   │   ├── plex-log-warnings.json
+│   │   └── data/
+│   │       └── probe.json
 │   └── audiobooks/
 │       ├── audiobooks.json
-│       ├── probe.json
 │       ├── warnings.json
-│       ├── validation.json
-│       └── validation-warnings.json
+│       ├── validation-warnings.json
+│       ├── plex-warnings.json
+│       ├── plex-log-warnings.json
+│       └── data/
+│           ├── probe.json
+│           └── validation.json
 └── external/
-    ├── movies/
-    │   ├── movies.json
-    │   ├── probe.json
-    │   └── warnings.json
     └── shows/
         ├── shows.json
-        ├── probe.json
-        └── warnings.json
+        ├── warnings.json
+        └── data/
+            └── probe.json
 ```
 
 Each drive's files are self-contained — the scanner never merges catalogs across drives, and a title that exists on two drives simply appears in both. Nothing cross-references the other drive's output.
@@ -164,7 +187,7 @@ Every catalog uses the same per-record `versions: [{category, quality}]` shape. 
 
 A few things to know if you're building a website (or anything else) on top of these JSON files:
 
-- **No `year` on music or audiobook catalogs.** Movies and shows have a `year` field; music and audiobooks don't. Album release years live in the embedded music tags and are exposed in `probe.json` under each track's `tags.year`; audiobooks have no defined year.
+- **No `year` on music or audiobook catalogs.** Movies and shows have a `year` field; music and audiobooks don't. Album release years live in the embedded music tags and are exposed in `data/probe.json` under each track's `tags.year`; audiobooks have no defined year.
 - **`"default"` is the category sentinel.** When your library uses no subfolders (empty `categories` config), every version's `category` will be the literal string `"default"`. You can group by category safely without special-casing flat libraries.
 - **`authors` is always a string array.** Even single-author books come through as `["Single Author Name"]`, so consumers don't need to handle both shapes.
 - **`title` can be `null` on `episodes[]`.** When an episode filename omits the trailing `- Episode Title`, the `title` field is `null` rather than an empty string. Same applies elsewhere — null means "intentionally absent," never `undefined` or missing key.

@@ -35,7 +35,7 @@ export const OPENLIBRARY_CACHE_VERSION = 1
 
 export type BookValidationStatus = 'matched' | 'case' | 'close' | 'author_mismatch' | 'not_found'
 
-/** One entry in output/<drive>/audiobooks/validation.json. */
+/** One entry in output/<drive>/audiobooks/data/validation.json. */
 export interface BookValidation {
   title: string
   authors: string[]

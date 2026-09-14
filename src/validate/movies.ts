@@ -10,7 +10,7 @@
  *   4. Emit warnings for low-confidence matches so the user can review.
  *
  * The aggregated MovieValidation[] is what gets written to
- * output/movies/validation.json. Warnings go to validation-warnings.json
+ * output/<drive>/movies/data/validation.json. Warnings go to validation-warnings.json
  * via the shared WarningCollector.
  */
 

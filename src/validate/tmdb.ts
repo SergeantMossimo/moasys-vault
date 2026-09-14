@@ -168,8 +168,33 @@ export class TmdbClient {
   /**
    * Fetch a single season's details — per-episode titles + air dates.
    * Caller is responsible for caching; this is one request per (show, season).
+   * The response is trimmed to what we use — see `slimSeasonDetails`.
    */
   async getShowSeason(showId: number, seasonNumber: number): Promise<TmdbSeasonDetails> {
-    return this.request<TmdbSeasonDetails>(`/tv/${showId}/season/${seasonNumber}?language=en-US`)
+    return slimSeasonDetails(
+      await this.request<TmdbSeasonDetails>(`/tv/${showId}/season/${seasonNumber}?language=en-US`)
+    )
+  }
+}
+
+/**
+ * Keep only the `TmdbSeasonDetails` fields. TMDB's season response carries
+ * each episode's full crew and guest-star lists, overviews and stills — about
+ * 60 KB per season, 98% of which nothing reads. Caching it verbatim grew
+ * cache/tmdb-show-seasons.json past 90 MB for ~850 seasons.
+ *
+ * Also applied to entries as the cache loads, so an existing cache shrinks on
+ * the next `validate:shows` without re-fetching anything.
+ */
+export function slimSeasonDetails(season: TmdbSeasonDetails): TmdbSeasonDetails {
+  return {
+    ...(season.id !== undefined && { id: season.id }),
+    season_number: season.season_number,
+    ...(season.name !== undefined && { name: season.name }),
+    episodes: (season.episodes ?? []).map(ep => ({
+      episode_number: ep.episode_number,
+      name: ep.name,
+      ...(ep.air_date !== undefined && { air_date: ep.air_date }),
+    })),
   }
 }
