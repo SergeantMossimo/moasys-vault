@@ -118,6 +118,8 @@ npm run validate:all
 
 npm run plex:pull                  # Plex libraries → output/plex/<library>/ (read-only GETs)
 npm run plex:check                 # Compare the pull with scan output → output/<drive>/<type>/plex-warnings.json
+npm run plex:logs                  # Download Plex's logs, tie errors to files → plex-log-warnings.json + output/plex/logs-summary.json
+npm run plex:check -- --no-ignore  # Either Plex command without ignore lists → *.unfiltered.json
 
 # The one write-capable command. Dry run by default; drive name is required.
 npm run fix:shows -- --fix show-prefix external          # preview

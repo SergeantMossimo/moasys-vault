@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 
-import { PAGE_SIZE, PlexClient } from '../../../src/plex/client'
+import { COLLECTION_PAGE_SIZE, PAGE_SIZE, PlexClient } from '../../../src/plex/client'
 
 const TOKEN = 'secret-token-123'
 
@@ -66,6 +66,34 @@ describe('PlexClient', () => {
     const client = new PlexClient('http://nas:32400', TOKEN, fetchImpl as unknown as typeof fetch)
     await client.sectionItems('1', 1)
     expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('pages collection contents within the 120-item limit Plex enforces there', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ MediaContainer: { size: 0, Metadata: [] } }))
+    const client = new PlexClient('http://nas:32400', TOKEN, fetchImpl as unknown as typeof fetch)
+    await client.collectionItems('42')
+    const url = new URL((fetchImpl.mock.calls[0] as unknown as [string])[0])
+    expect(url.pathname).toBe('/library/collections/42/children')
+    expect(Number(url.searchParams.get('X-Plex-Container-Size'))).toBe(COLLECTION_PAGE_SIZE)
+    expect(COLLECTION_PAGE_SIZE).toBeLessThanOrEqual(120)
+  })
+
+  it('downloads the log archive as bytes with a GET and the token header', async () => {
+    const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04])
+    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => new Response(bytes))
+    const client = new PlexClient('http://nas:32400', TOKEN, fetchImpl as unknown as typeof fetch)
+
+    expect(await client.serverLogs()).toEqual(bytes)
+    const [url, init] = fetchImpl.mock.calls[0]!
+    expect(url).toBe('http://nas:32400/diagnostics/logs')
+    expect(init!.method).toBeUndefined()
+    expect((init!.headers as Record<string, string>)['X-Plex-Token']).toBe(TOKEN)
+  })
+
+  it("explains a 403 as needing the server owner's token", async () => {
+    const fetchImpl = vi.fn(async () => new Response('', { status: 403 }))
+    const client = new PlexClient('http://nas:32400', TOKEN, fetchImpl as unknown as typeof fetch)
+    await expect(client.serverLogs()).rejects.toThrow(/owner/)
   })
 
   it('explains a rejected token', async () => {

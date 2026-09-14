@@ -102,13 +102,14 @@ export type TitleComparison = 'match' | 'case' | 'mismatch'
 export function compareTitles(
   plexTitle: string,
   originalTitle: string | null,
-  folderTitle: string
+  folderTitle: string,
+  years: Array<number | null> = []
 ): TitleComparison {
   const folder = comparableTitle(folderTitle)
   let best: TitleComparison = 'mismatch'
   for (const candidate of [plexTitle, originalTitle]) {
     if (!candidate) continue
-    const plex = comparableTitle(stripDisambiguator(candidate))
+    const plex = comparableTitle(stripDisambiguator(candidate, years))
     if (plex === folder) return 'match'
     if (plex.toLowerCase() === folder.toLowerCase()) {
       best = 'case'
@@ -130,9 +131,19 @@ function withoutArticle(s: string): string {
  * Plex appends a year or country to tell same-named shows apart —
  * `Cosmos (2014)`, `The Office (US)`. Folder names carry the year separately
  * and never the country, so neither is a real difference.
+ *
+ * For thinly matched items Plex sometimes appends the year bare:
+ * `Space King 2024`. That form is only stripped when the number is within a
+ * year of the folder's or Plex's own year, so titles that really end in a
+ * year — `Blade Runner 2049` (2017) — are left alone.
  */
-export function stripDisambiguator(title: string): string {
-  return title.replace(/\s+\((?:\d{4}|[A-Z]{2})\)$/, '')
+export function stripDisambiguator(title: string, years: Array<number | null> = []): string {
+  const stripped = title.replace(/\s+\((?:\d{4}|[A-Z]{2})\)$/, '')
+  if (stripped !== title) return stripped
+  const bare = /^(.+?)\s+(\d{4})$/.exec(title)
+  if (!bare) return title
+  const suffix = Number(bare[2])
+  return years.some(y => y !== null && Math.abs(y - suffix) <= 1) ? bare[1]! : title
 }
 
 /**
@@ -142,10 +153,14 @@ export function stripDisambiguator(title: string): string {
  * different film. Only trusted alongside a matching year: `Mud` and
  * `Mud Lotus` overlap too.
  */
-export function titlesOverlap(plexTitle: string, folderTitle: string): boolean {
+export function titlesOverlap(
+  plexTitle: string,
+  folderTitle: string,
+  years: Array<number | null> = []
+): boolean {
   const words = (s: string) =>
     new Set(
-      normalizeTitleLoose(comparableTitle(stripDisambiguator(s)))
+      normalizeTitleLoose(comparableTitle(stripDisambiguator(s, years)))
         .replace(/[^\p{L}\p{N}\s]/gu, ' ')
         .split(/\s+/)
         .filter(w => w.length > 0)
@@ -374,13 +389,14 @@ export function checkPlex(input: PlexCheckInput): PlexCheckStats {
     // name, so word overlap counts as a match — but only with the same year.
     // Plex's year is null when it has little metadata; then only the title can
     // decide, and word overlap isn't enough (`La luna` vs `Bajo la luna`).
-    const comparison = compareTitles(item.title, item.original_title, groups.title)
+    const years = [folderYear, item.year]
+    const comparison = compareTitles(item.title, item.original_title, groups.title, years)
     const sameYear = folderYear !== null && item.year === folderYear
     const yearOff =
       folderYear !== null && item.year !== null && Math.abs(folderYear - item.year) > 1
     const mismatch =
       yearOff ||
-      (comparison === 'mismatch' && !(sameYear && titlesOverlap(item.title, groups.title)))
+      (comparison === 'mismatch' && !(sameYear && titlesOverlap(item.title, groups.title, years)))
 
     if (mismatch && rules.checks.warn_plex_title_mismatch) {
       warnings.add(

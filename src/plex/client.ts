@@ -32,6 +32,13 @@ import {
 /** Items per page. Large enough to keep request counts low, small enough to keep each response quick. */
 export const PAGE_SIZE = 500
 
+/**
+ * Items per page for collection contents. Plex caps that endpoint at 120 and
+ * logs "X-Plex-Container-Size header exceeds limit 120. This will fail with
+ * status code 400 in the future" for anything larger.
+ */
+export const COLLECTION_PAGE_SIZE = 100
+
 /** A slow NAS can take a while on a big first page; anything past this is a hung connection. */
 const REQUEST_TIMEOUT_MS = 60_000
 
@@ -75,6 +82,23 @@ export class PlexClient {
    * The only request primitive in this client.
    */
   async get<T>(pathname: string, params: Record<string, string | number> = {}): Promise<T> {
+    const response = await this.request(pathname, params, 'application/json')
+    const body = (await response.json()) as PlexResponse<T>
+    return body.MediaContainer
+  }
+
+  /** GET a path and return the raw response body — for downloads such as the log archive. */
+  async getBinary(pathname: string): Promise<Uint8Array> {
+    const response = await this.request(pathname, {}, '*/*')
+    return new Uint8Array(await response.arrayBuffer())
+  }
+
+  /** Issue one GET and check its status. Shared by `get` and `getBinary`; never sets a method. */
+  private async request(
+    pathname: string,
+    params: Record<string, string | number>,
+    accept: string
+  ): Promise<Response> {
     const url = new URL(this.baseUrl + pathname)
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v))
 
@@ -84,7 +108,7 @@ export class PlexClient {
     let response: Response
     try {
       response = await this.fetchImpl(url.toString(), {
-        headers: { Accept: 'application/json', 'X-Plex-Token': this.token, ...CLIENT_HEADERS },
+        headers: { Accept: accept, 'X-Plex-Token': this.token, ...CLIENT_HEADERS },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       })
     } catch (err) {
@@ -105,14 +129,18 @@ export class PlexClient {
           'tokens change when you sign out of all devices or change your password.'
       )
     }
+    if (response.status === 403) {
+      throw new Error(
+        `Plex refused ${pathname} (403 Forbidden). This needs the server owner's token — ` +
+          'check that plex.token in .secrets.json belongs to the account that owns the server.'
+      )
+    }
     if (!response.ok) {
       throw new Error(
         this.redact(`Plex HTTP ${response.status} ${response.statusText} for ${pathname}`)
       )
     }
-
-    const body = (await response.json()) as PlexResponse<T>
-    return body.MediaContainer
+    return response
   }
 
   /**
@@ -122,20 +150,21 @@ export class PlexClient {
   async getAllMetadata(
     pathname: string,
     params: Record<string, string | number> = {},
-    onPage?: (fetched: number, total: number | null) => void
+    onPage?: (fetched: number, total: number | null) => void,
+    pageSize = PAGE_SIZE
   ): Promise<PlexMetadata[]> {
     const items: PlexMetadata[] = []
-    for (let start = 0; ; start += PAGE_SIZE) {
+    for (let start = 0; ; start += pageSize) {
       const page = await this.get<PlexMetadataContainer>(pathname, {
         ...params,
         'X-Plex-Container-Start': start,
-        'X-Plex-Container-Size': PAGE_SIZE,
+        'X-Plex-Container-Size': pageSize,
       })
       const batch = page.Metadata ?? []
       items.push(...batch)
       const total = page.totalSize ?? null
       onPage?.(items.length, total)
-      if (batch.length < PAGE_SIZE) break
+      if (batch.length < pageSize) break
       if (total !== null && items.length >= total) break
     }
     return items
@@ -175,6 +204,19 @@ export class PlexClient {
 
   /** The items inside one collection. */
   collectionItems(ratingKey: string): Promise<PlexMetadata[]> {
-    return this.getAllMetadata(`/library/collections/${encodeURIComponent(ratingKey)}/children`)
+    return this.getAllMetadata(
+      `/library/collections/${encodeURIComponent(ratingKey)}/children`,
+      {},
+      undefined,
+      COLLECTION_PAGE_SIZE
+    )
+  }
+
+  /**
+   * The server's log files as a zip archive — what Plex Web's "Download Logs"
+   * button fetches. Needs the server owner's token.
+   */
+  serverLogs(): Promise<Uint8Array> {
+    return this.getBinary('/diagnostics/logs')
   }
 }

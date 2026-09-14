@@ -38,6 +38,13 @@ export const PlexRulesSchema = z.object({
     warn_plex_title_case: z.boolean(),
     /** An item Plex lists under its Duplicates filter — several files merged into one entry. */
     warn_plex_duplicate: z.boolean(),
+    /** `plex:logs` — ERROR lines in Plex's server or scanner logs about a file or folder. */
+    warn_plex_log_error: z.boolean(),
+    /**
+     * `plex:logs` — WARN lines about a file or folder. Off by default: they're
+     * mostly FFmpeg muxing notes (`timescale not set`) with nothing to fix.
+     */
+    warn_plex_log_warning: z.boolean(),
   }),
 })
 
@@ -53,5 +60,7 @@ export const defaultPlexRules: PlexRules = PlexRulesSchema.parse({
     warn_plex_title_mismatch: true,
     warn_plex_title_case: true,
     warn_plex_duplicate: true,
+    warn_plex_log_error: true,
+    warn_plex_log_warning: false,
   },
 })

@@ -13,23 +13,18 @@
  * only to confirm that a file Plex lists is really gone.
  *
  * Per-type ignore lists (ignored/<drive>/<type>.yaml) apply to Plex warnings
- * the same way they apply to scan warnings.
+ * the same way they apply to scan warnings. `--no-ignore` skips them and
+ * writes plex-warnings.unfiltered.json instead, to review what they hide.
  */
 
 import fs from 'fs'
 import path from 'path'
 
-import { AppConfig, MediaRootConfig, WarningCollector } from '../core/types'
+import { AppConfig, MediaRootConfig } from '../core/types'
 import { driveSlug, loadConfig } from '../core/config'
-import { loadIgnoreList } from '../core/ignored'
-import { compilePattern } from '../core/rules/helpers'
 import { loadRules } from '../core/rules/loader'
-import { MoviesRulesSchema, defaultMoviesRules } from '../core/rules/movies'
-import { ShowsRulesSchema, defaultShowsRules } from '../core/rules/shows'
-import { MusicRulesSchema, defaultMusicRules } from '../core/rules/music'
-import { AudiobooksRulesSchema, defaultAudiobooksRules } from '../core/rules/audiobooks'
 import { PlexRulesSchema, defaultPlexRules, PlexRules } from '../core/rules/plex'
-import { parseRunnerArgs, resolveRoot, rootNames, writeWarnings } from '../core/runner-shared'
+import { parseRunnerArgs, resolveRoot, rootNames } from '../core/runner-shared'
 import type {
   ArtistProbeOutput,
   BookProbeOutput,
@@ -39,10 +34,17 @@ import type {
 import type { MovieValidation, ShowValidation } from '../validate/types'
 
 import { checkPlex, tmdbMatchKey } from './checks'
+import {
+  MEDIA_TYPES,
+  NO_IGNORE_FLAG,
+  noIgnoreRequested,
+  plexWarningCollector,
+  typeRules,
+  warningsPath,
+  writePlexWarnings,
+} from './run-shared'
 import { OUTPUT_DIR, PLEX_OUTPUT_DIR, SCRIPT_DIR } from './setup'
 import { MediaType, PlexCatalogOutput, PlexLibrariesOutput } from './types'
-
-const MEDIA_TYPES: MediaType[] = ['movies', 'shows', 'music', 'audiobooks']
 
 // ─────────────────────────────────────────────
 // Inputs
@@ -94,58 +96,6 @@ function readTmdbMatches(
   return matches
 }
 
-/**
- * What each type contributes: whether its folders are categorized (for
- * ignore-list scope) and, for movies/shows, the folder pattern that yields
- * the title and year Plex's are compared against.
- */
-function typeRules(mediaType: MediaType): { hasCategories: boolean; folderPattern: RegExp | null } {
-  switch (mediaType) {
-    case 'movies': {
-      const rules = loadRules({
-        mediaType,
-        schema: MoviesRulesSchema,
-        defaults: defaultMoviesRules,
-        projectRoot: SCRIPT_DIR,
-      })
-      return {
-        hasCategories: rules.categories.length > 0,
-        folderPattern: compilePattern(rules.patterns.folder),
-      }
-    }
-    case 'shows': {
-      const rules = loadRules({
-        mediaType,
-        schema: ShowsRulesSchema,
-        defaults: defaultShowsRules,
-        projectRoot: SCRIPT_DIR,
-      })
-      return {
-        hasCategories: rules.categories.length > 0,
-        folderPattern: compilePattern(rules.patterns.show_folder),
-      }
-    }
-    case 'music': {
-      const rules = loadRules({
-        mediaType,
-        schema: MusicRulesSchema,
-        defaults: defaultMusicRules,
-        projectRoot: SCRIPT_DIR,
-      })
-      return { hasCategories: rules.categories.length > 0, folderPattern: null }
-    }
-    case 'audiobooks': {
-      const rules = loadRules({
-        mediaType,
-        schema: AudiobooksRulesSchema,
-        defaults: defaultAudiobooksRules,
-        projectRoot: SCRIPT_DIR,
-      })
-      return { hasCategories: rules.categories.length > 0, folderPattern: null }
-    }
-  }
-}
-
 // ─────────────────────────────────────────────
 // Per-type run
 // ─────────────────────────────────────────────
@@ -154,7 +104,8 @@ function runType(
   mediaType: MediaType,
   root: MediaRootConfig,
   libraries: PlexLibrariesOutput,
-  plexRules: PlexRules
+  plexRules: PlexRules,
+  unfiltered: boolean
 ): void {
   const slug = driveSlug(root.name)
   console.log(`\n  ${mediaType} — ${root.name} (${root.root_path})`)
@@ -184,8 +135,8 @@ function runType(
     return
   }
 
-  const { hasCategories, folderPattern } = typeRules(mediaType)
-  const warnings = new WarningCollector(loadIgnoreList(SCRIPT_DIR, slug, mediaType), hasCategories)
+  const { folderPattern } = typeRules(mediaType)
+  const warnings = plexWarningCollector(root, mediaType, unfiltered)
 
   const tmdbMatches = readTmdbMatches(mediaType, slug)
   if (tmdbMatches) {
@@ -207,17 +158,7 @@ function runType(
   console.log(
     `    [PLEX] ${stats.plexFiles} Plex files on this drive from ${catalogs.map(c => `'${c.library.title}'`).join(', ')}; ${stats.diskFiles} files from the scan`
   )
-  writeWarnings(path.join(OUTPUT_DIR, slug, mediaType, 'plex-warnings.json'), warnings)
-
-  const silenced = warnings.silencedCount()
-  if (warnings.count() > 0 || silenced > 0) {
-    const breakdown = warnings
-      .countByType()
-      .map(({ type, count }) => `${type} (${count})`)
-      .join(', ')
-    const silencedNote = silenced > 0 ? `${silenced} silenced via ignore list` : ''
-    console.log(`    ${[breakdown, silencedNote].filter(Boolean).join(' — ')}`)
-  }
+  writePlexWarnings(warningsPath(root, mediaType, 'plex-warnings', unfiltered), warnings)
 }
 
 // ─────────────────────────────────────────────
@@ -230,11 +171,13 @@ function printHelp(): void {
 
   Usage:
     npm run plex:check [drive]      Every media type on the drive
+    npm run plex:check -- ${NO_IGNORE_FLAG}  Skip the ignore lists, to review what they hide
     npx tsx src/plex/check.ts --type movies [drive]
 
   [drive] names a root from config.json; omit it for the first root of each
   type. Reads output/plex/ (run \`npm run plex:pull\` first) and each type's
-  probe.json (run the scan first). Writes output/<drive>/<type>/plex-warnings.json.
+  probe.json (run the scan first). Writes output/<drive>/<type>/plex-warnings.json,
+  or plex-warnings.unfiltered.json with ${NO_IGNORE_FLAG}.
   `)
 }
 
@@ -258,6 +201,10 @@ function main(): void {
   }
   const libraries = readJson<PlexLibrariesOutput>(librariesPath)
   console.log(`    [INPUT] Plex pull from ${new Date(libraries.generated).toLocaleString()}`)
+  const unfiltered = noIgnoreRequested()
+  if (unfiltered) {
+    console.log(`    [INPUT] ${NO_IGNORE_FLAG}: ignore lists skipped — writing *.unfiltered.json`)
+  }
 
   const config: AppConfig = loadConfig(SCRIPT_DIR)
   const plexRules = loadRules({
@@ -280,7 +227,7 @@ function main(): void {
       console.error(`\n  Error: ${message}`)
       process.exit(1)
     }
-    runType(mediaType, root, libraries, plexRules)
+    runType(mediaType, root, libraries, plexRules, unfiltered)
   }
 
   console.log()

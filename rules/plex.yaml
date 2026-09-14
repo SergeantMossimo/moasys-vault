@@ -2,8 +2,9 @@
 # MOASYS-Vault — Plex rules (defaults)
 # ─────────────────────────────────────────────────────────────────────────────
 # Toggles for `npm run plex:check`, which compares what Plex has with what the
-# scanner found on disk. One file covers every media type; warnings land in
-# output/<drive>/<type>/plex-warnings.json.
+# scanner found on disk, and `npm run plex:logs`, which reads Plex's own logs.
+# One file covers every media type; warnings land in
+# output/<drive>/<type>/plex-warnings.json and plex-log-warnings.json.
 #
 # Edit a value to change the project-wide default. Personal overrides belong
 # in `rules/plex.local.yaml`, which is gitignored. To silence specific items,
@@ -22,3 +23,5 @@ checks:
   warn_plex_title_mismatch: true # Plex's title/year names something else — likely a wrong match
   warn_plex_title_case: true     # Plex's title differs from the folder only in capitalization
   warn_plex_duplicate: true      # Listed under Plex's Duplicates filter
+  warn_plex_log_error: true      # plex:logs — ERROR lines about a file or folder
+  warn_plex_log_warning: false   # plex:logs — WARN lines about a file or folder (mostly FFmpeg notes)
