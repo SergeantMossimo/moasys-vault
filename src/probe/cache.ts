@@ -21,6 +21,8 @@
 import fs from 'fs'
 import path from 'path'
 
+import { writeFileAtomic } from '../core/atomic-write'
+
 import { CacheEntry, CacheFile, CACHE_VERSION, ProbeData } from './types'
 
 // ─────────────────────────────────────────────
@@ -96,14 +98,17 @@ export class ProbeCache {
     }
   }
 
-  /** Save the cache to disk. Creates parent directory if needed. */
+  /**
+   * Save the cache to disk. Creates parent directory if needed. Written
+   * atomically — a run interrupted mid-save keeps the previous cache instead
+   * of leaving a truncated file that would force a full re-probe.
+   */
   save(): void {
-    fs.mkdirSync(path.dirname(this.cachePath), { recursive: true })
     const cf: CacheFile = {
       version: CACHE_VERSION,
       entries: [...this.entries.values()].sort((a, b) => a.path.localeCompare(b.path)),
     }
-    fs.writeFileSync(this.cachePath, JSON.stringify(cf, null, 2), 'utf-8')
+    writeFileAtomic(this.cachePath, JSON.stringify(cf, null, 2))
   }
 
   /**

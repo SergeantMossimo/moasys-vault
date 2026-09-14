@@ -286,7 +286,8 @@ export async function probeShows(
       }
     },
     undefined,
-    warnings
+    warnings,
+    config.probe_concurrency
   )
 
   if (rules.checks.warn_quality_mismatch) {

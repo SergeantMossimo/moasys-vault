@@ -32,13 +32,15 @@ import {
 } from './core/types'
 import { driveSlug, loadConfig } from './core/config'
 import { scan, writeJson } from './core/scanner'
-import { loadRules } from './core/rules/loader'
+import { loadTypeRules } from './core/rules/registry'
 import { loadIgnoreList } from './core/ignored'
 import { reportLegacyOutputFiles, typeOutputPaths } from './core/output-paths'
+import { MEDIA_TYPES, MediaType, PROJECT_ROOT } from './core/project'
 import {
   parseRunnerArgs,
-  resolveRoot,
-  rootNames,
+  printBanner,
+  printRunSummary,
+  selectRoot,
   writeJsonOutput,
   writeWarnings,
 } from './core/runner-shared'
@@ -48,11 +50,6 @@ import { createShowsModule } from './media/shows'
 import { createMusicModule } from './media/music'
 import { createAudiobooksModule } from './media/audiobooks'
 
-import { MoviesRulesSchema, defaultMoviesRules } from './core/rules/movies'
-import { ShowsRulesSchema, defaultShowsRules } from './core/rules/shows'
-import { MusicRulesSchema, defaultMusicRules } from './core/rules/music'
-import { AudiobooksRulesSchema, defaultAudiobooksRules } from './core/rules/audiobooks'
-
 import { ProbeCache } from './probe/cache'
 import { ProbeData } from './probe/types'
 import { probeMovies } from './probe/movies'
@@ -60,24 +57,15 @@ import { probeShows } from './probe/shows'
 import { probeMusic } from './probe/music'
 import { probeAudiobooks } from './probe/audiobooks'
 
-// ─────────────────────────────────────────────
-// Config + paths
-// ─────────────────────────────────────────────
-
-const SCRIPT_DIR = path.join(__dirname, '..')
-const CACHE_DIR = path.join(SCRIPT_DIR, 'cache')
-
-// CONFIG is loaded + Zod-validated by loadConfig(); see src/core/config.ts.
-// Cheap to load once at module init — it's small and shared across all types.
-const CONFIG: AppConfig = loadConfig(SCRIPT_DIR)
+const CACHE_DIR = path.join(PROJECT_ROOT, 'cache')
 
 // ─────────────────────────────────────────────
 // Media-type registry shape
 // ─────────────────────────────────────────────
 
 /**
- * Per-media-type registry entry. Carries everything the merged runner needs
- * that is independent of which drive is being scanned:
+ * Per-media-type entry. Carries everything the merged runner needs that is
+ * independent of which drive is being scanned:
  *   - `module` walks folders and produces the catalog.
  *   - `probe` walks the same files with ffprobe (cache-aware) and produces
  *     the rich `data/probe.json` artifact + the probe-specific warnings.
@@ -87,10 +75,9 @@ const CONFIG: AppConfig = loadConfig(SCRIPT_DIR)
  * have several. Rules stay here because categories are a type-level concept
  * — the same `rules/<type>.yaml` applies to every drive.
  *
- * Built lazily by per-type factory functions (`buildMoviesEntry()` etc.) so
- * `npm run movies` only loads rules for movies — a typo in
- * rules/audiobooks.yaml no longer blocks an unrelated movies scan, and the
- * boot log prints just one `[RULES] Loaded ...` line instead of four.
+ * Built lazily by `runMediaType()` so `npm run movies` only loads rules for
+ * movies — a typo in rules/audiobooks.yaml doesn't block an unrelated movies
+ * scan, and the boot log prints just one `[RULES] Loaded ...` line.
  */
 interface MediaTypeEntry<TRecord, TOutput, TConfig extends BaseMediaConfig> {
   module: MediaModule<TRecord, TOutput, TConfig>
@@ -102,88 +89,48 @@ interface MediaTypeEntry<TRecord, TOutput, TConfig extends BaseMediaConfig> {
   ) => Promise<{ output: unknown; byPath: Map<string, ProbeData> }>
 }
 
-function makeEntry<TRecord, TOutput, TConfig extends BaseMediaConfig>(
-  entry: MediaTypeEntry<TRecord, TOutput, TConfig>
-): MediaTypeEntry<TRecord, TOutput, TConfig> {
-  return entry
-}
-
-// ─────────────────────────────────────────────
-// Per-type factory functions
-// ─────────────────────────────────────────────
-
-// Each factory loads its own rules and builds its module and probe closure.
-// They're only called for the media type the user actually requested.
-//
 // To add a new type in the future:
 //   1. Create src/media/newtype.ts exporting a createNewtypeModule(rules) factory
-//   2. Create src/core/rules/newtype.ts with schema + defaults
+//   2. Create src/core/rules/newtype.ts with schema + defaults, and register it
+//      in src/core/rules/registry.ts
 //   3. Create src/probe/newtype.ts exporting probeNewtype(config, rules, cache, warnings)
-//   4. Add `<newtype>` to VALID_TYPES below and write a build<Newtype>Entry() here
-//   5. Wire dispatchType to call the new factory
-
-function buildMoviesEntry() {
-  const rules = loadRules({
-    mediaType: 'movies',
-    schema: MoviesRulesSchema,
-    defaults: defaultMoviesRules,
-    projectRoot: SCRIPT_DIR,
-  })
-  return makeEntry({
-    module: createMoviesModule(rules),
-    label: 'Movies',
-    probe: (cfg, cache, warnings) => probeMovies(cfg, rules, cache, warnings),
-  })
+//   4. Add it to MEDIA_TYPES in src/core/project.ts and a case below
+async function runMediaType(mediaType: MediaType, root: MediaRootConfig): Promise<void> {
+  switch (mediaType) {
+    case 'movies': {
+      const rules = loadTypeRules('movies')
+      return runType(mediaType, root, {
+        module: createMoviesModule(rules),
+        label: 'Movies',
+        probe: (cfg, cache, warnings) => probeMovies(cfg, rules, cache, warnings),
+      })
+    }
+    case 'shows': {
+      const rules = loadTypeRules('shows')
+      return runType(mediaType, root, {
+        module: createShowsModule(rules),
+        label: 'Shows',
+        probe: (cfg, cache, warnings) => probeShows(cfg, rules, cache, warnings),
+      })
+    }
+    case 'music': {
+      const rules = loadTypeRules('music')
+      return runType(mediaType, root, {
+        module: createMusicModule(rules),
+        label: 'Music',
+        probe: (cfg, cache, warnings) => probeMusic(cfg, rules, cache, warnings),
+      })
+    }
+    case 'audiobooks': {
+      const rules = loadTypeRules('audiobooks')
+      return runType(mediaType, root, {
+        module: createAudiobooksModule(rules),
+        label: 'Audiobooks',
+        probe: (cfg, cache, warnings) => probeAudiobooks(cfg, rules, cache, warnings),
+      })
+    }
+  }
 }
-
-function buildShowsEntry() {
-  const rules = loadRules({
-    mediaType: 'shows',
-    schema: ShowsRulesSchema,
-    defaults: defaultShowsRules,
-    projectRoot: SCRIPT_DIR,
-  })
-  return makeEntry({
-    module: createShowsModule(rules),
-    label: 'Shows',
-    probe: (cfg, cache, warnings) => probeShows(cfg, rules, cache, warnings),
-  })
-}
-
-function buildMusicEntry() {
-  const rules = loadRules({
-    mediaType: 'music',
-    schema: MusicRulesSchema,
-    defaults: defaultMusicRules,
-    projectRoot: SCRIPT_DIR,
-  })
-  return makeEntry({
-    module: createMusicModule(rules),
-    label: 'Music',
-    probe: (cfg, cache, warnings) => probeMusic(cfg, rules, cache, warnings),
-  })
-}
-
-function buildAudiobooksEntry() {
-  const rules = loadRules({
-    mediaType: 'audiobooks',
-    schema: AudiobooksRulesSchema,
-    defaults: defaultAudiobooksRules,
-    projectRoot: SCRIPT_DIR,
-  })
-  return makeEntry({
-    module: createAudiobooksModule(rules),
-    label: 'Audiobooks',
-    probe: (cfg, cache, warnings) => probeAudiobooks(cfg, rules, cache, warnings),
-  })
-}
-
-// ─────────────────────────────────────────────
-// Valid types (lightweight, no factories invoked)
-// ─────────────────────────────────────────────
-
-const VALID_TYPES = ['movies', 'shows', 'music', 'audiobooks'] as const
-type MediaType = (typeof VALID_TYPES)[number]
 
 // ─────────────────────────────────────────────
 // Runner
@@ -210,20 +157,17 @@ type MediaType = (typeof VALID_TYPES)[number]
  */
 async function runType<TRecord, TOutput, TConfig extends BaseMediaConfig>(
   mediaType: MediaType,
-  entry: MediaTypeEntry<TRecord, TOutput, TConfig>,
-  root: TConfig & MediaRootConfig
+  root: TConfig & MediaRootConfig,
+  entry: MediaTypeEntry<TRecord, TOutput, TConfig>
 ): Promise<void> {
   const slug = driveSlug(root.name)
-  const out = typeOutputPaths(SCRIPT_DIR, slug, mediaType)
+  const out = typeOutputPaths(PROJECT_ROOT, slug, mediaType)
   const cachePath = path.join(CACHE_DIR, slug, `${mediaType}-probe.json`)
 
-  console.log(`\n${'─'.repeat(50)}`)
-  console.log(`  MOASYS-Vault — ${entry.label}`)
-  console.log(`  ${new Date().toLocaleString()}`)
-  console.log('─'.repeat(50))
-  console.log(`\n  Drive: ${root.name}`)
-  console.log(`  Root : ${root.root_path}`)
-  console.log()
+  printBanner(entry.label, root)
+  if ((root.probe_concurrency ?? 1) > 1) {
+    console.log(`    [PROBE] Up to ${root.probe_concurrency} files at once (probe_concurrency)`)
+  }
 
   fs.mkdirSync(out.dir, { recursive: true })
 
@@ -238,7 +182,10 @@ async function runType<TRecord, TOutput, TConfig extends BaseMediaConfig>(
   // category with an empty folderName, so every warning path is one level
   // shallower — see deriveScope in core/ignored.ts.
   const hasCategories = entry.module.getCategories().some(c => c.folderName !== '')
-  const warnings = new WarningCollector(loadIgnoreList(SCRIPT_DIR, slug, mediaType), hasCategories)
+  const warnings = new WarningCollector(
+    loadIgnoreList(PROJECT_ROOT, slug, mediaType),
+    hasCategories
+  )
 
   // ── Probe pass ────────────────────────────────────────────────────────
   const cache = new ProbeCache(cachePath)
@@ -266,75 +213,35 @@ async function runType<TRecord, TOutput, TConfig extends BaseMediaConfig>(
   const orphanSummary = orphans > 0 ? ` (pruned ${orphans} orphan${orphans === 1 ? '' : 's'})` : ''
   console.log(`    [CACHE] ${cache.size()} entries saved to ${cachePath}${orphanSummary}`)
 
-  const silenced = warnings.silencedCount()
-  const silencedSummary = silenced > 0 ? `, ${silenced} silenced via ignore list` : ''
-  console.log(`\n  Done — ${records.size} entries, ${warnings.count()} warnings${silencedSummary}.`)
-  if (warnings.count() > 0) {
-    const breakdown = warnings
-      .countByType()
-      .map(({ type, count }) => `${type} (${count})`)
-      .join(', ')
-    console.log(`    ${breakdown}`)
-    console.log(`  → Review ${out.displayDir}/warnings.json for files needing attention.`)
-  }
+  printRunSummary(warnings, {
+    noun: 'warnings',
+    lead: `${records.size} entries, `,
+    review: `${out.displayDir}/warnings.json`,
+  })
 }
 
 // ─────────────────────────────────────────────
 // CLI
 // ─────────────────────────────────────────────
 
-/**
- * Resolve which root to scan, then run it.
- *
- * When the requested drive isn't configured for this type, `--all` skips it
- * with a note while a single-type run treats it as an error — `scan:all
- * external` shouldn't die just because music lives on one drive, but
- * `npm run music external` is a typo worth surfacing.
- */
-async function dispatchType(
-  mediaType: MediaType,
-  driveName: string | undefined,
-  acrossAllTypes: boolean
-): Promise<void> {
-  const roots = CONFIG[mediaType]
-  const root = resolveRoot(roots, driveName)
-
-  if (!root) {
-    const message = `no root named '${driveName}' configured for ${mediaType} (have: ${rootNames(roots)})`
-    if (acrossAllTypes) {
-      console.log(`\n  [SKIP] ${mediaType} — ${message}`)
-      return
-    }
-    console.error(`\n  Error: ${message}`)
-    process.exit(1)
-  }
-
-  // Each branch builds its own entry — rules, module, probe — only when that
-  // type is actually about to run. `scan:all` calls this four times
-  // sequentially, each time loading only what it needs for that type.
-  switch (mediaType) {
-    case 'movies':
-      return runType(mediaType, buildMoviesEntry(), root)
-    case 'shows':
-      return runType(mediaType, buildShowsEntry(), root)
-    case 'music':
-      return runType(mediaType, buildMusicEntry(), root)
-    case 'audiobooks':
-      return runType(mediaType, buildAudiobooksEntry(), root)
-  }
-}
-
 async function main(): Promise<void> {
-  const parsed = parseRunnerArgs(VALID_TYPES)
+  const parsed = parseRunnerArgs(MEDIA_TYPES)
 
   if (parsed.kind === 'help') {
     printHelp()
     // Implicit help (no args) exits with status 1; explicit `--help` is clean.
     process.exit(parsed.explicit ? 0 : 1)
-  } else if (parsed.kind === 'all') {
-    for (const t of VALID_TYPES) await dispatchType(t, parsed.drive, true)
-  } else {
-    await dispatchType(parsed.type as MediaType, parsed.drive, false)
+  }
+
+  const config: AppConfig = loadConfig(PROJECT_ROOT)
+  const acrossAllTypes = parsed.kind === 'all'
+  const types = acrossAllTypes ? MEDIA_TYPES : [parsed.type as MediaType]
+
+  // Each type builds its own rules, module, and probe closure only when it's
+  // about to run, so `scan:all` loads one type's rules at a time.
+  for (const mediaType of types) {
+    const root = selectRoot(config, mediaType, parsed.drive, acrossAllTypes)
+    if (root) await runMediaType(mediaType, root)
   }
 
   console.log()
@@ -352,7 +259,7 @@ function printHelp(): void {
     npm run <type> [drive]     Run the merged pipeline for one media type
     npm run scan:all [drive]   Run the merged pipeline for all media types
 
-  Types: ${VALID_TYPES.join(', ')}
+  Types: ${MEDIA_TYPES.join(', ')}
 
   [drive] names a root from config.json. Omit it to use the first root
   configured for that type. Output goes to output/<drive>/<type>/, the probe

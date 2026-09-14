@@ -7,6 +7,7 @@
     "shows": "tsx src/scan.ts --type shows",
     "music": "tsx src/scan.ts --type music",
     "audiobooks": "tsx src/scan.ts --type audiobooks",
+    "all": "tsx src/run-all.ts",
     "scan:all": "tsx src/scan.ts --all",
     "validate:movies": "tsx src/validate/runner.ts --type movies",
     "validate:shows": "tsx src/validate/runner.ts --type shows",

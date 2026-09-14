@@ -14,8 +14,9 @@
  * for thousands of items.
  *
  * Retries: on HTTP 429 the response carries a `Retry-After` header. We sleep
- * for that duration and retry once. Other 4xx/5xx errors bubble up as
- * exceptions for the caller to surface as a warning.
+ * for that duration and retry, up to MAX_429_RETRIES times in a row. Other
+ * 4xx/5xx errors, and requests that time out, bubble up as exceptions for the
+ * caller to surface as a warning.
  */
 
 import type {
@@ -34,6 +35,12 @@ const MIN_REQUEST_DELAY_MS = 250
 /** How long to wait when TMDB returns 429 without a Retry-After header (ms). */
 const DEFAULT_429_BACKOFF_MS = 10_000
 
+/** Give up on a request after this many consecutive 429s. */
+export const MAX_429_RETRIES = 5
+
+/** A request with no response by now is a hung connection, not a slow API. */
+const REQUEST_TIMEOUT_MS = 30_000
+
 /** ── Sleep helper ─────────────────────────────────────────────────────── */
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
@@ -47,7 +54,11 @@ export class TmdbClient {
   /** Running tally of HTTP requests issued. Surfaced in run summaries. */
   private requestCount = 0
 
-  constructor(private apiKey: string) {}
+  constructor(
+    private apiKey: string,
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly sleepImpl: (ms: number) => Promise<void> = sleep
+  ) {}
 
   /** Total HTTP requests issued since this client was created. */
   get totalRequests(): number {
@@ -58,38 +69,51 @@ export class TmdbClient {
    * Core fetch wrapper.
    *   1. Enforces MIN_REQUEST_DELAY_MS between requests.
    *   2. Adds api_key query param.
-   *   3. Retries once on 429, honoring Retry-After.
-   *   4. Returns parsed JSON or throws an Error with a useful message.
+   *   3. Retries on 429, honoring Retry-After, up to MAX_429_RETRIES times.
+   *   4. Times out after REQUEST_TIMEOUT_MS.
+   *   5. Returns parsed JSON or throws an Error with a useful message.
+   *
+   * Error messages never include the URL — it carries the API key.
    */
-  private async request<T>(pathWithQuery: string): Promise<T> {
+  private async request<T>(pathWithQuery: string, rateLimitRetries = 0): Promise<T> {
     const url = new URL(TMDB_BASE + pathWithQuery)
     url.searchParams.set('api_key', this.apiKey)
 
     // Throttle so we never hit the 40 / 10 s rate limit.
     const sinceLast = Date.now() - this.lastRequestAt
     if (sinceLast < MIN_REQUEST_DELAY_MS) {
-      await sleep(MIN_REQUEST_DELAY_MS - sinceLast)
+      await this.sleepImpl(MIN_REQUEST_DELAY_MS - sinceLast)
     }
 
     let response: Response
     try {
-      response = await fetch(url.toString(), {
+      response = await this.fetchImpl(url.toString(), {
         headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       })
     } catch (err) {
-      throw new Error(`TMDB network error: ${(err as Error).message}`)
+      const e = err as Error
+      if (e.name === 'TimeoutError') {
+        throw new Error(`TMDB request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`)
+      }
+      throw new Error(`TMDB network error: ${e.message}`)
     } finally {
       this.lastRequestAt = Date.now()
       this.requestCount++
     }
 
     if (response.status === 429) {
+      if (rateLimitRetries >= MAX_429_RETRIES) {
+        throw new Error(
+          `TMDB still rate-limiting after ${MAX_429_RETRIES} retries — try again later`
+        )
+      }
       const retryAfter = parseInt(response.headers.get('retry-after') ?? '', 10)
       const waitMs =
         Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : DEFAULT_429_BACKOFF_MS
       console.log(`    [TMDB] Rate-limited, sleeping ${waitMs}ms before retrying...`)
-      await sleep(waitMs)
-      return this.request(pathWithQuery)
+      await this.sleepImpl(waitMs)
+      return this.request(pathWithQuery, rateLimitRetries + 1)
     }
 
     if (response.status === 401) {

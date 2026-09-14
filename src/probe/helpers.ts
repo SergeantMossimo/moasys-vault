@@ -5,14 +5,15 @@
  *
  * Provides:
  *   - probeOrCache(): single-file probe that consults the cache first
- *   - probeBatch(): runs a list of probe tasks sequentially with progress
+ *   - probeBatch(): runs a list of probe tasks with progress, optionally in parallel
  *   - classifyQuality(): maps a file's dimensions to a quality_thresholds bucket
  *     and reports whether it fits the folder's expected bucket
  *
- * Probing is sequential, not parallel. ffprobe is mostly disk-bound, and on
- * spinning rust parallelism can thrash seeks. If this becomes a real bottleneck
- * on SSD-backed libraries we can add bounded concurrency later — but cached
- * runs are basically instant, so the slow case is only the first scan.
+ * Probing is sequential by default. ffprobe is mostly disk-bound, and on
+ * spinning rust parallelism can thrash seeks. SSDs and network shares handle
+ * parallel reads well, so each root can opt in with `probe_concurrency` in
+ * config.json. Cached runs are basically instant either way — this only
+ * changes how long a first scan takes.
  */
 
 import { WarningCollector } from '../core/types'
@@ -128,19 +129,24 @@ export async function probeBatch(
   cache: ProbeCache,
   onProgress?: (done: number, total: number, cached: number) => void,
   readTags?: TagReader,
-  warnings?: WarningCollector
+  warnings?: WarningCollector,
+  concurrency = 1
 ): Promise<ProbedFile[]> {
-  const results: ProbedFile[] = []
+  // Indexed by task so results come back in input order however the probes
+  // interleave — catalog and probe.json output stay deterministic.
+  const results: Array<ProbedFile | undefined> = new Array(tasks.length)
   let cachedCount = 0
+  let done = 0
+  let next = 0
 
-  for (let i = 0; i < tasks.length; i++) {
+  const probeOne = async (i: number): Promise<void> => {
     const task = tasks[i]!
     try {
       // Detect cache hit before calling probeOrCache so we can count it.
       const wasCached = cache.get(task.relativePath, task.mtime, task.size) !== null
       const data = await probeOrCache(task, cache, readTags)
       if (wasCached) cachedCount++
-      results.push({ task, data })
+      results[i] = { task, data }
     } catch (err) {
       const message = (err as Error).message
       console.error(`    [PROBE] Failed: ${task.relativePath} — ${message}`)
@@ -153,10 +159,18 @@ export async function probeBatch(
           `and re-copy it from your source if it doesn't.`
       )
     }
-    onProgress?.(i + 1, tasks.length, cachedCount)
+    onProgress?.(++done, tasks.length, cachedCount)
   }
 
-  return results
+  // A small pool of workers pulling the next index. With concurrency 1 this
+  // is exactly the old sequential loop.
+  const worker = async (): Promise<void> => {
+    while (next < tasks.length) await probeOne(next++)
+  }
+  const workers = Math.max(1, Math.min(concurrency, tasks.length))
+  await Promise.all(Array.from({ length: workers }, worker))
+
+  return results.filter((r): r is ProbedFile => r !== undefined)
 }
 
 // ─────────────────────────────────────────────

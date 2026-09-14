@@ -100,10 +100,14 @@ function joinRelative(a: string, b: string): string {
 // ─────────────────────────────────────────────
 
 /** Flatten config.json's per-type root lists into tagged refs. */
-export function rootRefs(config: Record<MediaType, MediaRootConfig[]>): RootRef[] {
+export function rootRefs(config: Partial<Record<MediaType, MediaRootConfig[]>>): RootRef[] {
   const types: MediaType[] = ['movies', 'shows', 'music', 'audiobooks']
   return types.flatMap(mediaType =>
-    config[mediaType].map(root => ({ mediaType, name: root.name, root_path: root.root_path }))
+    (config[mediaType] ?? []).map(root => ({
+      mediaType,
+      name: root.name,
+      root_path: root.root_path,
+    }))
   )
 }
 

@@ -22,7 +22,7 @@
 import fs from 'fs'
 import path from 'path'
 
-import { writeJsonOutput } from '../core/runner-shared'
+import { printBanner, writeJsonOutput } from '../core/runner-shared'
 
 import {
   DUPLICATE_FILTER_TYPES,
@@ -162,11 +162,7 @@ async function main(): Promise<void> {
     process.exit(0)
   }
 
-  console.log(`\n${'─'.repeat(50)}`)
-  console.log(`  MOASYS-Vault — Plex Pull`)
-  console.log(`  ${new Date().toLocaleString()}`)
-  console.log('─'.repeat(50))
-  console.log()
+  printBanner('Plex Pull')
 
   const { client, identity, sections, mapper } = await openPlexSession()
   const slugs = assignSlugs(sections)

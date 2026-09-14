@@ -51,7 +51,19 @@ npm run validate:audiobooks
 npm run scan:all
 ```
 
-Re-runs are near-instant because the file inspection cache (`cache/<drive>/<type>-probe.json`) skips anything that hasn't changed.
+Re-runs are near-instant because the file inspection cache (`cache/<drive>/<type>-probe.json`) skips anything that hasn't changed. If the first scan is slow on an SSD or network share, set `probe_concurrency` on that root in `config.json` — see [Configuration](CONFIG.md#configjson).
+
+### Routine refresh
+
+Once set up, one command runs every routine pass for a drive, in dependency order:
+
+```bash
+npm run all             # scan → validate → plex pull → plex check
+npm run all external    # the same, for the root named "External"
+npm run all -- --no-plex --no-validate
+```
+
+Steps that aren't set up are skipped with the reason — no TMDB key skips movie and show validation (audiobooks still validate), and no `plex` block or token skips both Plex steps. A failing step stops the run. `plex:logs` isn't included, and `fix:shows` never is.
 
 ### Adding new media
 

@@ -59,12 +59,13 @@
 import fs from 'fs'
 import path from 'path'
 
-import { driveSlug, loadConfig } from '../core/config'
+import { driveSlug, loadConfig, rootsFor } from '../core/config'
 import { toComparableFolderName } from '../core/files'
 import { canonicalEpisodeCode, compilePattern, resolveCategories } from '../core/rules/helpers'
-import { loadRules } from '../core/rules/loader'
-import { ShowsRules, ShowsRulesSchema, defaultShowsRules } from '../core/rules/shows'
+import { loadTypeRules } from '../core/rules/registry'
+import { ShowsRules } from '../core/rules/shows'
 import { reportLegacyOutputFiles, typeOutputPaths } from '../core/output-paths'
+import { PROJECT_ROOT } from '../core/project'
 import { resolveRoot, rootNames } from '../core/runner-shared'
 import { AppConfig, MediaRootConfig } from '../core/types'
 import { TmdbSeasonDetails, ShowValidation } from '../validate/types'
@@ -72,8 +73,6 @@ import { TmdbSeasonDetails, ShowValidation } from '../validate/types'
 // ─────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────
-
-const SCRIPT_DIR = path.join(__dirname, '..', '..')
 
 /**
  * Ceiling for a full rename target path. Windows' classic MAX_PATH is 260
@@ -909,11 +908,16 @@ function main(): void {
     return
   }
 
-  const config: AppConfig = loadConfig(SCRIPT_DIR)
-  const root: MediaRootConfig | null = resolveRoot(config.shows, args.drive)
+  const config: AppConfig = loadConfig(PROJECT_ROOT)
+  // args.drive is always set here — parseArgs requires it — so resolveRoot
+  // can never fall back to the first root.
+  const showRoots = rootsFor(config, 'shows')
+  const root: MediaRootConfig | null = resolveRoot(showRoots, args.drive)
   if (root === null) {
     console.error(
-      `\n  Error: no shows root named '${args.drive}'. Configured: ${rootNames(config.shows)}`
+      showRoots.length === 0
+        ? '\n  Error: config.json has no "shows" roots.'
+        : `\n  Error: no shows root named '${args.drive}'. Configured: ${rootNames(showRoots)}`
     )
     process.exit(1)
   }
@@ -922,15 +926,10 @@ function main(): void {
     process.exit(1)
   }
 
-  const rules = loadRules({
-    mediaType: 'shows',
-    schema: ShowsRulesSchema,
-    defaults: defaultShowsRules,
-    projectRoot: SCRIPT_DIR,
-  })
+  const rules = loadTypeRules('shows')
   const fileRegex = compilePattern(rules.patterns.file)
 
-  const out = typeOutputPaths(SCRIPT_DIR, driveSlug(root.name), 'shows')
+  const out = typeOutputPaths(PROJECT_ROOT, driveSlug(root.name), 'shows')
   reportLegacyOutputFiles(out)
   const files = walkEpisodeFiles(root.root_path, rules, args.show)
 
@@ -944,7 +943,7 @@ function main(): void {
         files,
         fileRegex,
         buildTmdbIdByShowFolder(out.validation),
-        loadSeasonEpisodeNames(path.join(SCRIPT_DIR, 'cache', 'tmdb-show-seasons.json'))
+        loadSeasonEpisodeNames(path.join(PROJECT_ROOT, 'cache', 'tmdb-show-seasons.json'))
       )
       break
     case 'episode-code':

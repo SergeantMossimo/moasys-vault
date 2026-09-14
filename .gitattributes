@@ -1,0 +1,4 @@
+# Check text files out with LF on every platform. Prettier enforces LF, and
+# Git for Windows (including the CI runner) otherwise converts to CRLF on
+# checkout, which makes `npm run prettier` fail on every file.
+* text=auto eol=lf

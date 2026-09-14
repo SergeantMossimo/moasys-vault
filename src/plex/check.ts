@@ -22,10 +22,11 @@ import path from 'path'
 
 import { AppConfig, MediaRootConfig } from '../core/types'
 import { driveSlug, loadConfig } from '../core/config'
-import { loadRules } from '../core/rules/loader'
-import { PlexRulesSchema, defaultPlexRules, PlexRules } from '../core/rules/plex'
+import { PlexRules } from '../core/rules/plex'
+import { loadTypeRules } from '../core/rules/registry'
 import { typeOutputPaths } from '../core/output-paths'
-import { parseRunnerArgs, resolveRoot, rootNames } from '../core/runner-shared'
+import { PROJECT_ROOT } from '../core/project'
+import { parseRunnerArgs, printBanner, selectRoot } from '../core/runner-shared'
 import type {
   ArtistProbeOutput,
   BookProbeOutput,
@@ -44,7 +45,7 @@ import {
   warningsPath,
   writePlexWarnings,
 } from './run-shared'
-import { PLEX_OUTPUT_DIR, SCRIPT_DIR } from './setup'
+import { PLEX_OUTPUT_DIR } from './setup'
 import { MediaType, PlexCatalogOutput, PlexLibrariesOutput } from './types'
 
 // ─────────────────────────────────────────────
@@ -108,7 +109,7 @@ function runType(
   unfiltered: boolean
 ): void {
   const slug = driveSlug(root.name)
-  const out = typeOutputPaths(SCRIPT_DIR, slug, mediaType)
+  const out = typeOutputPaths(PROJECT_ROOT, slug, mediaType)
   console.log(`\n  ${mediaType} — ${root.name} (${root.root_path})`)
 
   const mapped = libraries.libraries.filter(l => l.media_type === mediaType)
@@ -190,11 +191,7 @@ function main(): void {
     process.exit(parsed.explicit ? 0 : 1)
   }
 
-  console.log(`\n${'─'.repeat(50)}`)
-  console.log(`  MOASYS-Vault — Plex Check`)
-  console.log(`  ${new Date().toLocaleString()}`)
-  console.log('─'.repeat(50))
-  console.log()
+  printBanner('Plex Check')
 
   const librariesPath = path.join(PLEX_OUTPUT_DIR, 'libraries.json')
   if (!fs.existsSync(librariesPath)) {
@@ -208,28 +205,14 @@ function main(): void {
     console.log(`    [INPUT] ${NO_IGNORE_FLAG}: ignore lists skipped — writing to unfiltered/`)
   }
 
-  const config: AppConfig = loadConfig(SCRIPT_DIR)
-  const plexRules = loadRules({
-    mediaType: 'plex',
-    schema: PlexRulesSchema,
-    defaults: defaultPlexRules,
-    projectRoot: SCRIPT_DIR,
-  })
+  const config: AppConfig = loadConfig(PROJECT_ROOT)
+  const plexRules = loadTypeRules('plex')
 
-  const types = parsed.kind === 'all' ? MEDIA_TYPES : [parsed.type as MediaType]
+  const acrossAllTypes = parsed.kind === 'all'
+  const types = acrossAllTypes ? MEDIA_TYPES : [parsed.type as MediaType]
   for (const mediaType of types) {
-    const roots = config[mediaType]
-    const root = resolveRoot(roots, parsed.drive)
-    if (!root) {
-      const message = `no root named '${parsed.drive}' configured for ${mediaType} (have: ${rootNames(roots)})`
-      if (parsed.kind === 'all') {
-        console.log(`\n  [SKIP] ${mediaType} — ${message}`)
-        continue
-      }
-      console.error(`\n  Error: ${message}`)
-      process.exit(1)
-    }
-    runType(mediaType, root, libraries, plexRules, unfiltered)
+    const root = selectRoot(config, mediaType, parsed.drive, acrossAllTypes)
+    if (root) runType(mediaType, root, libraries, plexRules, unfiltered)
   }
 
   console.log()

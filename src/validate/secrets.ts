@@ -80,6 +80,24 @@ const SETUP_HINTS: Record<Integration, string[]> = {
 // ─────────────────────────────────────────────
 
 /**
+ * True when `.secrets.json` holds a valid block for `integration`. Never
+ * prints or exits — for callers that skip optional work (e.g. `validate:all`
+ * without a TMDB key) rather than fail.
+ */
+export function hasSecrets(projectRoot: string, integration: Integration): boolean {
+  try {
+    const raw: unknown = JSON.parse(
+      fs.readFileSync(path.join(projectRoot, '.secrets.json'), 'utf-8')
+    )
+    if (typeof raw !== 'object' || raw === null) return false
+    const block = (raw as Record<string, unknown>)[integration]
+    return SecretsSchema.shape[integration].unwrap().safeParse(block).success
+  } catch {
+    return false
+  }
+}
+
+/**
  * Load and validate `.secrets.json`, returning the block for `integration`.
  *
  * On any failure (missing file, invalid JSON, schema mismatch, or no block

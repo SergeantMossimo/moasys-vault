@@ -23,7 +23,8 @@
  */
 
 import fs from 'fs'
-import path from 'path'
+
+import { writeFileAtomic } from '../core/atomic-write'
 
 import { TimestampedEntry, ValidationCacheFile } from './types'
 
@@ -87,8 +88,8 @@ export class JsonCache<T> {
     }
   }
 
+  /** Written atomically, so an interrupted run keeps the previous cache. */
   save(): void {
-    fs.mkdirSync(path.dirname(this.cachePath), { recursive: true })
     // Sort keys for stable, diff-friendly output.
     const sortedEntries: Record<string, TimestampedEntry<T>> = {}
     for (const k of [...this.entries.keys()].sort()) {
@@ -98,7 +99,7 @@ export class JsonCache<T> {
       version: this.version,
       entries: sortedEntries,
     }
-    fs.writeFileSync(this.cachePath, JSON.stringify(cf, null, 2), 'utf-8')
+    writeFileAtomic(this.cachePath, JSON.stringify(cf, null, 2))
   }
 
   /** Return the cached value (or undefined). Timestamp is internal. */

@@ -24,9 +24,10 @@
 import fs from 'fs'
 import path from 'path'
 
-import { resolveRoot, rootNames, parseRunnerArgs, writeJsonOutput } from '../core/runner-shared'
-import { loadRules } from '../core/rules/loader'
-import { PlexRulesSchema, defaultPlexRules } from '../core/rules/plex'
+import { writeFileAtomic } from '../core/atomic-write'
+import { PROJECT_ROOT } from '../core/project'
+import { parseRunnerArgs, printBanner, selectRoot, writeJsonOutput } from '../core/runner-shared'
+import { loadTypeRules } from '../core/rules/registry'
 
 import { LogItemIndex, PlexLogSummaryOutput, checkPlexLogs, summarizeLogs } from './log-checks'
 import { extractEvents, libraryPathFinder, readLogArchive } from './log-parser'
@@ -38,10 +39,10 @@ import {
   warningsPath,
   writePlexWarnings,
 } from './run-shared'
-import { PLEX_OUTPUT_DIR, SCRIPT_DIR, openPlexSession } from './setup'
+import { PLEX_OUTPUT_DIR, openPlexSession } from './setup'
 import { MediaType, PlexCatalogOutput, PlexLibrariesOutput } from './types'
 
-const ARCHIVE_PATH = path.join(SCRIPT_DIR, 'cache', 'plex-logs', 'latest.zip')
+const ARCHIVE_PATH = path.join(PROJECT_ROOT, 'cache', 'plex-logs', 'latest.zip')
 
 function readJson<T>(p: string): T {
   return JSON.parse(fs.readFileSync(p, 'utf-8')) as T
@@ -86,11 +87,7 @@ async function main(): Promise<void> {
     process.exit(parsed.explicit ? 0 : 1)
   }
 
-  console.log(`\n${'─'.repeat(50)}`)
-  console.log(`  MOASYS-Vault — Plex Logs`)
-  console.log(`  ${new Date().toLocaleString()}`)
-  console.log('─'.repeat(50))
-  console.log()
+  printBanner('Plex Logs')
 
   const librariesPath = path.join(PLEX_OUTPUT_DIR, 'libraries.json')
   if (!fs.existsSync(librariesPath)) {
@@ -113,10 +110,9 @@ async function main(): Promise<void> {
     console.error(`\n  Error downloading logs: ${(err as Error).message}`)
     process.exit(1)
   }
-  fs.mkdirSync(path.dirname(ARCHIVE_PATH), { recursive: true })
-  fs.writeFileSync(ARCHIVE_PATH, archive)
+  writeFileAtomic(ARCHIVE_PATH, archive)
   console.log(
-    `    [PLEX] Downloaded logs (${(archive.length / 1_048_576).toFixed(1)} MB) → ${path.relative(SCRIPT_DIR, ARCHIVE_PATH)}`
+    `    [PLEX] Downloaded logs (${(archive.length / 1_048_576).toFixed(1)} MB) → ${path.relative(PROJECT_ROOT, ARCHIVE_PATH)}`
   )
 
   const logFiles = readLogArchive(archive).map(f => ({ ...f, text: client.redact(f.text) }))
@@ -143,26 +139,13 @@ async function main(): Promise<void> {
   }
   writeJsonOutput(path.join(PLEX_OUTPUT_DIR, 'logs-summary.json'), summary)
 
-  const plexRules = loadRules({
-    mediaType: 'plex',
-    schema: PlexRulesSchema,
-    defaults: defaultPlexRules,
-    projectRoot: SCRIPT_DIR,
-  })
+  const plexRules = loadTypeRules('plex')
 
-  const types = parsed.kind === 'all' ? MEDIA_TYPES : [parsed.type as MediaType]
+  const acrossAllTypes = parsed.kind === 'all'
+  const types = acrossAllTypes ? MEDIA_TYPES : [parsed.type as MediaType]
   for (const mediaType of types) {
-    const roots = config[mediaType]
-    const root = resolveRoot(roots, parsed.drive)
-    if (!root) {
-      const message = `no root named '${parsed.drive}' configured for ${mediaType} (have: ${rootNames(roots)})`
-      if (parsed.kind === 'all') {
-        console.log(`\n  [SKIP] ${mediaType} — ${message}`)
-        continue
-      }
-      console.error(`\n  Error: ${message}`)
-      process.exit(1)
-    }
+    const root = selectRoot(config, mediaType, parsed.drive, acrossAllTypes)
+    if (!root) continue
 
     console.log(`\n  ${mediaType} — ${root.name} (${root.root_path})`)
     const warnings = plexWarningCollector(root, mediaType, unfiltered)
