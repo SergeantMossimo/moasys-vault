@@ -14,6 +14,7 @@
     "validate:all": "tsx src/validate/runner.ts --all",
     "plex:pull": "tsx src/plex/pull.ts",
     "plex:check": "tsx src/plex/check.ts --all",
+    "plex:logs": "tsx src/plex/logs.ts --all",
     "fix:shows": "tsx src/tools/rename-shows.ts",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
     "lint:fix": "eslint \"src/**/*.ts\" \"test/**/*.ts\" --fix",
@@ -39,6 +40,7 @@
     "vitest": "^4.1.8"
   },
   "dependencies": {
+    "fflate": "^0.8.3",
     "ffprobe-static": "^3.1.0",
     "js-yaml": "^4.1.1",
     "music-metadata": "^11.12.3",

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { checkPlex, compareTitles } from '../../../src/plex/checks'
+import { checkPlex, compareTitles, stripDisambiguator } from '../../../src/plex/checks'
 import { defaultPlexRules } from '../../../src/core/rules/plex'
 import { WarningCollector } from '../../../src/core/types'
 import { parseIgnoreList } from '../../../src/core/ignored'
@@ -105,6 +105,26 @@ describe('compareTitles', () => {
   it('reports capitalization-only and real differences', () => {
     expect(compareTitles('Alice in Wonderland', null, 'Alice In Wonderland')).toBe('case')
     expect(compareTitles('Heat', null, 'Collateral')).toBe('mismatch')
+  })
+})
+
+describe('stripDisambiguator', () => {
+  it('drops a parenthesized year or country', () => {
+    expect(stripDisambiguator('Cosmos (2014)')).toBe('Cosmos')
+    expect(stripDisambiguator('The Office (US)')).toBe('The Office')
+  })
+
+  it('drops a bare year suffix that matches the folder or Plex year', () => {
+    expect(stripDisambiguator('Space King 2024', [2024, null])).toBe('Space King')
+    expect(stripDisambiguator('D-Day Remembered 2004', [null, 2004])).toBe('D-Day Remembered')
+    expect(stripDisambiguator('The Best of Johnny Carson and Friends 2008', [2007, null])).toBe(
+      'The Best of Johnny Carson and Friends'
+    )
+  })
+
+  it('keeps a title that really ends in a year', () => {
+    expect(stripDisambiguator('Blade Runner 2049', [2017, 2017])).toBe('Blade Runner 2049')
+    expect(stripDisambiguator('Space King 2024')).toBe('Space King 2024')
   })
 })
 
@@ -280,6 +300,23 @@ describe('checkPlex — items', () => {
         diskFiles: [office],
       })
     ).toEqual([])
+  })
+
+  it("ignores Plex's bare year suffix on a show title", () => {
+    const ep = 'Space King (2024)/Season 01/Space King (2024) - S01E01.mkv'
+    const runShow = (title: string, year: number | null) =>
+      run({
+        mediaType: 'shows',
+        folderPattern: MOVIE_FOLDER,
+        lib: { media_type: 'shows', agent: 'tv.plex.agents.series' },
+        items: [
+          item({ rating_key: 's', type: 'show', title, year }),
+          item({ rating_key: 'e', type: 'episode', grandparent_rating_key: 's', paths: [ep] }),
+        ],
+        diskFiles: [ep],
+      }).map(w => w.type)
+    expect(runShow('Space King 2024', null)).toEqual([])
+    expect(runShow('Space Queen 2024', null)).toEqual(['warn_plex_title_mismatch'])
   })
 
   describe('with TMDB validation matches', () => {
