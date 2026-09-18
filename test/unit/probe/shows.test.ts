@@ -78,7 +78,48 @@ describe('probeShows', () => {
 
     const result = await probeShows({ root_path: root }, rules, cache, warnings)
     expect(result.output).toHaveLength(1)
+    expect(result.output[0]?.edition).toBeNull()
     expect(result.output[0]?.seasons[0]?.episodes).toHaveLength(2)
+  })
+
+  /**
+   * Keyed on the edition as well as title+year, matching the scan pass. Fold
+   * them together and one edition's season absorbs the other's episodes, which
+   * would also collapse the per-season quality-mismatch summary.
+   */
+  it('keeps two editions of one series as separate entries', async () => {
+    const color = 'HD/Spider-Noir (2026) {edition-True Hue Color}/Season 01'
+    const bw = 'HD/Spider-Noir (2026) {edition-Authentic Black and White}/Season 01'
+    const { rules, root, cache, warnings } = setup({
+      spec: {
+        HD: {
+          'Spider-Noir (2026) {edition-True Hue Color}': {
+            'Season 01': { 'Spider-Noir (2026) - S01E01.mp4': '' },
+          },
+          'Spider-Noir (2026) {edition-Authentic Black and White}': {
+            'Season 01': { 'Spider-Noir (2026) - S01E01.mp4': '' },
+          },
+        },
+      },
+      probes: {
+        [`${color}/Spider-Noir (2026) - S01E01.mp4`]: fakeProbe({
+          video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 },
+        }),
+        [`${bw}/Spider-Noir (2026) - S01E01.mp4`]: fakeProbe({
+          video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 },
+        }),
+      },
+    })
+
+    const result = await probeShows({ root_path: root }, rules, cache, warnings)
+    expect(result.output).toHaveLength(2)
+    expect(result.output.map(s => s.edition)).toEqual([
+      'Authentic Black and White',
+      'True Hue Color',
+    ])
+    for (const show of result.output) {
+      expect(show.seasons[0]?.episodes).toHaveLength(1)
+    }
   })
 
   it('emits warn_quality_mismatch for episodes outside the bucket range', async () => {
@@ -98,7 +139,7 @@ describe('probeShows', () => {
     })
 
     await probeShows({ root_path: root }, rules, cache, warnings)
-    expect(warnings.all().some(w => w.issue.match(/Quality mismatch/))).toBe(true)
+    expect(warnings.all().some(w => w.type === 'warn_quality_mismatch')).toBe(true)
   })
 
   it('summarizes warn_quality_mismatch once per season, with counts, resolutions and codes', async () => {
@@ -131,12 +172,11 @@ describe('probeShows', () => {
     // Season 02 fits entirely, so only Season 01 is reported — once.
     expect(rows).toHaveLength(1)
     expect(rows[0]!.path).toBe('HD/Show (2020)/Season 01')
-    expect(rows[0]!.issue).toMatch(
-      /^Quality mismatch — 2 of 3 episode file\(s\) don't fit bucket 'HD'/
-    )
+    expect(rows[0]!.issue).toMatch(/^2\/3 episodes are /)
     expect(rows[0]!.issue).toContain('640x480 (fits SD) ×1')
     expect(rows[0]!.issue).toContain('720x404 (fits SD) ×1')
-    expect(rows[0]!.issue).toContain('Episodes: S01E01, S01E02.')
+    expect(rows[0]!.issue).toContain('not HD (1000–2000px).')
+    expect(rows[0]!.issue).toContain('S01E01, S01E02.')
   })
 
   it('groups repeated resolutions and caps the samples it lists', async () => {
@@ -158,10 +198,10 @@ describe('probeShows', () => {
     await probeShows({ root_path: root }, rules, cache, warnings)
     const issue = warnings.all().find(w => w.type === 'warn_quality_mismatch')!.issue
 
-    expect(issue).toMatch(/6 of 6 episode file/)
+    expect(issue).toMatch(/6\/6 episodes are /)
     expect(issue).toContain('720x400 (fits SD) ×3')
-    expect(issue).toContain(', +1 more.')
-    expect(issue).toContain('Episodes: S01E01, S01E02, S01E03, +3 more.')
+    expect(issue).toContain(', +1 more')
+    expect(issue).toContain('S01E01, S01E02, S01E03, +3 more.')
   })
 
   it('respects ignored_season_names for named seasons', async () => {

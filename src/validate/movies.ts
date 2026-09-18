@@ -294,8 +294,13 @@ export async function validateMovies(
       warnings.add(
         'warn_tmdb_no_match',
         moviePath,
-        `TMDB found no match for '${movie.title}' (${movie.year}). Possible typo in title or year, or this movie isn't in TMDB.`,
-        { scope: movieScope }
+        `TMDB has nothing matching '${movie.title}' (${movie.year}).`,
+        {
+          fix:
+            `Usually a typo in the title or year, or a missing diacritic. Check the folder ` +
+            `against themoviedb.org — some obscure films genuinely aren't listed.`,
+          scope: movieScope,
+        }
       )
     } else if (resolved.confidence === 'low' && rules.checks.warn_tmdb_low_confidence) {
       const altText =
@@ -305,8 +310,12 @@ export async function validateMovies(
       warnings.add(
         'warn_tmdb_low_confidence',
         moviePath,
-        `TMDB low-confidence match: best guess is '${entry.tmdb_title}' (${entry.tmdb_year}).${altText} Review and confirm.`,
-        { scope: movieScope }
+        `Best TMDB guess is '${entry.tmdb_title}' (${entry.tmdb_year}), below the confidence ` +
+          `threshold.${altText}`,
+        {
+          fix: `Check the match on themoviedb.org and correct the folder name if it is wrong.`,
+          scope: movieScope,
+        }
       )
     } else if (
       rules.checks.warn_tmdb_year_mismatch &&
@@ -316,8 +325,13 @@ export async function validateMovies(
       warnings.add(
         'warn_tmdb_year_mismatch',
         moviePath,
-        `TMDB year mismatch: folder says ${movie.year} but TMDB says '${entry.tmdb_title}' was released in ${entry.tmdb_year}. Verify which is correct.`,
-        { scope: movieScope }
+        `Folder says ${movie.year}, TMDB says '${entry.tmdb_title}' is ${entry.tmdb_year}.`,
+        {
+          fix:
+            `Check which is right on themoviedb.org. A wrong year in the folder can also mean ` +
+            `TMDB matched a remake.`,
+          scope: movieScope,
+        }
       )
     }
 
@@ -331,8 +345,14 @@ export async function validateMovies(
       warnings.add(
         'warn_tmdb_title_canonical',
         moviePath,
-        `TMDB canonical title differs: folder is '${movie.title}', TMDB filename-safe form is '${entry.tmdb_title_filename_safe}'. Consider renaming the folder to match.`,
-        { scope: movieScope }
+        `Folder is '${movie.title}', TMDB's filename-safe form is ` +
+          `'${entry.tmdb_title_filename_safe}'.`,
+        {
+          fix:
+            `Rename the folder to match if you want TMDB's exact wording. Expected whenever a ` +
+            `title matched via the loose tier — this is a suggestion, not an error.`,
+          scope: movieScope,
+        }
       )
     }
 
@@ -351,19 +371,20 @@ export async function validateMovies(
         const drift = Math.abs(localMinutes - tmdbRuntime) / tmdbRuntime
         if (drift <= tolerance) continue
         const direction = localMinutes < tmdbRuntime ? 'shorter' : 'longer'
-        const advice =
-          direction === 'shorter'
-            ? `Usually a truncated or failed encode — play the file to the end and re-encode from source if it's cut short.`
-            : `Usually a wrongly-matched film, two features concatenated into one file, or an extended cut TMDB doesn't carry.`
         warnings.add(
           'warn_tmdb_runtime_mismatch',
           file.path,
-          `TMDB runtime mismatch — file is ${formatMinutes(localMinutes)} but TMDB says ` +
-            `'${entry.tmdb_title}' runs ${formatMinutes(tmdbRuntime)} ` +
-            `(${Math.round(drift * 100)}% ${direction}, tolerance is ${rules.runtime_tolerance_percent}%). ` +
-            `${advice} If the difference is intentional, silence it in ignored/<drive>/movies.yaml ` +
-            `under 'files:' (note that silences the file's other warnings too), or turn the ` +
-            `check off entirely with checks.warn_tmdb_runtime_mismatch: false`
+          `File runs ${formatMinutes(localMinutes)}, TMDB says '${entry.tmdb_title}' runs ` +
+            `${formatMinutes(tmdbRuntime)} — ${Math.round(drift * 100)}% ${direction}.`,
+          {
+            // The direction-specific advice can't live on the row: a `fix` is
+            // written once per bucket, so it has to cover both cases.
+            fix:
+              `Shorter is usually a truncated or failed encode — play the file to the end and ` +
+              `re-encode from source. Longer is usually a wrong match, two features in one ` +
+              `file, or an extended cut TMDB doesn't carry. Tolerance is ` +
+              `runtime_tolerance_percent in rules/movies.yaml.`,
+          }
         )
       }
     }

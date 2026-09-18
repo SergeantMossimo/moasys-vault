@@ -147,7 +147,9 @@ describe('music module — warnings', () => {
         },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Track file name does not match/))).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/File name is not '01 - Track Name'/))).toBe(
+      true
+    )
   })
 
   it('warn_no_audio: empty album folder', () => {
@@ -158,7 +160,7 @@ describe('music module — warnings', () => {
         },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/No recognized audio files/))).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/folder has no audio files/))).toBe(true)
   })
 
   it('warn_track_gaps: missing track number in an album', () => {
@@ -174,7 +176,7 @@ describe('music module — warnings', () => {
         },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Potential missing tracks/))).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/Missing tracks in/))).toBe(true)
   })
 
   it('warn_duplicate_album: same album in multiple categories', () => {
@@ -188,9 +190,7 @@ describe('music module — warnings', () => {
         },
       },
     })
-    expect(
-      result.warnings.some(w => w.issue.match(/Duplicate album found in multiple categories/))
-    ).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/Also in \d+ other categories/))).toBe(true)
   })
 
   it('warn_duplicate_album: an `albums:` entry silences it', () => {
@@ -232,9 +232,7 @@ describe('music module — warnings', () => {
         acceptable_album_combos: [['Music', 'Soundtracks']],
       },
     })
-    expect(
-      result.warnings.some(w => w.issue.match(/Duplicate album found in multiple categories/))
-    ).toBe(false)
+    expect(result.warnings.some(w => w.issue.match(/Also in \d+ other categories/))).toBe(false)
   })
 
   it('warn_duplicate_album: fires when category set does not match any acceptable combo', () => {
@@ -253,9 +251,7 @@ describe('music module — warnings', () => {
         acceptable_album_combos: [['Music', 'Other']],
       },
     })
-    expect(
-      result.warnings.some(w => w.issue.match(/Duplicate album found in multiple categories/))
-    ).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/Also in \d+ other categories/))).toBe(true)
   })
 
   it('warn_loose_files: tracks directly in artist folder (no album wrapper)', () => {
@@ -325,7 +321,9 @@ describe('music module — warnings', () => {
         },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Artist folder name does not match/))).toBe(true)
+    expect(
+      result.warnings.some(w => w.issue.match(/Folder name does not match patterns.artist_folder/))
+    ).toBe(true)
   })
 
   it('warn_bad_album_folder: fires when album folder name does not match the configured pattern', () => {
@@ -342,7 +340,9 @@ describe('music module — warnings', () => {
         },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Album folder name does not match/))).toBe(true)
+    expect(
+      result.warnings.some(w => w.issue.match(/Folder name does not match patterns.album_folder/))
+    ).toBe(true)
   })
 
   it('warn_suspicious_folder_chars: trailing whitespace on album folder', () => {

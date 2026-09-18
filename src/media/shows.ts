@@ -28,7 +28,7 @@ import {
   MediaModule,
 } from '../core/types'
 import { hasExtension, isPrimary, formatPrimaryExts, findUnexpectedEntries } from '../core/files'
-import { findNumericGaps } from '../core/gaps'
+import { findNumericGaps, formatGaps } from '../core/gaps'
 import { ShowsRules } from '../core/rules/shows'
 import {
   buildCategoryQualityMap,
@@ -38,6 +38,7 @@ import {
   isAcceptableCombo,
   qualitySortKey,
   resolveCategories,
+  LENIENT_EPISODE_FILE,
   sortQualities,
 } from '../core/rules/helpers'
 import { distinctCategories, finalizeVersions, groupCategoriesByQuality } from '../core/versions'
@@ -45,15 +46,97 @@ import { ProbeData } from '../probe/types'
 import { deriveQuality } from '../probe/helpers'
 
 // ─────────────────────────────────────────────
+// Fix advice
+// ─────────────────────────────────────────────
+
+/**
+ * The remedy for each warning type, written once per bucket in warnings.json
+ * rather than repeated on every row — see `WarningOptions.fix`.
+ *
+ * They live in one map because several types fire from more than one call site
+ * (`warn_loose_files` from both the category root and a show folder, for
+ * instance) and a `fix` must read the same whichever site produced the row.
+ * Keep each one generic enough to cover every site that uses it, and keep
+ * per-row detail in the `issue` instead.
+ */
+const FIX = {
+  warn_loose_files:
+    `Plex expects every episode inside 'Show Title (YEAR)/Season XX/'. Move them into one — ` +
+    `loose files are not in the catalog.`,
+  warn_unexpected_entries:
+    `Expected only subfolders plus Plex sidecars (poster, banner, fanart, NFO, subtitles). ` +
+    `Move or delete anything else.`,
+  warn_extra_subfolders:
+    `Plex expects every episode directly inside the Season XX folder. Move them up — ` +
+    `files in these subfolders are not scanned.`,
+  warn_bad_show_folder:
+    `Rename to 'Show Title (YEAR)', e.g. 'Firefly (2002)'. A second cut of the same series ` +
+    `takes Plex's edition tag: 'Firefly (2002) {edition-Remastered}'.`,
+  warn_empty_edition:
+    `Name the edition, e.g. '{edition-Black and White}', or drop the tag. Treated as no ` +
+    `edition until then.`,
+  warn_bad_season_folder:
+    `Rename to 'Season 01'. If it is a real named season, add the name to ` +
+    `ignored_season_names in rules/shows.yaml.`,
+  warn_bad_file_name:
+    `Rename to 'Show Title (YEAR) - S01E01 - Episode Title.ext' (the title is optional). ` +
+    `Fix with: npm run fix:shows -- --fix episode-code <drive> --apply`,
+  warn_missing_episode_title:
+    `Rename to include the title, e.g. 'Show (2020) - S01E01 - Pilot.mp4'. ` +
+    `Plex catalogues them either way — this is for a tidier library.`,
+  warn_episode_code_case: `Fix with: npm run fix:shows -- --fix episode-code <drive> --apply`,
+  warn_show_year_mismatch:
+    `Rename the file's show/year to match its folder, or move it to the right show. ` +
+    `Fix with: npm run fix:shows -- --fix show-prefix <drive> --apply`,
+  warn_show_title_case:
+    `Match the file's capitalization to the folder, so Plex and your filesystem don't ` +
+    `present the same show two ways. Fix with: npm run fix:shows -- --fix show-prefix <drive> --apply`,
+  warn_season_mismatch: `Move the file to the season folder its code names, or fix the code.`,
+  warn_episode_gaps: `Add the missing episodes, or ignore this if the show really skips them.`,
+  warn_no_videos: `Add the episodes, or delete the empty folder.`,
+  warn_non_primary: `Re-encode to your primary format if you want one format throughout.`,
+  warn_quality_mismatch:
+    `Move the season to the folder matching its resolution, or replace the files with a ` +
+    `better source.`,
+  warn_multi_quality:
+    `Expected when you keep a UHD and an HD copy. If it isn't deliberate, delete the ` +
+    `redundant copy — or whitelist the pair via acceptable_quality_combos in rules/shows.yaml.`,
+  warn_duplicate_quality:
+    `Same season at the same quality in two places — one is redundant. Keep the copy in ` +
+    `the folder you want and delete the rest.`,
+  permission_denied: `Check the folder's permissions, or whether the drive is still mounted.`,
+} as const
+
+// ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
 
-function parseShowFolder(name: string, regex: RegExp): { title: string; year: number } | null {
+/**
+ * Parse a show folder name using the configured pattern.
+ * Returns { title, year, edition } or null.
+ *
+ * `edition` is Plex's TV Show Editions tag and follows the same three-state
+ * convention as the movies file parser: null (no `{edition-...}` tag at all),
+ * "" (an empty `{edition-}`), or the trimmed name.
+ */
+function parseShowFolder(
+  name: string,
+  regex: RegExp
+): { title: string; year: number; edition: string | null } | null {
   const m = regex.exec(name)
   if (!m?.groups) return null
-  const { title, year } = m.groups
+  const { title, year, edition: editionRaw } = m.groups
   if (title === undefined || year === undefined) return null
-  return { title: title.trim(), year: parseInt(year, 10) }
+
+  let edition: string | null
+  if (editionRaw === undefined) {
+    edition = null // No {edition-...} tag at all
+  } else if (editionRaw.trim() === '') {
+    edition = '' // Empty tag: {edition-}
+  } else {
+    edition = editionRaw.trim()
+  }
+  return { title: title.trim(), year: parseInt(year, 10), edition }
 }
 
 function parseSeasonFolder(name: string, regex: RegExp): number | null {
@@ -102,12 +185,29 @@ function parseFileStem(
   }
 }
 
-function makeShowKey(title: string, year: number): string {
-  return `${title.toLowerCase()}|${year}`
+/**
+ * Build a unique Map key for a show record.
+ * Lowercased so "Firefly" and "firefly" are treated as the same title, and
+ * keyed on edition so two editions of one series stay separate records —
+ * without it they'd merge and their episodes would dedupe against each other.
+ */
+function makeShowKey(title: string, year: number, edition: string | null): string {
+  return `${title.toLowerCase()}|${year}|${(edition ?? '').toLowerCase()}`
 }
 
-function makeSeasonKey(title: string, year: number, seasonLabel: string): string {
-  return `${title.toLowerCase()}|${year}|${seasonLabel.toLowerCase()}`
+function makeSeasonKey(
+  title: string,
+  year: number,
+  edition: string | null,
+  seasonLabel: string
+): string {
+  return `${makeShowKey(title, year, edition)}|${seasonLabel.toLowerCase()}`
+}
+
+/** Build the Plex-style show folder name used as the warning path */
+function showDisplayName(record: { title: string; year: number; edition: string | null }): string {
+  const base = `${record.title} (${record.year})`
+  return record.edition ? `${base} {edition-${record.edition}}` : base
 }
 
 /**
@@ -173,7 +273,8 @@ export function createShowsModule(
           warnings.add(
             'warn_loose_files',
             folderName,
-            `${looseRoot.length} loose video file(s) in media folder root — Plex expects each show inside a 'Show Title (YEAR)' folder with Season XX subfolders.`
+            `${looseRoot.length} loose video file(s) in the category root.`,
+            { fix: FIX.warn_loose_files }
           )
         }
       }
@@ -190,8 +291,8 @@ export function createShowsModule(
           warnings.add(
             'warn_unexpected_entries',
             folderName,
-            `Unexpected file(s) in media folder root: ${names}. ` +
-              `Expected only Show Title (YEAR)/ subfolders plus Plex sidecars.`
+            `Unexpected file(s) in the category root: ${names}.`,
+            { fix: FIX.warn_unexpected_entries }
           )
         }
       }
@@ -208,19 +309,32 @@ export function createShowsModule(
             warnings.add(
               'warn_bad_show_folder',
               showRel,
-              'Show folder name does not match Plex naming convention — expected: Show Title (YEAR)'
+              `Folder name is not 'Show Title (YEAR)'.`,
+              { fix: FIX.warn_bad_show_folder }
             )
           }
           continue
         }
 
         const { title: showTitle, year: showYear } = parsedShow
+        let showEdition = parsedShow.edition
+
+        if (showEdition === '') {
+          if (rules.checks.warn_empty_edition) {
+            warnings.add('warn_empty_edition', showRel, '{edition-} has no value after the dash.', {
+              fix: FIX.warn_empty_edition,
+            })
+          }
+          showEdition = null // Treat as no edition so the show is still catalogued
+        }
 
         let seasonEntries: fs.Dirent[]
         try {
           seasonEntries = fs.readdirSync(showPath, { withFileTypes: true })
         } catch {
-          warnings.add('permission_denied', showRel, 'Permission denied reading show folder')
+          warnings.add('permission_denied', showRel, 'Permission denied reading show folder.', {
+            fix: FIX.permission_denied,
+          })
           continue
         }
 
@@ -234,8 +348,8 @@ export function createShowsModule(
             warnings.add(
               'warn_loose_files',
               showRel,
-              `${looseShow.length} loose video file(s) in show folder — Plex expects episodes inside a Season XX subfolder. ` +
-                `Move episodes into a Season XX folder (Season 01, Season 02, etc.).`
+              `${looseShow.length} loose video file(s) in the show folder, outside any season.`,
+              { fix: FIX.warn_loose_files }
             )
           }
         }
@@ -253,8 +367,8 @@ export function createShowsModule(
             warnings.add(
               'warn_unexpected_entries',
               showRel,
-              `Unexpected file(s) in show folder: ${names}. ` +
-                `Expected only Season XX/ subfolders plus Plex sidecars.`
+              `Unexpected file(s) in the show folder: ${names}.`,
+              { fix: FIX.warn_unexpected_entries }
             )
           }
         }
@@ -281,8 +395,8 @@ export function createShowsModule(
                 warnings.add(
                   'warn_bad_season_folder',
                   seasonRel,
-                  `Season folder '${seasonEntry.name}' does not match expected format ` +
-                    `(expected: Season 01) and is not in ignored_season_names`
+                  `Folder name is not 'Season 01' and is not in ignored_season_names.`,
+                  { fix: FIX.warn_bad_season_folder }
                 )
               }
               continue
@@ -296,7 +410,14 @@ export function createShowsModule(
           try {
             allFiles = fs.readdirSync(seasonPath, { withFileTypes: true })
           } catch {
-            warnings.add('permission_denied', seasonRel, 'Permission denied reading season folder')
+            warnings.add(
+              'permission_denied',
+              seasonRel,
+              'Permission denied reading season folder.',
+              {
+                fix: FIX.permission_denied,
+              }
+            )
             continue
           }
 
@@ -309,9 +430,8 @@ export function createShowsModule(
               warnings.add(
                 'warn_extra_subfolders',
                 seasonRel,
-                `Unexpected subfolder(s) in season folder: ${names}. ` +
-                  `Plex expects all episodes directly inside the Season XX folder. ` +
-                  `Files inside these subfolders are not scanned.`
+                `Unexpected subfolder(s) in the season folder: ${names}.`,
+                { fix: FIX.warn_extra_subfolders }
               )
             }
           }
@@ -328,8 +448,8 @@ export function createShowsModule(
               warnings.add(
                 'warn_unexpected_entries',
                 seasonRel,
-                `Unexpected file(s) in season folder: ${names}. ` +
-                  `Expected only episode files plus Plex sidecars.`
+                `Unexpected file(s) in the season folder: ${names}.`,
+                { fix: FIX.warn_unexpected_entries }
               )
             }
           }
@@ -342,11 +462,9 @@ export function createShowsModule(
 
           if (videoFiles.length === 0) {
             if (rules.checks.warn_no_videos) {
-              warnings.add(
-                'warn_no_videos',
-                seasonRel,
-                'No recognized video files found in season folder'
-              )
+              warnings.add('warn_no_videos', seasonRel, 'Season folder has no video files.', {
+                fix: FIX.warn_no_videos,
+              })
             }
             continue
           }
@@ -357,8 +475,8 @@ export function createShowsModule(
               warnings.add(
                 'warn_non_primary',
                 path.join(seasonRel, f.name),
-                `${formatPrimaryExts(rules.primary_extension)} video file — may need re-encoding`,
-                { extension: ext }
+                `${formatPrimaryExts(rules.primary_extension)} video file.`,
+                { extension: ext, fix: FIX.warn_non_primary }
               )
             }
           }
@@ -380,7 +498,10 @@ export function createShowsModule(
                 warnings.add(
                   'warn_bad_file_name',
                   path.join(seasonRel, f.name),
-                  'File name does not match Plex naming convention — expected: Show Title (YEAR) - S01E01 or Show Title (YEAR) - S01E01 - Episode Title'
+                  LENIENT_EPISODE_FILE.test(stem)
+                    ? 'Episode code is not canonical (e.g. s02e4, S010e01, -S01e01 with no space).'
+                    : `File name is not 'Show Title (YEAR) - S01E01 - Episode Title'.`,
+                  { fix: FIX.warn_bad_file_name }
                 )
               }
               continue
@@ -407,7 +528,8 @@ export function createShowsModule(
                 warnings.add(
                   'warn_show_year_mismatch',
                   path.join(seasonRel, f.name),
-                  `File show/year '${fileTitle} (${fileYear})' does not match show folder '${showEntry.name}'`
+                  `File says '${fileTitle} (${fileYear})', folder says '${showEntry.name}'.`,
+                  { fix: FIX.warn_show_year_mismatch }
                 )
               }
             } else if (fileTitle !== showTitle) {
@@ -415,9 +537,8 @@ export function createShowsModule(
                 warnings.add(
                   'warn_show_title_case',
                   path.join(seasonRel, f.name),
-                  `File show title '${fileTitle}' differs from show folder '${showTitle}' only in capitalization. ` +
-                    `Plex catalogues it fine either way. Rename the file to match the folder ` +
-                    `(or the folder to match the file, whichever is correct).`
+                  `Capitalization only: file '${fileTitle}' vs folder '${showTitle}'.`,
+                  { fix: FIX.warn_show_title_case }
                 )
               }
             }
@@ -427,7 +548,8 @@ export function createShowsModule(
                 warnings.add(
                   'warn_season_mismatch',
                   path.join(seasonRel, f.name),
-                  `File season 'S${String(fileSeason).padStart(2, '0')}' does not match season folder '${seasonEntry.name}'`
+                  `File says S${String(fileSeason).padStart(2, '0')}, folder says '${seasonEntry.name}'.`,
+                  { fix: FIX.warn_season_mismatch }
                 )
               }
             }
@@ -469,11 +591,12 @@ export function createShowsModule(
           if (rules.checks.warn_episode_gaps) {
             const gaps = findNumericGaps(episodeNumbers)
             if (gaps.length > 0) {
-              const gapStr = gaps.map(g => `E${String(g).padStart(2, '0')}`).join(', ')
+              const gapStr = formatGaps(gaps, g => `E${String(g).padStart(2, '0')}`)
               warnings.add(
                 'warn_episode_gaps',
                 seasonRel,
-                `Potential missing episodes in ${seasonEntry.name}: ${gapStr}`
+                `Missing episodes (${gaps.length}): ${gapStr}.`,
+                { fix: FIX.warn_episode_gaps }
               )
             }
           }
@@ -485,8 +608,8 @@ export function createShowsModule(
             warnings.add(
               'warn_missing_episode_title',
               seasonRel,
-              `${filesMissingTitleInSeason} of ${parsedFilesInSeason} episode file(s) are missing the trailing " - Episode Title" portion of their filename. ` +
-                `Plex catalogues them fine, but rename them to include the title (e.g. 'Show (2020) - S01E01 - Pilot.mp4') for a cleaner library.`
+              `${filesMissingTitleInSeason}/${parsedFilesInSeason} episode files have no " - Episode Title".`,
+              { fix: FIX.warn_missing_episode_title }
             )
           }
 
@@ -497,20 +620,21 @@ export function createShowsModule(
             warnings.add(
               'warn_episode_code_case',
               seasonRel,
-              `${filesOffStyleCodeInSeason} of ${parsedFilesInSeason} episode file(s) don't match the ` +
-                `'${rules.episode_code_case}' episode_code_case house style — e.g. ${offStyleCodeSample}. ` +
-                `Plex reads either form fine. Fix with: npm run fix:shows -- --fix episode-code <drive> --apply`
+              `${filesOffStyleCodeInSeason}/${parsedFilesInSeason} episode codes aren't ` +
+                `'${rules.episode_code_case}' style — e.g. ${offStyleCodeSample}.`,
+              { fix: FIX.warn_episode_code_case }
             )
           }
 
           // ── Add season to records ────────────────────────────────────────
-          const showKey = makeShowKey(showTitle, showYear)
-          const seasonKey = makeSeasonKey(showTitle, showYear, seasonLabel)
+          const showKey = makeShowKey(showTitle, showYear, showEdition)
+          const seasonKey = makeSeasonKey(showTitle, showYear, showEdition, seasonLabel)
 
           if (!records.has(showKey)) {
             records.set(showKey, {
               title: showTitle,
               year: showYear,
+              edition: showEdition,
               seasons: new Map(),
             })
           }
@@ -587,11 +711,15 @@ export function createShowsModule(
       return [...records.values()]
         .sort((a, b) => {
           const t = a.title.toLowerCase().localeCompare(b.title.toLowerCase())
-          return t !== 0 ? t : a.year - b.year
+          if (t !== 0) return t
+          if (a.year !== b.year) return a.year - b.year
+          // Editions of one series sort together, untagged first.
+          return (a.edition ?? '').toLowerCase().localeCompare((b.edition ?? '').toLowerCase())
         })
         .map(show => ({
           title: show.title,
           year: show.year,
+          edition: show.edition,
           seasons: [...show.seasons.values()]
             .sort((a, b) => {
               const [ag0, ag1, as2] = seasonSortKey(a.season_label)
@@ -632,7 +760,11 @@ export function createShowsModule(
 
       for (const show of records.values()) {
         for (const season of show.seasons.values()) {
-          const warningPath = `${show.title} (${show.year}) — Season ${season.season_label}`
+          // The show level must be the folder name as it sits on disk —
+          // edition tag included — or an ignore entry for one edition would
+          // silence the other too.
+          const showFolderName = showDisplayName(show)
+          const warningPath = `${showFolderName} — Season ${season.season_label}`
           const byQuality = groupCategoriesByQuality(season.versions, categoryToQuality)
 
           // `warningPath` is a display label — em-dash separated, with no
@@ -640,7 +772,7 @@ export function createShowsModule(
           // them out, or no ignore entry could ever reach these two checks.
           // `Season 1` folds onto the on-disk `Season 01` in core/ignored.ts,
           // so one `seasons:` entry covers this and the scan pass alike.
-          const seasonLevels = [`${show.title} (${show.year})`, `Season ${season.season_label}`]
+          const seasonLevels = [showFolderName, `Season ${season.season_label}`]
 
           if (duplicateOn) {
             for (const quality of sortQualities(byQuality.keys())) {
@@ -649,9 +781,9 @@ export function createShowsModule(
               warnings.add(
                 'warn_duplicate_quality',
                 warningPath,
-                `Season ${season.season_label} has duplicate ${quality} copies in ` +
-                  `${cats.length} folders: ${cats.join(', ')} — keep one and delete the rest`,
+                `Duplicate ${quality} copies in ${cats.length} folders: ${cats.join(', ')}.`,
                 {
+                  fix: FIX.warn_duplicate_quality,
                   // Group the bucket by quality (UHD, then HD, then SD) rather
                   // than by show title, so the worst offenders read together.
                   sortKey: qualitySortKey(quality),
@@ -670,8 +802,9 @@ export function createShowsModule(
               warnings.add(
                 'warn_multi_quality',
                 warningPath,
-                `Season ${season.season_label} exists in multiple qualities: ${sortQualities(qualities).join(', ')}`,
+                `Exists in multiple qualities: ${sortQualities(qualities).join(', ')}.`,
                 {
+                  fix: FIX.warn_multi_quality,
                   scope: {
                     categories: distinctCategories(season.versions),
                     levels: seasonLevels,

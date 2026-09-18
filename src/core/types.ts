@@ -104,6 +104,11 @@ export interface Warning {
   sortKey?: string
   /** Ready-to-paste ignore-list entry — see `suggestIgnoreEntry`. */
   ignore?: string
+  /**
+   * The remedy for this check. Internal only — it is hoisted to the bucket's
+   * `fix` key rather than written on the row. See `WarningOptions.fix`.
+   */
+  fix?: string
 }
 
 /** Optional extras on a warning. See `WarningCollector.add`. */
@@ -132,6 +137,19 @@ export interface WarningOptions {
    * correctly from `path` and should leave this alone.
    */
   scope?: WarningScope
+  /**
+   * How to fix every row of this warning type. Hoisted to the bucket's `fix`
+   * key so it is written once instead of repeated on all 441 rows — which is
+   * what made warnings.json unreadable in the first place.
+   *
+   * It must be **constant for the type**: the first value a bucket sees wins,
+   * so never interpolate a per-row value into it. Per-row facts belong in
+   * `issue`. `groupedByType()` logs a warning if a bucket sees two different
+   * values, which is how you find out you got this wrong.
+   *
+   * Omit it when the check has no generic remedy.
+   */
+  fix?: string
 }
 
 /**
@@ -151,10 +169,27 @@ export interface WarningRow {
 }
 
 /**
+ * One `by_type` bucket: the remedy once, then the rows it applies to.
+ *
+ * The remedy lives here rather than on every row because it is identical for
+ * every row of a type — repeating it inflated the files and buried the facts
+ * that actually differ. A bucket reads as one instruction followed by a list
+ * of places to apply it.
+ */
+export interface WarningBucket {
+  /**
+   * How to fix every row in `items`. Absent when the check has no generic
+   * remedy (some warnings are purely informational).
+   */
+  fix?: string
+  items: WarningRow[]
+}
+
+/**
  * The on-disk shape of warnings.json / validation-warnings.json. Warnings are
  * grouped by their type so consumers can scan one bucket at a time without
  * filtering an array. `by_type` is sparse — only types with at least one hit
- * appear as keys. Inside each bucket, rows are sorted alphabetically by path
+ * appear as keys. Inside each bucket, `items` is sorted alphabetically by path
  * unless the check supplied a `sortKey` (see `WarningOptions`), which lets a
  * bucket group by something more useful — `warn_duplicate_quality` orders by
  * quality, UHD first. Either way the order is deterministic, so output stays
@@ -163,7 +198,7 @@ export interface WarningRow {
 export interface WarningsOutput {
   generated: string // ISO 8601 UTC timestamp
   count: number
-  by_type: Record<string, WarningRow[]>
+  by_type: Record<string, WarningBucket>
 }
 
 // ─────────────────────────────────────────────
@@ -233,10 +268,18 @@ export interface SeasonRecord {
   episodes: EpisodeOutput[]
 }
 
-/** Internal record for a single show during scanning */
+/**
+ * Internal record for a single show (or edition) during scanning.
+ *
+ * `edition` is Plex's TV Show Editions tag, taken off the show folder
+ * (`Spider-Noir (2026) {edition-True Hue Color}`). Two editions of one series
+ * are separate Plex items with their own watch state, so they are separate
+ * records here too — keyed on title|year|edition, the way movies are.
+ */
 export interface ShowRecord {
   title: string
   year: number
+  edition: string | null // null = no edition tag, string = edition name
   seasons: Map<string, SeasonRecord> // Key = season_key string
 }
 
@@ -252,6 +295,7 @@ export interface SeasonOutput {
 export interface ShowOutput {
   title: string
   year: number
+  edition: string | null
   seasons: SeasonOutput[]
 }
 
@@ -423,8 +467,9 @@ export class WarningCollector {
    *            used for grouping in warnings.json and as the `checks` toggle name.
    *  - path:   library-relative location. Backslashes are normalized to forward
    *            slashes so output is consistent across Windows and macOS/Linux.
-   *  - issue:  human-readable description.
-   *  - options: `extension`, `sortKey` and `scope` — see `WarningOptions`. */
+   *  - issue:  human-readable description of the problem — the facts that
+   *            differ row to row. The remedy goes in `options.fix`, not here.
+   *  - options: `extension`, `sortKey`, `scope` and `fix` — see `WarningOptions`. */
   add(type: string, path: string, issue: string, options: WarningOptions = {}): void {
     const normalizedPath = path.replace(/\\/g, '/')
     const needScope = this.ignored.entries.length > 0 || this.suggestFor !== null
@@ -438,6 +483,7 @@ export class WarningCollector {
     const entry: Warning = { type, path: normalizedPath, issue }
     if (options.extension !== undefined) entry.extension = options.extension
     if (options.sortKey !== undefined) entry.sortKey = options.sortKey
+    if (options.fix !== undefined) entry.fix = options.fix
     if (scope && this.suggestFor !== null) {
       const ignore = suggestIgnoreEntry(scope, this.suggestFor)
       if (ignore !== null) entry.ignore = ignore
@@ -460,12 +506,13 @@ export class WarningCollector {
 
   /**
    * Return warnings grouped by their `type` for writing to warnings.json.
-   * Each bucket's rows are ordered by `compareRows` — alphabetically by path
-   * unless the check supplied a `sortKey`; the outer keys are sorted as well
-   * so JSON serialization is stable across runs. Sparse — only types with at
-   * least one hit appear as keys.
+   * Each bucket carries the type's `fix` once, then its rows ordered by
+   * `compareRows` — alphabetically by path unless the check supplied a
+   * `sortKey`; the outer keys are sorted as well so JSON serialization is
+   * stable across runs. Sparse — only types with at least one hit appear as
+   * keys.
    */
-  groupedByType(): Record<string, WarningRow[]> {
+  groupedByType(): Record<string, WarningBucket> {
     const buckets = new Map<string, Warning[]>()
     for (const w of this.warnings) {
       let bucket = buckets.get(w.type)
@@ -477,19 +524,32 @@ export class WarningCollector {
     }
 
     const sortedKeys = [...buckets.keys()].sort()
-    const out: Record<string, WarningRow[]> = {}
+    const out: Record<string, WarningBucket> = {}
     for (const key of sortedKeys) {
-      // Sort as Warnings (which carry sortKey), then strip to the on-disk
-      // row shape — sortKey is an ordering device, not data worth shipping.
-      out[key] = buckets
-        .get(key)!
-        .sort(compareRows)
-        .map(w => {
-          const row: WarningRow = { path: w.path, issue: w.issue }
-          if (w.extension !== undefined) row.extension = w.extension
-          if (w.ignore !== undefined) row.ignore = w.ignore
-          return row
-        })
+      const rows = buckets.get(key)!.sort(compareRows)
+
+      // `fix` is meant to be constant per type, so the first one wins. If a
+      // check interpolated a per-row value into it, every row but the first
+      // would lose its remedy silently — say so instead.
+      const distinct = new Set(rows.map(w => w.fix).filter(f => f !== undefined))
+      if (distinct.size > 1) {
+        console.warn(
+          `    [WARN] ${key} supplied ${distinct.size} different 'fix' values; using the first. ` +
+            `A fix must be constant per warning type — move per-row detail into 'issue'.`
+        )
+      }
+      const fix = rows.find(w => w.fix !== undefined)?.fix
+
+      // Sort as Warnings (which carry sortKey and fix), then strip to the
+      // on-disk row shape — both are devices, not data worth shipping per row.
+      const items = rows.map(w => {
+        const row: WarningRow = { path: w.path, issue: w.issue }
+        if (w.extension !== undefined) row.extension = w.extension
+        if (w.ignore !== undefined) row.ignore = w.ignore
+        return row
+      })
+
+      out[key] = fix !== undefined ? { fix, items } : { items }
     }
     return out
   }

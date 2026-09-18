@@ -70,6 +70,7 @@ describe('toCatalogItem', () => {
     )
     expect(item.external_ids).toEqual(['imdb://tt0113277'])
     expect(item.duplicate).toBe(true)
+    expect(item.edition_title).toBeNull()
     expect(item.files).toEqual([
       {
         plex_path: '/data/Movies/HD/Heat (1995)/Heat (1995).mkv',
@@ -79,6 +80,25 @@ describe('toCatalogItem', () => {
       },
       { plex_path: '/elsewhere/Heat.mkv', drive: null, library_path: null, deleted: true },
     ])
+  })
+
+  // Plex reports editionTitle on shows as well as movies, off the show folder's
+  // {edition-…} tag. One mapping serves both — nothing here branches on type.
+  it('carries the edition name through for a show', () => {
+    const item = toCatalogItem(
+      {
+        ratingKey: '7',
+        type: 'show',
+        title: 'Spider-Noir',
+        year: 2026,
+        editionTitle: 'True Hue Color',
+      },
+      'show',
+      mapper,
+      new Set()
+    )
+    expect(item.edition_title).toBe('True Hue Color')
+    expect(item.files).toEqual([])
   })
 })
 

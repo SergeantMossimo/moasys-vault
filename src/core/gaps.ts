@@ -22,3 +22,27 @@ export function findNumericGaps(numbers: number[]): number[] {
   }
   return gaps
 }
+
+/** How many ranges `formatGaps` lists before summarizing the rest. */
+const GAP_RANGE_LIMIT = 8
+
+/**
+ * Render gaps for a warning message: consecutive runs collapse into ranges and
+ * the list stops after `GAP_RANGE_LIMIT` of them. A long-running show once
+ * produced a single 3,600-character row listing every missing episode one by one.
+ *
+ * Example: [2, 3, 4, 7, 9, 10] with `n => 'E' + pad(n)` -> "E02–E04, E07, E09–E10"
+ */
+export function formatGaps(gaps: number[], label: (n: number) => string): string {
+  const ranges: Array<[number, number]> = []
+  for (const g of [...gaps].sort((a, b) => a - b)) {
+    const last = ranges.at(-1)
+    if (last && g === last[1] + 1) last[1] = g
+    else ranges.push([g, g])
+  }
+  const shown = ranges
+    .slice(0, GAP_RANGE_LIMIT)
+    .map(([a, b]) => (a === b ? label(a) : `${label(a)}–${label(b)}`))
+  const rest = ranges.slice(GAP_RANGE_LIMIT).reduce((n, [a, b]) => n + b - a + 1, 0)
+  return shown.join(', ') + (rest > 0 ? `, +${rest} more` : '')
+}

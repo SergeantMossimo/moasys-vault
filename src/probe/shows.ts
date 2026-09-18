@@ -23,6 +23,7 @@ import {
   QualityBucket,
   classifyQuality,
   deriveQuality,
+  formatBucketRange,
   probeBatch,
 } from './helpers'
 import { ShowProbeOutput, ShowSeasonProbe, EpisodeProbe, ProbeData, ProbeResult } from './types'
@@ -34,6 +35,8 @@ import { ShowProbeOutput, ShowSeasonProbe, EpisodeProbe, ProbeData, ProbeResult 
 interface ShowIdentity {
   title: string
   year: number
+  /** Plex's TV Show Editions tag, or null when the folder carries none. */
+  edition: string | null
 }
 
 interface EpisodeIdentity {
@@ -45,9 +48,16 @@ interface EpisodeIdentity {
 function parseShowFolder(name: string, regex: RegExp): ShowIdentity | null {
   const m = regex.exec(name)
   if (!m?.groups) return null
-  const { title, year } = m.groups
+  const { title, year, edition } = m.groups
   if (title === undefined || year === undefined) return null
-  return { title: title.trim(), year: parseInt(year, 10) }
+  // An empty `{edition-}` folds to null here, matching what the scan pass
+  // catalogues after it warns — the probe pass never warns about naming.
+  const trimmedEdition = edition?.trim()
+  return {
+    title: title.trim(),
+    year: parseInt(year, 10),
+    edition: trimmedEdition !== undefined && trimmedEdition.length > 0 ? trimmedEdition : null,
+  }
 }
 
 function parseSeasonFolder(name: string, regex: RegExp): number | null {
@@ -82,8 +92,13 @@ function formatEpisodeId(season: number, first: number, last: number): string {
   return `S${s}E${e1}-E${e2}`
 }
 
-function showKey(t: string, y: number): string {
-  return `${t.toLowerCase()}|${y}`
+/**
+ * Keyed on edition as well as title+year, matching the scan pass — otherwise
+ * two editions of one series fold into a single probe entry and their seasons
+ * merge, which would collapse the per-season quality-mismatch summary too.
+ */
+function showKey(t: string, y: number, edition: string | null): string {
+  return `${t.toLowerCase()}|${y}|${(edition ?? '').toLowerCase()}`
 }
 
 function toRel(p: string): string {
@@ -203,17 +218,27 @@ function aggregate(
 ): ShowProbeOutput[] {
   const shows = new Map<
     string,
-    { title: string; year: number; seasons: Map<string, EpisodeProbe[]> }
+    {
+      title: string
+      year: number
+      edition: string | null
+      seasons: Map<string, EpisodeProbe[]>
+    }
   >()
 
   for (const { task, data } of probed) {
     const id = identities.get(task.relativePath)
     if (!id) continue
 
-    const key = showKey(id.show.title, id.show.year)
+    const key = showKey(id.show.title, id.show.year, id.show.edition)
     let show = shows.get(key)
     if (!show) {
-      show = { title: id.show.title, year: id.show.year, seasons: new Map() }
+      show = {
+        title: id.show.title,
+        year: id.show.year,
+        edition: id.show.edition,
+        seasons: new Map(),
+      }
       shows.set(key, show)
     }
     let seasonEps = show.seasons.get(id.seasonLabel)
@@ -242,7 +267,9 @@ function aggregate(
   return [...shows.values()]
     .sort((a, b) => {
       const t = a.title.toLowerCase().localeCompare(b.title.toLowerCase())
-      return t !== 0 ? t : a.year - b.year
+      if (t !== 0) return t
+      if (a.year !== b.year) return a.year - b.year
+      return (a.edition ?? '').toLowerCase().localeCompare((b.edition ?? '').toLowerCase())
     })
     .map(show => {
       const seasons: ShowSeasonProbe[] = [...show.seasons.entries()]
@@ -261,7 +288,7 @@ function aggregate(
             return qIndex(a.quality) - qIndex(b.quality)
           }),
         }))
-      return { title: show.title, year: show.year, seasons }
+      return { title: show.title, year: show.year, edition: show.edition, seasons }
     })
 }
 
@@ -345,17 +372,19 @@ function reportQualityMismatches(
       codes.slice(0, QUALITY_SAMPLE_LIMIT).join(', ') +
       (codes.length > QUALITY_SAMPLE_LIMIT ? `, +${codes.length - QUALITY_SAMPLE_LIMIT} more` : '')
 
-    const range =
-      `${bucket.min_width !== undefined ? `min ${bucket.min_width}` : 'no min'}, ` +
-      `${bucket.max_width !== undefined ? `max ${bucket.max_width}` : 'no max'}`
+    // Name the category only when it isn't simply the bucket (`Other HD` → HD).
+    const from = tally.category === bucket.name ? '' : ` for '${tally.category}'`
 
     warnings.add(
       'warn_quality_mismatch',
       seasonFolder,
-      `Quality mismatch — ${tally.misses.length} of ${tally.total} episode file(s) don't fit bucket ` +
-        `'${bucket.name}' (${range}) for quality '${tally.quality}' (category '${tally.category}'): ` +
-        `${dimsText}${moreDims}. Episodes: ${codesText}. ` +
-        `Move the season to the folder matching its resolution, or replace the files with a better source.`
+      `${tally.misses.length}/${tally.total} episodes are ${dimsText}${moreDims}, not ` +
+        `${bucket.name} (${formatBucketRange(bucket)})${from}. ${codesText}.`,
+      {
+        fix:
+          `Move the season to the folder matching its resolution, or replace the files with ` +
+          `a better source.`,
+      }
     )
   }
 }

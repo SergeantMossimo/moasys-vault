@@ -136,7 +136,7 @@ describe('WarningCollector ignore suggestions', () => {
   it('adds an ignore entry to each row when constructed with an ignore list', () => {
     const wc = new WarningCollector({ mediaType: 'shows', entries: [] })
     wc.add('warn_episode_gaps', 'HD\\Firefly (2002)\\Season 01', 'gap')
-    expect(wc.groupedByType()['warn_episode_gaps']).toEqual([
+    expect(wc.groupedByType()['warn_episode_gaps']?.items).toEqual([
       {
         path: 'HD/Firefly (2002)/Season 01',
         issue: 'gap',
@@ -148,7 +148,7 @@ describe('WarningCollector ignore suggestions', () => {
   it('leaves rows unchanged when no ignore list was supplied', () => {
     const wc = new WarningCollector()
     wc.add('warn_x', 'HD/Firefly (2002)', 'x')
-    expect(wc.groupedByType()['warn_x']).toEqual([{ path: 'HD/Firefly (2002)', issue: 'x' }])
+    expect(wc.groupedByType()['warn_x']?.items).toEqual([{ path: 'HD/Firefly (2002)', issue: 'x' }])
   })
 
   it('never suggests an entry for a warning that was silenced', () => {

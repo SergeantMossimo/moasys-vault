@@ -144,6 +144,30 @@ export type BookTagCheck =
 export interface BookTagFinding {
   type: BookTagCheck
   issue: string
+  /**
+   * The remedy for this check, relayed to `WarningOptions.fix` so it is
+   * written once per bucket instead of on every row. Constant per `type`.
+   */
+  fix: string
+}
+
+/**
+ * The remedy for each tag check. Kept in one map so every `findings.push` of
+ * a given type relays the same text — `WarningCollector.groupedByType()` takes
+ * the first it sees and warns if a bucket disagrees with itself.
+ */
+const FIX: Record<BookTagCheck, string> = {
+  warn_missing_book_tags:
+    `Plex reads the album and artist tags to name and group a book in a music-type ` +
+    `library. Tag the chapters with the book title and author.`,
+  warn_book_tag_mismatch:
+    `Correct whichever is wrong — rename the folder, or retag the chapters. Plex names ` +
+    `the book from the tag, so a mismatch shows a different title than your folder.`,
+  warn_book_tag_case: `Make them agree so Plex shows the same title as your folder.`,
+  warn_author_tag_mismatch:
+    `Correct whichever is wrong. Plex matches artist names exactly, so the book can end ` +
+    `up filed under a separate author.`,
+  warn_author_tag_case: `Make them agree so Plex files the book under the same author.`,
 }
 
 /** The most common non-empty value, and how many chapters carry it. */
@@ -187,9 +211,9 @@ export function analyzeBookTags(
       findings.push({
         type: 'warn_missing_book_tags',
         issue:
-          `None of the book's ${book.tags.length} chapter file(s) carry an album or artist tag. ` +
-          `Plex reads these tags to name and group the book in a music-type library. ` +
-          `Recommended fix: tag the chapters with album '${book.title}' and artist '${book.authorFolder}'.`,
+          `None of the ${book.tags.length} chapter files carry an album or artist tag. ` +
+          `Expected album '${book.title}', artist '${book.authorFolder}'.`,
+        fix: FIX.warn_missing_book_tags,
       })
     }
     return findings
@@ -201,17 +225,16 @@ export function analyzeBookTags(
     if (comparison === 'mismatch' && enabled.warn_book_tag_mismatch) {
       findings.push({
         type: 'warn_book_tag_mismatch',
-        issue:
-          `Book folder is '${book.title}' but the album tag on ${chapters} is '${album.value}'. ` +
-          `Recommended fix: correct whichever one is wrong — rename the folder, or retag the chapters. ` +
-          `Plex names the book from the tag, so a mismatch shows a different title than your folder.`,
+        issue: `Folder says '${book.title}', album tag on ${chapters} says '${album.value}'.`,
+        fix: FIX.warn_book_tag_mismatch,
       })
     } else if (comparison === 'case-only' && enabled.warn_book_tag_case) {
       findings.push({
         type: 'warn_book_tag_case',
         issue:
-          `Book folder is '${book.title}' but the album tag on ${chapters} is '${album.value}' — ` +
-          `only the capitalization differs. Make them agree so Plex shows the same title as your folder.`,
+          `Capitalization only: folder '${book.title}' vs album tag on ${chapters} ` +
+          `'${album.value}'.`,
+        fix: FIX.warn_book_tag_case,
       })
     }
   }
@@ -224,17 +247,18 @@ export function analyzeBookTags(
       findings.push({
         type: 'warn_author_tag_mismatch',
         issue:
-          `Author folder is '${book.authorFolder}' but the artist tag on ${chapters} is '${artist.value}'` +
-          (spacingOnly ? ' — the same name with different initials or spacing' : '') +
-          `. Recommended fix: correct whichever one is wrong. ` +
-          `Plex matches artist names exactly, so the book can be filed under a separate author.`,
+          `Folder says '${book.authorFolder}', artist tag on ${chapters} says '${artist.value}'` +
+          (spacingOnly ? ' — same name, different initials or spacing' : '') +
+          `.`,
+        fix: FIX.warn_author_tag_mismatch,
       })
     } else if (comparison === 'case-only' && enabled.warn_author_tag_case) {
       findings.push({
         type: 'warn_author_tag_case',
         issue:
-          `Author folder is '${book.authorFolder}' but the artist tag on ${chapters} is '${artist.value}' — ` +
-          `only the capitalization differs. Make them agree so Plex files the book under the same author.`,
+          `Capitalization only: folder '${book.authorFolder}' vs artist tag on ${chapters} ` +
+          `'${artist.value}'.`,
+        fix: FIX.warn_author_tag_case,
       })
     }
   }

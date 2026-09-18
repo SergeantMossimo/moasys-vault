@@ -153,10 +153,13 @@ export async function probeBatch(
       warnings?.add(
         'warn_probe_failed',
         task.relativePath,
-        `ffprobe could not read this file: ${message.trim()} ` +
-          `The file is excluded from probe output and has no quality data. ` +
-          `A file ffprobe rejects is usually unplayable in Plex too — verify it plays, ` +
-          `and re-copy it from your source if it doesn't.`
+        `ffprobe could not read this file: ${message.trim()}`,
+        {
+          fix:
+            `A file ffprobe rejects is usually unplayable in Plex too — check it plays, and ` +
+            `re-copy it from source if not. It is excluded from probe output meanwhile, so it ` +
+            `has no quality data.`,
+        }
       )
     }
     onProgress?.(++done, tasks.length, cachedCount)
@@ -262,4 +265,16 @@ export function deriveQuality(
     if (overMin && underMax) return bucket.name
   }
   return null
+}
+
+/**
+ * A quality bucket's width range for a warning message: `1000–2000px`,
+ * `≥2000px` or `≤1000px`.
+ */
+export function formatBucketRange(bucket: { min_width?: number; max_width?: number }): string {
+  const { min_width: min, max_width: max } = bucket
+  if (min !== undefined && max !== undefined) return `${min}–${max}px`
+  if (min !== undefined) return `≥${min}px`
+  if (max !== undefined) return `≤${max}px`
+  return 'any width'
 }

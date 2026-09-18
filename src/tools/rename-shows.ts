@@ -9,12 +9,13 @@
  * exception: it repairs episode FILENAMES that the scanner has already
  * flagged, for libraries that are too big to fix by hand.
  *
- * It renames files. That is the entire set of filesystem mutations it can
- * perform — there is no unlink, no rmdir, no copy, no content write, and it
- * never touches a directory name. Every rename is file → file inside the
- * same directory.
+ * It renames. That is the entire set of filesystem mutations it can perform —
+ * there is no unlink, no rmdir, no copy, no content write. Every rename keeps
+ * its parent directory: file → file inside one season folder, or (only in
+ * `show-folder` mode) one named show folder → a new name inside the same
+ * category folder.
  *
- * Three fix modes:
+ * Four fix modes:
  *
  *   show-prefix     Rewrite each episode file's "<Title> (<Year>)" prefix to
  *                   match its show folder's name exactly. Fixes the class of
@@ -28,10 +29,20 @@
  *                   but carry no title (warn_missing_episode_title). Titles
  *                   come from the TMDB caches that `npm run validate:shows`
  *                   already populated — this mode does no network I/O.
+ *                   `--allow-partial` also names seasons that hold fewer
+ *                   episodes than TMDB lists; those entries carry a note.
  *
  *   episode-code    Normalize the season/episode code to the configured
  *                   `episode_code_case` and the canonical multi-episode
- *                   suffix form (`s01e01-e02`, not `s01e01-02`).
+ *                   suffix form (`s01e01-e02`, not `s01e01-02`), padding
+ *                   unpadded numbers (`s02e4` → `s02e04`) along the way.
+ *
+ *   show-folder     Rename ONE show folder, named explicitly with --show and
+ *                   --to, for the case where the folder rather than its files
+ *                   is wrong ("Saved by Bell (1989)"). Never derives a target
+ *                   on its own; the dry run prints the TMDB title and the
+ *                   files' own prefix as hints. Run show-prefix afterwards to
+ *                   bring the files in line with the new folder name.
  *
  * Safety model — see `validatePlan` and `apply` for the enforcement:
  *
@@ -54,6 +65,8 @@
  *   npm run fix:shows -- --fix show-prefix external
  *   npm run fix:shows -- --fix show-prefix external --apply
  *   npm run fix:shows -- --fix episode-titles external --show "Barry (2018)"
+ *   npm run fix:shows -- --fix episode-titles external --allow-partial
+ *   npm run fix:shows -- --fix show-folder external --show "Saved by Bell (1989)" --to "Saved by the Bell (1989)"
  *   npm run fix:shows -- --undo output/external/shows/fixes/rename-undo-<ts>.json
  */
 
@@ -62,7 +75,12 @@ import path from 'path'
 
 import { driveSlug, loadConfig, rootsFor } from '../core/config'
 import { toComparableFolderName } from '../core/files'
-import { canonicalEpisodeCode, compilePattern, resolveCategories } from '../core/rules/helpers'
+import {
+  canonicalEpisodeCode,
+  compilePattern,
+  resolveCategories,
+  LENIENT_EPISODE_FILE,
+} from '../core/rules/helpers'
 import { loadTypeRules } from '../core/rules/registry'
 import { ShowsRules } from '../core/rules/shows'
 import { reportLegacyOutputFiles, typeOutputPaths } from '../core/output-paths'
@@ -91,7 +109,7 @@ const MAX_TARGET_PATH = 240
  */
 const MULTI_EPISODE_JOINER = ' + '
 
-const FIX_MODES = ['show-prefix', 'episode-titles', 'episode-code'] as const
+const FIX_MODES = ['show-prefix', 'episode-titles', 'episode-code', 'show-folder'] as const
 type FixMode = (typeof FIX_MODES)[number]
 
 // ─────────────────────────────────────────────
@@ -99,15 +117,22 @@ type FixMode = (typeof FIX_MODES)[number]
 // ─────────────────────────────────────────────
 
 /**
+ * What a rename acts on. Absent means 'file', so plans and undo manifests
+ * written before `show-folder` existed still read correctly.
+ */
+type RenameKind = 'file' | 'folder'
+
+/**
  * One planned rename. `dir` is relative to the drive's root_path with forward
  * slashes (matching the probe cache and warning-path convention); `from` and
- * `to` are bare filenames, because a rename never moves a file between
- * directories.
+ * `to` are bare names, because a rename never moves anything between
+ * directories. For a folder entry `dir` is the category folder.
  */
 export interface PlanEntry {
   dir: string
   from: string
   to: string
+  kind?: RenameKind
   /** Set when the entry warrants a human glance before --apply. */
   note?: string
 }
@@ -135,7 +160,7 @@ interface UndoManifest {
   generated: string
   fix: FixMode
   drive: string
-  renames: Array<{ from: string; to: string }>
+  renames: Array<{ from: string; to: string; kind?: RenameKind }>
 }
 
 // ─────────────────────────────────────────────
@@ -148,6 +173,10 @@ interface Args {
   apply: boolean
   /** Restrict the run to one show folder name, e.g. "Barry (2018)". */
   show?: string
+  /** show-folder only: the new folder name. */
+  to?: string
+  /** episode-titles only: name seasons that hold fewer episodes than TMDB lists. */
+  allowPartial: boolean
 }
 
 function usage(): never {
@@ -156,12 +185,15 @@ function usage(): never {
 
   Usage:
     npm run fix:shows -- --fix <mode> <drive> [--apply] [--show "<Folder Name>"]
+    npm run fix:shows -- --fix show-folder <drive> --show "<Old Name>" --to "<New Name>" [--apply]
     npm run fix:shows -- --undo <manifest.json>
 
   Modes:
     show-prefix      Rewrite each file's "<Title> (<Year>)" prefix to match its show folder
     episode-titles   Append " - <Episode Title>" from the TMDB cache
-    episode-code     Normalize season/episode code casing and multi-episode suffix
+                     (--allow-partial also names seasons you hold only part of)
+    episode-code    Normalize season/episode code casing, padding, and multi-episode suffix
+    show-folder      Rename one show folder (--show and --to both required)
 
   The drive name is REQUIRED — it must match a "name" in config.json's shows list.
   Runs are a dry run unless you pass --apply.
@@ -194,13 +226,33 @@ function parseArgs(argv: string[]): Args | { undo: string } {
     usage()
   }
 
+  const toIndex = argv.indexOf('--to')
+  const to = toIndex === -1 ? undefined : argv[toIndex + 1]
+  if (toIndex !== -1 && to === undefined) {
+    console.error('\n  Error: --to requires a new folder name')
+    usage()
+  }
+  if (fix === 'show-folder' && (show === undefined || to === undefined)) {
+    console.error('\n  Error: show-folder requires both --show "<Old Name>" and --to "<New Name>"')
+    usage()
+  }
+  if (fix !== 'show-folder' && to !== undefined) {
+    console.error('\n  Error: --to only applies to --fix show-folder')
+    usage()
+  }
+  const allowPartial = argv.includes('--allow-partial')
+  if (fix !== 'episode-titles' && allowPartial) {
+    console.error('\n  Error: --allow-partial only applies to --fix episode-titles')
+    usage()
+  }
+
   // The drive is the first bare positional that isn't a flag or a flag's
   // value. Collecting consumed indexes first keeps this robust to flag order.
   const consumed = new Set<number>()
   for (const [index, arg] of argv.entries()) {
     if (arg.startsWith('--')) {
       consumed.add(index)
-      if (arg === '--fix' || arg === '--show') consumed.add(index + 1)
+      if (arg === '--fix' || arg === '--show' || arg === '--to') consumed.add(index + 1)
     }
   }
   const drive = argv.find((arg, index) => !consumed.has(index) && !arg.startsWith('--'))
@@ -210,7 +262,7 @@ function parseArgs(argv: string[]): Args | { undo: string } {
     usage()
   }
 
-  return { fix: fix as FixMode, drive, apply: argv.includes('--apply'), show }
+  return { fix: fix as FixMode, drive, apply: argv.includes('--apply'), show, to, allowPartial }
 }
 
 // ─────────────────────────────────────────────
@@ -314,9 +366,18 @@ export interface StemParts {
  *
  * Returns null when the name doesn't match the convention at all — those files
  * are already reported by warn_bad_file_name and this tool leaves them alone.
+ *
+ * `fallbackRegex` is tried only when `fileRegex` rejects the stem. The
+ * `episode-code` mode passes `LENIENT_EPISODE_FILE` so it can parse — and
+ * then pad — names like 's02e4'; every other mode leaves it out and so still
+ * never touches a name the rules reject.
  */
-export function splitStem(stem: string, fileRegex: RegExp): StemParts | null {
-  const groups = fileRegex.exec(stem)?.groups
+export function splitStem(
+  stem: string,
+  fileRegex: RegExp,
+  fallbackRegex?: RegExp
+): StemParts | null {
+  const groups = (fileRegex.exec(stem) ?? fallbackRegex?.exec(stem) ?? null)?.groups
   if (!groups) return null
 
   const { title, year, season, episode, episode_end, episode_title } = groups
@@ -327,9 +388,12 @@ export function splitStem(stem: string, fileRegex: RegExp): StemParts | null {
   const prefix = `${title.trim()} (${year})`
 
   // Recover the code exactly as written. Anchoring on the prefix length keeps
-  // this correct for titles that themselves contain " - S..".
+  // this correct for titles that themselves contain " - S..". Permissive about
+  // digit counts and separator spacing on purpose: the regex above already
+  // decided the name is acceptable, this only locates the substring.
+  // `joinStem` always writes the canonical " - " back.
   const afterPrefix = stem.slice(stem.indexOf(`(${year})`) + `(${year})`.length)
-  const codeMatch = /^\s-\s(S\d{2}E\d{2}(?:-E?\d{2})?)/i.exec(afterPrefix)
+  const codeMatch = /^\s?-\s?(S\d{1,3}E\d{1,3}(?:-E?\d{1,3})?)/i.exec(afterPrefix)
   if (!codeMatch?.[1]) return null
 
   const trimmedTitle = episode_title?.trim()
@@ -376,21 +440,54 @@ export function sanitizeEpisodeTitle(raw: string): string | null {
 // ─────────────────────────────────────────────
 
 /**
- * Rewrite each file's "<Title> (<Year>)" prefix to its show folder's exact
- * name. Everything after the prefix — the episode code's casing, the episode
- * title, the extension — is preserved byte-for-byte.
+ * Rewrite each file's "<Title> (<Year>)" prefix to the title and year its show
+ * folder names. Everything after the prefix — the episode code's casing, the
+ * episode title, the extension — is preserved byte-for-byte.
  *
- * Files whose prefix already equals the folder produce no entry, so a re-run
- * after a successful apply plans zero renames.
+ * Files whose prefix already matches produce no entry, so a re-run after a
+ * successful apply plans zero renames.
+ *
+ * The prefix is rebuilt from the folder's *parsed* title and year, never from
+ * the folder name verbatim. Those differ whenever the folder carries a Plex
+ * edition tag: episodes inside 'Spider-Noir (2026) {edition-True Hue Color}'
+ * are named 'Spider-Noir (2026) - S01E01 - ...', because Plex defines an
+ * edition at the show level only. Copying the folder name would push the tag
+ * onto every file and break the match.
+ *
+ * A show folder that doesn't itself match `patterns.show_folder` is sent to
+ * review, once per folder, with none of its files renamed. The folder is the
+ * thing that's wrong there (warn_bad_show_folder) — copying its name into
+ * every file would spread the problem, as it nearly did with
+ * 'Spider-Noir (2026) [True Hue Color]'.
  */
 export function planShowPrefix(
   files: EpisodeFile[],
-  fileRegex: RegExp
+  fileRegex: RegExp,
+  showFolderRegex: RegExp
 ): Omit<Plan, 'generated' | 'fix' | 'drive' | 'root_path'> {
   const entries: PlanEntry[] = []
   const skipped: SkipEntry[] = []
+  const review: SkipEntry[] = []
+  const badFolders = new Set<string>()
 
   for (const file of files) {
+    const folderGroups = showFolderRegex.exec(file.showFolder)?.groups
+    if (!folderGroups?.title || !folderGroups.year) {
+      const showDir = file.relDir.split('/').slice(0, -1).join('/')
+      if (!badFolders.has(showDir)) {
+        badFolders.add(showDir)
+        review.push({
+          path: showDir,
+          reason:
+            'show folder does not match patterns.show_folder — fix the folder name first (warn_bad_show_folder)',
+        })
+      }
+      continue
+    }
+
+    // The edition tag, if any, stays on the folder and off the files.
+    const wantedPrefix = `${folderGroups.title.trim()} (${folderGroups.year})`
+
     const ext = path.extname(file.fileName)
     const parts = splitStem(path.basename(file.fileName, ext), fileRegex)
     if (!parts) {
@@ -401,21 +498,34 @@ export function planShowPrefix(
       continue
     }
 
-    if (parts.prefix === file.showFolder) continue
+    if (parts.prefix === wantedPrefix) continue
 
     entries.push({
       dir: file.relDir,
       from: file.fileName,
-      to: joinStem({ ...parts, prefix: file.showFolder }) + ext,
+      to: joinStem({ ...parts, prefix: wantedPrefix }) + ext,
     })
   }
 
-  return { entries, skipped, review: [] }
+  return { entries, skipped, review }
 }
 
 // ─────────────────────────────────────────────
 // Fix mode: episode-titles
 // ─────────────────────────────────────────────
+
+/**
+ * Rebuild the on-disk show folder name a validation row came from, edition tag
+ * included. Two editions of one series share a title+year, so a key without
+ * the tag would collapse them onto each other.
+ *
+ * `edition` is absent in validation.json files written before editions were
+ * supported; those rows produce the plain form, exactly as they did then.
+ */
+function showFolderNameOf(show: ShowValidation): string {
+  const base = `${show.title} (${show.year})`
+  return show.edition ? `${base} {edition-${show.edition}}` : base
+}
 
 /**
  * Map a show folder name to its TMDB id, using the validation output the
@@ -431,7 +541,7 @@ function buildTmdbIdByShowFolder(validationPath: string): Map<string, number> {
 
   for (const show of parsed as ShowValidation[]) {
     if (show.tmdb_id === null) continue
-    out.set(`${show.title} (${show.year})`, show.tmdb_id)
+    out.set(showFolderNameOf(show), show.tmdb_id)
   }
   return out
 }
@@ -518,6 +628,11 @@ function groupBySeason(files: EpisodeFile[], fileRegex: RegExp): SeasonGroup[] {
  *      TMDB episodes as TMDB lists for that season. Catches the season that is
  *      missing episodes locally.
  *
+ * `allowPartial` (the opt-in `--allow-partial` flag) relaxes ONLY guard 2, for
+ * libraries that hold part of a season. Guard 1 still applies, and every
+ * entry from a partial season carries a note so the dry run shows it for
+ * review — a numbering offset can't be detected without the full count.
+ *
  * Counting RESOLVED TMDB episodes rather than local files is what makes this
  * correct for multi-episode files in both directions — one file covering two
  * TMDB episodes counts as two, and a file spanning a two-parter that TMDB
@@ -530,7 +645,8 @@ export function planEpisodeTitles(
   files: EpisodeFile[],
   fileRegex: RegExp,
   tmdbIdByShowFolder: Map<string, number>,
-  seasonEpisodeNames: Map<string, Map<number, string>>
+  seasonEpisodeNames: Map<string, Map<number, string>>,
+  allowPartial = false
 ): Omit<Plan, 'generated' | 'fix' | 'drive' | 'root_path'> {
   const entries: PlanEntry[] = []
   const skipped: SkipEntry[] = []
@@ -582,7 +698,8 @@ export function planEpisodeTitles(
       continue
     }
 
-    if (resolvedEpisodes.size !== byNumber.size) {
+    const partial = resolvedEpisodes.size !== byNumber.size
+    if (partial && !allowPartial) {
       skipped.push({
         path: group.relDir,
         reason:
@@ -591,8 +708,11 @@ export function planEpisodeTitles(
       })
       continue
     }
+    const partialNote = partial
+      ? `partial season — ${resolvedEpisodes.size} of ${byNumber.size} TMDB episodes, check numbering`
+      : undefined
 
-    // ── Season agrees with TMDB — safe to name ──────────────────────────
+    // ── Season agrees with TMDB (or --allow-partial) — name it ──────────
     for (const { file, parts } of untitled) {
       const relPath = `${file.relDir}/${file.fileName}`
       const names: string[] = []
@@ -612,13 +732,15 @@ export function planEpisodeTitles(
       }
 
       const isMulti = parts.episodeEnd > parts.episodeStart
+      const notes = [
+        ...(isMulti ? [`multi-episode — TMDB gave ${names.length} title(s), review this one`] : []),
+        ...(partialNote !== undefined ? [partialNote] : []),
+      ]
       entries.push({
         dir: file.relDir,
         from: file.fileName,
         to: joinStem({ ...parts, title }) + path.extname(file.fileName),
-        ...(isMulti
-          ? { note: `multi-episode — TMDB gave ${names.length} title(s), review this one` }
-          : {}),
+        ...(notes.length > 0 ? { note: notes.join('; ') } : {}),
       })
     }
   }
@@ -631,31 +753,46 @@ export function planEpisodeTitles(
 // ─────────────────────────────────────────────
 
 /**
- * Rewrite the season/episode code to the configured casing and the canonical
- * multi-episode suffix (`s01e01-e02`, never the bare `s01e01-02`).
+ * Rewrite the season/episode code to the configured casing, zero-padding, and
+ * the canonical multi-episode suffix (`s01e01-e02`, never the bare
+ * `s01e01-02`).
+ *
+ * Also parses names the rules reject only because a number isn't padded
+ * ('s02e4' → 's02e04') via `LENIENT_EPISODE_FILE`. A range that runs
+ * backwards ('s00e110-010') can't be padded into anything meaningful, so it
+ * goes to review instead.
  *
  * A no-op when `episode_code_case` is 'any', since there is then no house
  * style to normalize toward.
  */
-function planEpisodeCode(
+export function planEpisodeCode(
   files: EpisodeFile[],
   fileRegex: RegExp,
-  rules: ShowsRules
+  rules: Pick<ShowsRules, 'episode_code_case'>
 ): Omit<Plan, 'generated' | 'fix' | 'drive' | 'root_path'> {
   const entries: PlanEntry[] = []
+  const review: SkipEntry[] = []
 
   if (rules.episode_code_case === 'any') {
     console.log(
       "\n  Nothing to do: episode_code_case is 'any'. Set it to 'lower' or 'upper' in\n" +
         '  rules/shows.local.yaml to define a house style.'
     )
-    return { entries, skipped: [], review: [] }
+    return { entries, skipped: [], review }
   }
 
   for (const file of files) {
     const ext = path.extname(file.fileName)
-    const parts = splitStem(path.basename(file.fileName, ext), fileRegex)
+    const parts = splitStem(path.basename(file.fileName, ext), fileRegex, LENIENT_EPISODE_FILE)
     if (!parts) continue
+
+    if (parts.episodeEnd < parts.episodeStart) {
+      review.push({
+        path: `${file.relDir}/${file.fileName}`,
+        reason: `episode range '${parts.code}' runs backwards — the intended episodes are unclear`,
+      })
+      continue
+    }
 
     const canonical = canonicalEpisodeCode(parts, rules.episode_code_case)
     if (canonical === parts.code) continue
@@ -667,7 +804,127 @@ function planEpisodeCode(
     })
   }
 
-  return { entries, skipped: [], review: [] }
+  return { entries, skipped: [], review }
+}
+
+// ─────────────────────────────────────────────
+// Fix mode: show-folder
+// ─────────────────────────────────────────────
+
+/**
+ * Plan renaming the show folder named exactly `from` to `to`, in every
+ * category that holds it — a show split across HD and SD folders stays one
+ * show. Each entry stays inside its own category folder.
+ *
+ * The target is always the user's explicit `--to`; this function only checks
+ * it. Returns `problems` alongside the plan for the checks `validatePlan`
+ * can't make because they're specific to folders: the source must exist, and
+ * the target must still be a valid show folder name.
+ *
+ * The name comparison is exact rather than case-insensitive, because a
+ * case-insensitive filesystem would otherwise let `--show "alf (1986)"` match
+ * 'ALF (1986)' and plan a rename from a name that isn't on disk.
+ */
+export function planShowFolder(
+  rootPath: string,
+  rules: Pick<ShowsRules, 'categories' | 'patterns'>,
+  from: string,
+  to: string
+): { built: Omit<Plan, 'generated' | 'fix' | 'drive' | 'root_path'>; problems: string[] } {
+  const entries: PlanEntry[] = []
+  const problems: string[] = []
+
+  if (from === to) {
+    problems.push(`--show and --to are identical ('${from}') — nothing to rename`)
+  }
+  if (!compilePattern(rules.patterns.show_folder).test(to)) {
+    problems.push(
+      `'${to}' does not match patterns.show_folder ` +
+        `(expected "Title (YEAR)", optionally "Title (YEAR) {edition-Name}")`
+    )
+  }
+  if (/[. ]$/.test(to) || to !== to.trim()) {
+    problems.push(`'${to}' has leading/trailing spaces or a trailing period Windows can't store`)
+  }
+
+  for (const category of resolveCategories(rules.categories)) {
+    const categoryPath =
+      category.folderName === '' ? rootPath : path.join(rootPath, category.folderName)
+    if (!fs.existsSync(categoryPath)) continue
+
+    const match = fs
+      .readdirSync(categoryPath, { withFileTypes: true })
+      .find(entry => entry.isDirectory() && entry.name === from)
+    if (match === undefined) continue
+
+    entries.push({ dir: toRel(category.folderName), from, to, kind: 'folder' })
+  }
+
+  if (entries.length === 0) {
+    problems.push(`no show folder named exactly '${from}' in any category`)
+  }
+
+  return { built: { entries, skipped: [], review: [] }, problems }
+}
+
+/**
+ * Hints for choosing a show-folder target, printed in the dry run: the
+ * TMDB-canonical name (when validation matched the show) and the prefix most
+ * of the folder's own files use. Advisory only — never used as the target.
+ */
+function showFolderHints(
+  files: EpisodeFile[],
+  fileRegex: RegExp,
+  validationPath: string
+): string[] {
+  const hints: string[] = []
+  const folder = files[0]?.showFolder
+
+  if (folder !== undefined && fs.existsSync(validationPath)) {
+    const parsed: unknown = JSON.parse(fs.readFileSync(validationPath, 'utf-8'))
+    const match = Array.isArray(parsed)
+      ? (parsed as ShowValidation[]).find(s => showFolderNameOf(s) === folder)
+      : undefined
+    if (match?.tmdb_title_filename_safe != null && match.tmdb_first_air_year != null) {
+      hints.push(`TMDB:        ${match.tmdb_title_filename_safe} (${match.tmdb_first_air_year})`)
+    } else {
+      hints.push('TMDB:        no match for the current folder name')
+    }
+  }
+
+  const prefixCounts = new Map<string, number>()
+  for (const file of files) {
+    const parts = splitStem(path.basename(file.fileName, path.extname(file.fileName)), fileRegex)
+    if (parts) prefixCounts.set(parts.prefix, (prefixCounts.get(parts.prefix) ?? 0) + 1)
+  }
+  const top = [...prefixCounts.entries()].sort((a, b) => b[1] - a[1])[0]
+  if (top !== undefined) {
+    hints.push(`File prefix: ${top[0]} (${top[1]} of ${files.length} files)`)
+  }
+
+  return hints
+}
+
+/**
+ * Longest absolute path of anything under `absDir` once `absDir` itself is
+ * renamed to `newName` — the path-length check for a folder rename has to
+ * look at its deepest file, not the folder.
+ */
+function longestPathAfterFolderRename(absDir: string, newName: string): number {
+  const renamed = path.join(path.dirname(absDir), newName)
+  let longest = renamed.length
+  if (!fs.existsSync(absDir)) return longest
+
+  const stack = [absDir]
+  while (stack.length > 0) {
+    const current = stack.pop()!
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const child = path.join(current, entry.name)
+      longest = Math.max(longest, renamed.length + child.length - absDir.length)
+      if (entry.isDirectory()) stack.push(child)
+    }
+  }
+  return longest
 }
 
 // ─────────────────────────────────────────────
@@ -685,7 +942,8 @@ function planEpisodeCode(
  *   - the target already exists on disk, EXCEPT when it is the source file
  *     itself under a different case (that's a legitimate case-only rename,
  *     which NTFS handles fine but `fs.existsSync` reports as a collision)
- *   - the resulting absolute path exceeds MAX_TARGET_PATH
+ *   - the resulting absolute path exceeds MAX_TARGET_PATH (for a folder, the
+ *     path of its deepest file after the rename)
  */
 export function validatePlan(plan: Plan, rootPath: string): string[] {
   const problems: string[] = []
@@ -708,8 +966,12 @@ export function validatePlan(plan: Plan, rootPath: string): string[] {
     claimed.set(claimKey, source)
 
     const absTarget = path.join(rootPath, entry.dir, entry.to)
-    if (absTarget.length > MAX_TARGET_PATH) {
-      problems.push(`${source} → target path is ${absTarget.length} chars (max ${MAX_TARGET_PATH})`)
+    const targetLength =
+      entry.kind === 'folder'
+        ? longestPathAfterFolderRename(path.join(rootPath, entry.dir, entry.from), entry.to)
+        : absTarget.length
+    if (targetLength > MAX_TARGET_PATH) {
+      problems.push(`${source} → target path is ${targetLength} chars (max ${MAX_TARGET_PATH})`)
       continue
     }
 
@@ -733,8 +995,12 @@ function report(plan: Plan): void {
 
   const byShow = new Map<string, number>()
   for (const entry of plan.entries) {
-    // dir is "<category>/<show>/<season>"; the show is everything but the season.
-    const show = entry.dir.split('/').slice(0, -1).join('/')
+    // A file's dir is "<category>/<show>/<season>", so the show is everything
+    // but the season. A folder entry's dir is the category and `from` the show.
+    const show =
+      entry.kind === 'folder'
+        ? `${entry.dir}/${entry.from}`
+        : entry.dir.split('/').slice(0, -1).join('/')
     byShow.set(show, (byShow.get(show) ?? 0) + 1)
   }
 
@@ -842,6 +1108,7 @@ function apply(plan: Plan, rootPath: string, manifestPath: string): void {
     renames: plan.entries.map(entry => ({
       from: path.join(rootPath, entry.dir, entry.from),
       to: path.join(rootPath, entry.dir, entry.to),
+      ...(entry.kind === 'folder' ? { kind: 'folder' as const } : {}),
     })),
   }
 
@@ -855,7 +1122,7 @@ function apply(plan: Plan, rootPath: string, manifestPath: string): void {
       renameFile(rename.from, rename.to)
       done++
     } catch (err) {
-      console.error(`\n  Rename failed after ${done} file(s): ${(err as Error).message}`)
+      console.error(`\n  Rename failed after ${done} item(s): ${(err as Error).message}`)
       console.error(`    ${rename.from}`)
       console.error(`    -> ${rename.to}`)
       console.error(`\n  Reverse what was applied with:`)
@@ -864,7 +1131,7 @@ function apply(plan: Plan, rootPath: string, manifestPath: string): void {
     }
   }
 
-  console.log(`  [DONE] Renamed ${done} file(s).`)
+  console.log(`  [DONE] Renamed ${done} item(s).`)
 }
 
 /**
@@ -923,8 +1190,19 @@ export function validateUndoManifest(manifest: unknown): string[] {
       problems.push(`${where}: ${from} already exists — undoing would overwrite it`)
       continue
     }
-    if (fs.existsSync(to) && !fs.statSync(to).isFile()) {
-      problems.push(`${where}: ${to} is not a file`)
+    // A folder may only be restored by an entry that says it's a folder, so a
+    // plain file entry can never be edited into renaming a directory.
+    if (rename.kind !== undefined && rename.kind !== 'file' && rename.kind !== 'folder') {
+      problems.push(`${where}: unknown kind '${String(rename.kind)}'`)
+      continue
+    }
+    if (fs.existsSync(to)) {
+      const isDir = fs.statSync(to).isDirectory()
+      if (rename.kind === 'folder' && !isDir) {
+        problems.push(`${where}: ${to} is not a folder`)
+      } else if (rename.kind !== 'folder' && !fs.statSync(to).isFile()) {
+        problems.push(`${where}: ${to} is not a file`)
+      }
     }
   }
 
@@ -976,7 +1254,7 @@ function undo(manifestPath: string): void {
     reverted++
   }
 
-  console.log(`  [DONE] Reverted ${reverted} file(s), ${missing} were not present.`)
+  console.log(`  [DONE] Reverted ${reverted} item(s), ${missing} were not present.`)
 }
 
 // ─────────────────────────────────────────────
@@ -1017,16 +1295,30 @@ function main(): void {
   const files = walkEpisodeFiles(root.root_path, rules, args.show)
 
   let built: Omit<Plan, 'generated' | 'fix' | 'drive' | 'root_path'>
+  let modeProblems: string[] = []
   switch (args.fix) {
+    case 'show-folder': {
+      // parseArgs guarantees both --show and --to for this mode.
+      const planned = planShowFolder(root.root_path, rules, args.show!, args.to!)
+      built = planned.built
+      modeProblems = planned.problems
+      const hints = showFolderHints(files, fileRegex, out.validation)
+      if (hints.length > 0) {
+        console.log(`\n  Hints for '${args.show}' (check --to against these):`)
+        for (const hint of hints) console.log(`    ${hint}`)
+      }
+      break
+    }
     case 'show-prefix':
-      built = planShowPrefix(files, fileRegex)
+      built = planShowPrefix(files, fileRegex, compilePattern(rules.patterns.show_folder))
       break
     case 'episode-titles':
       built = planEpisodeTitles(
         files,
         fileRegex,
         buildTmdbIdByShowFolder(out.validation),
-        loadSeasonEpisodeNames(path.join(PROJECT_ROOT, 'cache', 'tmdb-show-seasons.json'))
+        loadSeasonEpisodeNames(path.join(PROJECT_ROOT, 'cache', 'tmdb-show-seasons.json')),
+        args.allowPartial
       )
       break
     case 'episode-code':
@@ -1049,7 +1341,7 @@ function main(): void {
   fs.writeFileSync(planPath, JSON.stringify(plan, null, 2), 'utf-8')
   console.log(`  [PLAN] ${planPath}`)
 
-  const problems = validatePlan(plan, root.root_path)
+  const problems = [...modeProblems, ...validatePlan(plan, root.root_path)]
   if (problems.length > 0) {
     console.error(`\n  ABORTED — ${problems.length} unsafe rename(s). Nothing was changed.\n`)
     for (const problem of problems.slice(0, 25)) console.error(`    ${problem}`)

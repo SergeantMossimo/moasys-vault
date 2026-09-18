@@ -226,6 +226,8 @@ patterns:
   file: '^(?<title>.+)\s\((?<year>\d{4})\)$' # The Crow (1994).mp4
 ```
 
+**The `edition` group.** Two patterns carry an optional `edition` capture group for Plex's `{edition-Name}` tag — `movies.patterns.file` and `shows.patterns.show_folder`. The level differs because Plex's does: a movie edition is a file in a shared folder, a show edition is a whole folder. Dropping the group from either pattern makes tagged names unparseable, so they fire `warn_bad_file_name` / `warn_bad_show_folder` instead. See [CONVENTIONS.md](CONVENTIONS.md) for the naming rules and `warn_empty_edition` for a tag with no name.
+
 ---
 
 ### `categories`

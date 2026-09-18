@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { findNumericGaps } from '../../../src/core/gaps'
+import { findNumericGaps, formatGaps } from '../../../src/core/gaps'
 
 describe('findNumericGaps', () => {
   it('returns empty for an empty array', () => {
@@ -43,5 +43,27 @@ describe('findNumericGaps', () => {
   it('handles a large flat sequence', () => {
     const nums = Array.from({ length: 100 }, (_, i) => i + 1)
     expect(findNumericGaps(nums)).toEqual([])
+  })
+})
+
+describe('formatGaps', () => {
+  const ep = (n: number) => `E${String(n).padStart(2, '0')}`
+
+  it('lists isolated gaps one by one', () => {
+    expect(formatGaps([3, 7], ep)).toBe('E03, E07')
+  })
+
+  it('collapses consecutive runs into ranges', () => {
+    expect(formatGaps([2, 3, 4, 7, 9, 10], ep)).toBe('E02–E04, E07, E09–E10')
+  })
+
+  it('sorts its input first', () => {
+    expect(formatGaps([4, 2, 3], ep)).toBe('E02–E04')
+  })
+
+  it('stops after eight ranges and counts the missing items it left out', () => {
+    // Nine isolated gaps plus a run of three: 8 shown, then 1 + 3 = 4 more.
+    const gaps = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 21, 22]
+    expect(formatGaps(gaps, ep)).toBe('E02, E04, E06, E08, E10, E12, E14, E16, +4 more')
   })
 })

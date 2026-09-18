@@ -55,7 +55,7 @@ Movies/
 
 ```text
 <Shows>/
-└── <Show Title (YEAR)>/
+└── <Show Title (YEAR)> {edition-<Edition Name>}/
     ├── Season 01/
     │   ├── <Show Title (YEAR)> - S01E01 - <Episode Title>.<ext>
     │   ├── <Show Title (YEAR)> - S01E02-E03 - <Episode Title>.<ext>
@@ -67,10 +67,12 @@ Movies/
 **Naming rules:**
 
 - **Show folder:** `Show Title (YEAR)` — year in parentheses
+- **Optional edition tag:** `{edition-<Name>}` after the year, on the **show folder only** — see _Editions_ below
 - **Season folder:** `Season XX` — two-digit zero-padded number (`Season 01`, not `Season 1`)
 - **Episode file:** `Show Title (YEAR) - S01E01 - Episode Title.<ext>`
   - The trailing `- Episode Title` portion is optional, but files without it are summarized as missing titles
   - Multi-episode files use `S01E01-E02`
+  - Episode numbers are zero-padded to two digits; three are fine for long-running specials (`S00E201`). An unpadded `S02E4` is flagged, and `fix:shows --fix episode-code` pads it
   - Plex reads `s01e01` and `S01E01` alike. To keep your library consistent, set a house style with [`episode_code_case`](CONFIG.md#episode_code_case)
 
 **Special seasons:**
@@ -82,6 +84,28 @@ ignored_season_names:
   - Specials
   - Champion of Champions
 ```
+
+**Editions:**
+
+A second cut of the same series — a colorized version alongside the black-and-white original, a Bluray remaster — is an **edition**. Tag the show folder and Plex keeps each one as its own library item, with its own watch status and ratings:
+
+```text
+Shows/HD/
+├── Spider-Noir (2026) {edition-Authentic Black and White}/
+│   └── Season 01/
+│       └── Spider-Noir (2026) - S01E01 - Step Into My Office.mp4
+└── Spider-Noir (2026) {edition-True Hue Color}/
+    └── Season 01/
+        └── Spider-Noir (2026) - S01E01 - Step Into My Office.mp4
+```
+
+- **The tag goes on the show folder, and nowhere else.** Plex defines an edition at the show level — not per-season, not per-episode — so the episode files inside keep their plain `Show Title (YEAR) - S01E01` names. `fix:shows --fix show-prefix` strips the tag when it rebuilds a prefix.
+- **Each edition is its own catalog entry**, with its own seasons and episodes. Two editions of one season are never reported as duplicate copies of each other.
+- **Only `{edition-…}` counts.** A bracketed suffix like `[True Hue Color]` is not an edition to Plex — it still fires `warn_bad_show_folder`.
+- **Requirements:** adding or editing edition info needs a Plex Pass on the server admin account, and Plex Media Server 1.43.3 or newer.
+- **Renaming an existing folder loses its watch history** — Plex treats the renamed folder as a new item.
+
+This is the shows equivalent of the movies `{edition-…}` filename tag above; the difference is which level carries it.
 
 **Examples:**
 

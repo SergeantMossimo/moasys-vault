@@ -74,6 +74,12 @@ export interface PlexMetadata {
   year?: number
   /** Agent identifier, e.g. `plex://movie/5d77…`, or `local://123` when unmatched. */
   guid?: string
+  /**
+   * Edition name for a movie or a show — Plex's `{edition-…}` tag. On a movie
+   * it comes off the filename, on a show off the show folder. Absent when the
+   * item carries no edition.
+   */
+  editionTitle?: string
   /** External ids, e.g. `imdb://tt0118826`. Only present with `includeGuids=1`. */
   Guid?: Array<{ id: string }>
   /** Show key on an episode; artist key on a track or album. */
@@ -142,6 +148,15 @@ export interface PlexCatalogItem {
   original_title: string | null
   year: number | null
   guid: string | null
+  /**
+   * Plex's edition name for this item, or null when it has none. Movies take
+   * it from the filename tag, shows from the show folder's.
+   *
+   * Optional on the type because catalog.json files pulled before editions
+   * were supported don't carry the key — read it with a `!== undefined` guard
+   * rather than assuming a re-pull has happened.
+   */
+  edition_title?: string | null
   /** External ids (`imdb://…`, `tmdb://…`, `tvdb://…`). */
   external_ids: string[]
   /** Episode: the show's rating_key. Track: the artist's. */

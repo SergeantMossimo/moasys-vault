@@ -371,7 +371,7 @@ describe('validateMovies — warnings', () => {
       memoryCache(),
       warnings
     )
-    expect(warnings.all().some(w => w.issue.match(/TMDB found no match/))).toBe(true)
+    expect(warnings.all().some(w => w.issue.match(/TMDB has nothing matching/))).toBe(true)
   })
 
   it('emits warn_tmdb_low_confidence when the best match is low', async () => {
@@ -404,7 +404,7 @@ describe('validateMovies — warnings', () => {
       memoryCache(),
       warnings
     )
-    expect(warnings.all().some(w => w.issue.match(/low-confidence/i))).toBe(true)
+    expect(warnings.all().some(w => w.issue.match(/below the confidence threshold/i))).toBe(true)
   })
 
   it('emits warn_tmdb_year_mismatch when TMDB year differs from folder', async () => {
@@ -430,7 +430,7 @@ describe('validateMovies — warnings', () => {
       memoryCache(),
       warnings
     )
-    expect(warnings.all().some(w => w.issue.match(/year mismatch/i))).toBe(true)
+    expect(warnings.all().some(w => w.issue.match(/Folder says \d{4}, TMDB says/i))).toBe(true)
   })
 
   it('emits warn_tmdb_title_canonical when the folder title differs from TMDB filename-safe form', async () => {
@@ -456,7 +456,7 @@ describe('validateMovies — warnings', () => {
       memoryCache(),
       warnings
     )
-    expect(warnings.all().some(w => w.issue.match(/canonical title/i))).toBe(true)
+    expect(warnings.all().some(w => w.issue.match(/filename-safe form is/i))).toBe(true)
   })
 
   it('warn_tmdb_low_confidence includes Alternatives: text when alternate candidates are available', async () => {
@@ -507,7 +507,7 @@ describe('validateMovies — warnings', () => {
       warnings
     )
 
-    const lowWarn = warnings.all().find(w => w.issue.match(/low-confidence/i))
+    const lowWarn = warnings.all().find(w => w.issue.match(/below the confidence threshold/i))
     expect(lowWarn?.issue).toMatch(/Alternatives:/)
     expect(lowWarn?.issue).toContain("'Adventure Time'")
   })
@@ -730,8 +730,12 @@ describe('validateMovies — warn_tmdb_runtime_mismatch', () => {
     localMinutes: number
     rules?: Partial<MoviesRules>
     durations?: MovieDurations
+    /** Build the collector with an ignore list, so rows carry a suggestion. */
+    ignoreList?: boolean
   }) {
-    const warnings = new WarningCollector()
+    const warnings = opts.ignoreList
+      ? new WarningCollector({ mediaType: 'movies', entries: [] })
+      : new WarningCollector()
     await validateMovies(
       [movie('The Crow', 1994)],
       { ...defaultMoviesRules, ...opts.rules },
@@ -747,7 +751,7 @@ describe('validateMovies — warn_tmdb_runtime_mismatch', () => {
   it('fires when the file is far shorter than TMDB (truncated encode)', async () => {
     const hits = await run({ tmdbRuntime: 102, localMinutes: 5 })
     expect(hits).toHaveLength(1)
-    expect(hits[0]?.issue).toMatch(/file is 5m but TMDB says 'The Crow' runs 1h 42m/)
+    expect(hits[0]?.issue).toMatch(/File runs 5m, TMDB says 'The Crow' runs 1h 42m/)
     expect(hits[0]?.issue).toMatch(/95% shorter/)
     expect(hits[0]?.path).toBe('HD/The Crow (1994)/The Crow (1994).mp4')
   })
@@ -756,7 +760,9 @@ describe('validateMovies — warn_tmdb_runtime_mismatch', () => {
     const hits = await run({ tmdbRuntime: 5, localMinutes: 115 })
     expect(hits).toHaveLength(1)
     expect(hits[0]?.issue).toMatch(/longer/)
-    expect(hits[0]?.issue).toMatch(/wrongly-matched film/)
+    // The direction-specific advice moved into the bucket's fix, which has to
+    // cover both directions at once.
+    expect(hits[0]?.fix).toMatch(/Longer is usually a wrong match/)
   })
 
   it('stays silent inside the tolerance band', async () => {
@@ -835,10 +841,11 @@ describe('validateMovies — warn_tmdb_runtime_mismatch', () => {
     expect(hits[0]?.path).toBe('HD/The Crow (1994)/The Crow (1994).mp4')
   })
 
-  it('points at both escape hatches — the ignore file and the check toggle', async () => {
-    const hits = await run({ tmdbRuntime: 102, localMinutes: 5 })
-    expect(hits[0]?.issue).toMatch(/ignored\/<drive>\/movies\.yaml under 'files:'/)
-    expect(hits[0]?.issue).toMatch(/checks\.warn_tmdb_runtime_mismatch: false/)
+  // Silencing used to be spelled out in the message. The ready-to-paste entry
+  // on the row replaces the ignore-file half; the toggle is the bucket key.
+  it('carries a ready-to-paste ignore entry for the offending file', async () => {
+    const hits = await run({ tmdbRuntime: 102, localMinutes: 5, ignoreList: true })
+    expect(hits[0]?.ignore).toBe('files: The Crow (1994)/The Crow (1994).mp4')
   })
 
   it('does not fire when TMDB found no match at all', async () => {

@@ -113,6 +113,7 @@ export function toCatalogItem(
     original_title: meta.originalTitle ?? null,
     year: meta.year ?? null,
     guid: meta.guid ?? null,
+    edition_title: meta.editionTitle ?? null,
     external_ids: (meta.Guid ?? []).map(g => g.id),
     grandparent_rating_key: meta.grandparentRatingKey ?? null,
     parent_rating_key: meta.parentRatingKey ?? null,

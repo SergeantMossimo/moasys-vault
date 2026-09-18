@@ -18,8 +18,13 @@ function memoryCache<T>(seed: Record<string, T> = {}): JsonCache<T> {
   return cache
 }
 
-function show(title: string, year: number, seasons: ShowOutput['seasons'] = []): ShowOutput {
-  return { title, year, seasons }
+function show(
+  title: string,
+  year: number,
+  seasons: ShowOutput['seasons'] = [],
+  edition: string | null = null
+): ShowOutput {
+  return { title, year, edition, seasons }
 }
 
 function mockClient(opts: {
@@ -449,7 +454,7 @@ describe('validateShows — warnings', () => {
       memoryCache(),
       warnings
     )
-    expect(warnings.all().some(w => w.issue.match(/no match/i))).toBe(true)
+    expect(warnings.all().some(w => w.issue.match(/TMDB has nothing matching/i))).toBe(true)
   })
 
   it('emits warn_tmdb_episode_count when a numeric season is short of TMDB', async () => {
@@ -486,7 +491,87 @@ describe('validateShows — warnings', () => {
       warnings
     )
 
-    expect(warnings.all().some(w => w.issue.match(/10 of 13 episodes/i))).toBe(true)
+    expect(warnings.all().some(w => w.issue.match(/10\/13 episodes per TMDB/i))).toBe(true)
+  })
+
+  /**
+   * Two editions of one series are separate rows — Plex tracks them as
+   * separate items — but they share a title+year, so the search cache serves
+   * the second from the first and TMDB is queried once.
+   */
+  it('validates each edition, carries the tag, and searches TMDB once', async () => {
+    const client = mockClient({
+      searchResults: [
+        {
+          id: 100,
+          name: 'Spider-Noir',
+          original_name: 'Spider-Noir',
+          first_air_date: '2026-01-01',
+          popularity: 50,
+        },
+      ],
+      details: {
+        100: {
+          id: 100,
+          name: 'Spider-Noir',
+          original_name: 'Spider-Noir',
+          first_air_date: '2026-01-01',
+          number_of_seasons: 1,
+          number_of_episodes: 8,
+          seasons: [{ season_number: 1, episode_count: 8, name: 'Season 1' }],
+        },
+      },
+    })
+
+    const searchCache = memoryCache<ResolvedSearch>()
+    const out = await validateShows(
+      [
+        show('Spider-Noir', 2026, [], 'True Hue Color'),
+        show('Spider-Noir', 2026, [], 'Authentic Black and White'),
+      ],
+      defaultShowsRules,
+      client,
+      searchCache,
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+
+    expect(out.map(e => [e.edition, e.tmdb_id])).toEqual([
+      ['True Hue Color', 100],
+      ['Authentic Black and White', 100],
+    ])
+    expect(client.searchShow).toHaveBeenCalledTimes(1)
+  })
+
+  it('names the tagged folder in a warning path, so each edition can be ignored separately', async () => {
+    const client = mockClient({ searchResults: [] })
+    await validateShows(
+      [
+        show(
+          'Spider-Noir',
+          2026,
+          [
+            {
+              season: '1',
+              episode_count: 8,
+              versions: [{ category: 'HD', quality: 'HD' }],
+              episodes: [],
+            },
+          ],
+          'True Hue Color'
+        ),
+      ],
+      defaultShowsRules,
+      client,
+      memoryCache(),
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+    expect(warnings.all().map(w => w.path)).toEqual([
+      'HD/Spider-Noir (2026) {edition-True Hue Color}',
+    ])
   })
 
   it('uses a /-separated path so ignore-list prefix matching works across both checks', async () => {
@@ -604,7 +689,7 @@ describe('validateShows — warnings', () => {
       warnings
     )
 
-    expect(warnings.all().some(w => w.issue.match(/canonical title/i))).toBe(true)
+    expect(warnings.all().some(w => w.issue.match(/filename-safe form is/i))).toBe(true)
   })
 
   it('warn_tmdb_low_confidence includes Alternatives: text when alternate candidates are cached', async () => {
@@ -659,7 +744,7 @@ describe('validateShows — warnings', () => {
       warnings
     )
 
-    const lowWarn = warnings.all().find(w => w.issue.match(/low-confidence/i))
+    const lowWarn = warnings.all().find(w => w.issue.match(/below the confidence threshold/i))
     expect(lowWarn?.issue).toMatch(/Alternatives:/)
     expect(lowWarn?.issue).toContain("'Adventure Time'")
   })
@@ -824,6 +909,50 @@ describe('validateShows — TMDB episode-name validation', () => {
             episodes: [
               { episode_start: 1, episode_end: 1, title: 'All Good Things' },
               { episode_start: 2, episode_end: 2, title: 'T.R.A.C.K.S' },
+            ],
+          },
+        ]),
+      ],
+      defaultShowsRules,
+      client,
+      memoryCache(),
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+
+    expect(warnings.all().filter(w => w.type === 'warn_tmdb_episode_name_mismatch')).toEqual([])
+  })
+
+  it('accepts a title that only matches once an illegal char AND a trailing period are dropped', async () => {
+    // SNL 'Chevy Chase/Sheila E.' and The Pitt '7:00 A.M.' are stored as
+    // 'Chevy ChaseSheila E' and '700 A.M'. The loose tier turns the deleted
+    // '/' or ':' into a space, so only a strict tier that also strips the
+    // trailing period can match them.
+    const client = mockClient({
+      searchResults: baseSearch,
+      details: { 100: baseDetails },
+      seasons: {
+        '100:1': {
+          season_number: 1,
+          episodes: [
+            { episode_number: 1, name: 'Chevy Chase/Sheila E.' },
+            { episode_number: 2, name: '7:00 A.M.' },
+          ],
+        },
+      },
+    })
+
+    await validateShows(
+      [
+        show('Show', 2020, [
+          {
+            season: '1',
+            episode_count: 2,
+            versions: [{ category: 'default', quality: null }],
+            episodes: [
+              { episode_start: 1, episode_end: 1, title: 'Chevy ChaseSheila E' },
+              { episode_start: 2, episode_end: 2, title: '700 A.M' },
             ],
           },
         ]),

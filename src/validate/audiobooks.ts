@@ -299,34 +299,49 @@ export async function validateAudiobooks(
       warnings.add(
         'warn_openlibrary_not_found',
         bookPath,
-        `Open Library found nothing matching '${bookTitleOnly(book.title)}' by ${authorFolder}. ` +
-          `Check the title and author for typos — or ignore this if the book simply isn't in Open Library.`,
-        options
+        `Open Library has nothing matching '${bookTitleOnly(book.title)}' by ${authorFolder}.`,
+        {
+          ...options,
+          fix:
+            `Check the title and author for typos. Open Library's coverage is patchy, so a ` +
+            `correctly named book can still be missing.`,
+        }
       )
     } else if (status === 'close' && rules.checks.warn_openlibrary_title_mismatch) {
       warnings.add(
         'warn_openlibrary_title_mismatch',
         bookPath,
-        `Possible typo: Open Library lists a book by ${olAuthors} titled '${olTitle}', ` +
-          `close to but not the same as '${bookTitleOnly(book.title)}'. ` +
-          `Verify the spelling; if Open Library is right, rename the folder using '${safeTitle}'.`,
-        options
+        `Folder says '${bookTitleOnly(book.title)}', Open Library says '${olTitle}' by ` +
+          `${olAuthors}. Suggested folder: '${safeTitle}'.`,
+        {
+          ...options,
+          fix: `Check the spelling and rename the folder if Open Library has it right.`,
+        }
       )
     } else if (status === 'case' && rules.checks.warn_openlibrary_title_case) {
       warnings.add(
         'warn_openlibrary_title_case',
         bookPath,
-        `Open Library capitalizes the title '${olTitle}'; the folder has '${bookTitleOnly(book.title)}'. ` +
-          `Only the capitalization differs.`,
-        options
+        `Capitalization only: folder '${bookTitleOnly(book.title)}' vs Open Library '${olTitle}'.`,
+        {
+          ...options,
+          fix:
+            `Rename the folder to match if you want Open Library's capitalization. Cosmetic — ` +
+            `Open Library's own casing is inconsistent.`,
+        }
       )
     } else if (status === 'author_mismatch' && rules.checks.warn_openlibrary_author_mismatch) {
       warnings.add(
         'warn_openlibrary_author_mismatch',
         bookPath,
-        `Open Library's closest match for '${bookTitleOnly(book.title)}' is '${olTitle}' by ${olAuthors || 'an unknown author'}, ` +
-          `which doesn't include ${authorFolder}. Check the author folder for a typo — or ignore this if it's a different book with the same title.`,
-        options
+        `Closest Open Library match '${olTitle}' is by ${olAuthors || 'an unknown author'}, ` +
+          `not ${authorFolder}.`,
+        {
+          ...options,
+          fix:
+            `Check the author folder for a typo. Often just a different book with the same ` +
+            `title, in which case ignore it.`,
+        }
       )
     }
 

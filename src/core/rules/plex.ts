@@ -36,6 +36,15 @@ export const PlexRulesSchema = z.object({
     warn_plex_title_mismatch: z.boolean(),
     /** Plex's title matches the folder except for capitalization. */
     warn_plex_title_case: z.boolean(),
+    /**
+     * Plex's edition name for a show disagrees with the `{edition-…}` tag on
+     * its folder — including one side carrying an edition and the other not.
+     * Shows only: a movie's edition tag lives in the filename, not the folder,
+     * so there is nothing on the folder to compare it against.
+     */
+    warn_plex_edition_mismatch: z.boolean(),
+    /** Plex's edition name matches the folder's tag except for capitalization. */
+    warn_plex_edition_case: z.boolean(),
     /** An item Plex lists under its Duplicates filter — several files merged into one entry. */
     warn_plex_duplicate: z.boolean(),
     /** `plex:logs` — ERROR lines in Plex's server or scanner logs about a file or folder. */
@@ -59,6 +68,8 @@ export const defaultPlexRules: PlexRules = PlexRulesSchema.parse({
     warn_plex_unmatched: true,
     warn_plex_title_mismatch: true,
     warn_plex_title_case: true,
+    warn_plex_edition_mismatch: true,
+    warn_plex_edition_case: true,
     warn_plex_duplicate: true,
     warn_plex_log_error: true,
     warn_plex_log_warning: false,

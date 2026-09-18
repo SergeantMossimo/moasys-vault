@@ -2,6 +2,28 @@
 
 What's landed, newest first. Not formal release notes — pointers to what's new if you're returning after time away. Entries marked _(breaking)_ change a file format or setting you may need to update.
 
+## v0.17
+
+- _(breaking)_ Shows support Plex's [TV Show Editions](docs/CONVENTIONS.md#shows). A show folder may carry a `{edition-Name}` tag after the year (`Spider-Noir (2026) {edition-True Hue Color}`), and each edition is its own catalog entry with its own seasons — matching how Plex tracks them as separate items with separate watch state. `shows.json` and shows `validation.json` gained an `edition` field; `output/<drive>/shows/data/probe.json` did too. Two editions of one season are no longer reported as duplicate copies of each other.
+- `warn_empty_edition` (shows) flags a folder tagged `{edition-}` with no name after the dash. A bracketed suffix such as `[True Hue Color]` is deliberately still `warn_bad_show_folder` — Plex does not read it as an edition.
+- `fix:shows --fix show-prefix` rebuilds each file's prefix from its folder's parsed title and year rather than the folder name, so an edition tag stays on the folder and off the episode files.
+- `plex:pull` records each item's `edition_title`, and `plex:check` gained `warn_plex_edition_mismatch` and `warn_plex_edition_case` comparing it with the folder's tag. Shows only for now: a movie's edition tag is in its filename, so its folder has nothing to compare against.
+
+## v0.16
+
+- _(breaking)_ Warnings files are much shorter. Each `by_type` bucket is now `{ fix, items }`: the recommended fix is written once for the bucket instead of on every row, and each item's `issue` states only what is wrong there. Median issue length went from 264 characters to about 120 — see [`warnings.json`](docs/OUTPUT.md#warningsjson-shape-shared-across-scan--validate).
+- Every warning message was rewritten to lead with names and numbers. Missing episodes, tracks and chapters collapse into ranges (`E02–E20, E22`) and stop after eight, instead of listing every one — a single row once reached 3,600 characters.
+- `plex-log-warnings.json` rows name up to three problems and drop the per-folder advice and sample log line. The advice is in the [log problem table](docs/PLEX.md#log-warnings), now keyed by the name the warning uses, and the samples are in `logs-summary.json`.
+- The warning tables in [Output](docs/OUTPUT.md#warning-tables) are keyed by `warn_*` identifier, matching the Plex tables.
+- `fix:shows --fix episode-titles --allow-partial` names seasons you hold only part of. Each entry is marked for review in the dry run — see [the season guard](docs/SCANS.md#the-season-guard-on-episode-titles).
+- `warn_tmdb_episode_name_mismatch` no longer flags titles that are correct once an illegal character and a trailing period are both dropped (`Chevy Chase/Sheila E.` → `Chevy ChaseSheila E`, `7:00 A.M.` → `700 A.M`).
+
+## v0.15
+
+- `fix:shows --fix show-folder` renames one show folder you name with `--show` and `--to`, for when the folder rather than its files is wrong. The dry run shows the TMDB title and the files' prefix as hints — see [Fixing filenames](docs/SCANS.md#fixing-filenames--npm-run-fixshows).
+- Show episode files with 3-digit episode numbers (`S00E201`) are now valid instead of `warn_bad_file_name`.
+- `fix:shows --fix episode-code` also zero-pads unpadded numbers (`s02e4` → `s02e04`), and `warn_bad_file_name` points at it for those files.
+
 ## v0.14
 
 - Every warning row carries an `ignore` field with the narrowest ready-to-paste ignore-list entry that silences it — see [Silencing a row](docs/OUTPUT.md#silencing-a-row).

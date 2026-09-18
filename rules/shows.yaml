@@ -12,13 +12,18 @@
 # Plex's TV naming convention. Patterns use named capture groups.
 # `episode_title` is optional; when absent the file fires
 # warn_missing_episode_title (summarised once per season).
+#
+# `edition` on show_folder is Plex's TV Show Editions convention — a second cut
+# of the same series (colorized vs black-and-white, a remaster) kept as its own
+# library item. Plex defines editions at the SHOW level only, so the episode
+# files inside an edition folder are named normally, with no tag.
 patterns:
-  show_folder: '^(?<title>.+)\s\((?<year>\d{4})\)$'                                # Star Trek Enterprise (2001)
+  show_folder: '^(?<title>.+)\s\((?<year>\d{4})\)(?:\s\{edition-(?<edition>[^}]*)\})?$' # Star Trek Enterprise (2001), Spider-Noir (2026) {edition-True Hue Color}
   season_folder:
     pattern: '^Season\s(?<season>\d{2})$'                                          # Season 01 (case-insensitive)
     flags: 'i'
   file:
-    pattern: '^(?<title>.+)\s\((?<year>\d{4})\)\s-\sS(?<season>\d{2})E(?<episode>\d{2})(?:-E?(?<episode_end>\d{2}))?(?:\s-\s(?<episode_title>.+))?$'
+    pattern: '^(?<title>.+)\s\((?<year>\d{4})\)\s-\sS(?<season>\d{2})E(?<episode>\d{2,3})(?:-E?(?<episode_end>\d{2,3}))?(?:\s-\s(?<episode_title>.+))?$'
     flags: 'i'
 
 # ── Subfolders under root_path to walk ──────────────────────────────────────
@@ -122,6 +127,7 @@ checks:
   warn_non_primary: true                        # File isn't the configured primary format
   warn_no_videos: true                          # Season folder has no video files
   warn_bad_show_folder: true                    # Show folder doesn't match patterns.show_folder
+  warn_empty_edition: true                      # Show folder has {edition-} with no name after the dash
   warn_bad_season_folder: true                  # Season folder doesn't match (and isn't in ignored_season_names)
   warn_bad_file_name: true                      # File doesn't match patterns.file
   warn_show_year_mismatch: true                 # File's show/year vs parent show folder

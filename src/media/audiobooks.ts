@@ -29,13 +29,45 @@ import {
   MediaModule,
 } from '../core/types'
 import { hasExtension, isPrimary, formatPrimaryExts, findUnexpectedEntries } from '../core/files'
-import { findNumericGaps } from '../core/gaps'
+import { findNumericGaps, formatGaps } from '../core/gaps'
 import { AudiobooksRules } from '../core/rules/audiobooks'
 import { compilePattern, resolveCategories } from '../core/rules/helpers'
 import { finalizeVersions, distinctCategories } from '../core/versions'
 import { ProbeData } from '../probe/types'
 
 import { NamedBook, bookWarningPath, findNameIssues } from './audiobook-names'
+
+/**
+ * The remedy for each warning type, written once per bucket in warnings.json
+ * rather than repeated on every row — see `WarningOptions.fix`.
+ *
+ * They live in one map because several types fire from more than one call site
+ * (`warn_loose_files` at both the category root and an author folder, for
+ * instance) and a `fix` must read the same whichever site produced the row.
+ * Keep each one generic enough to cover every site that uses it, and keep
+ * per-row detail in the `issue` instead.
+ *
+ * The name-consistency checks carry their own advice through `NameFinding.fix`
+ * — see `audiobook-names.ts`.
+ */
+const FIX = {
+  warn_loose_files:
+    `Expected an 'Author/Book/01 - Chapter.ext' layout. Move the chapters into a book ` +
+    `folder under an author — loose files are not in the catalog.`,
+  warn_unexpected_entries: `Expected only subfolders or chapter files, plus sidecars. Move or delete anything else.`,
+  warn_extra_subfolders:
+    `Expected a flat chapter layout. For multi-disc books use disc-prefixed numbers ` +
+    `('101 - Chapter.mp3', '201 - Chapter.mp3') instead of per-disc folders — files in ` +
+    `these subfolders are not scanned.`,
+  warn_no_audio: `Add the chapters, or delete the empty folder.`,
+  warn_non_primary: `Re-encode to your primary format if you want one format throughout.`,
+  warn_bad_chapter_name: `Rename to '01 - Chapter Name.ext', or '101 - Chapter Name.ext' for multi-disc books.`,
+  warn_chapter_gaps: `Add the missing chapters, or ignore this if the numbering really skips.`,
+  warn_duplicate_book:
+    `The same book in two categories — keep the copy in the category you want and delete ` +
+    `the rest.`,
+  permission_denied: `Check the folder's permissions, or whether the drive is still mounted.`,
+} as const
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -127,8 +159,8 @@ export function createAudiobooksModule(
           warnings.add(
             'warn_loose_files',
             folderName,
-            `${looseRoot.length} loose audio file(s) in media folder root — expected an Author/Book/chapters structure. ` +
-              `Move chapters into Author/Book/ subfolders.`
+            `${looseRoot.length} loose audio file(s) in the category root.`,
+            { fix: FIX.warn_loose_files }
           )
         }
       }
@@ -145,7 +177,8 @@ export function createAudiobooksModule(
           warnings.add(
             'warn_unexpected_entries',
             folderName,
-            `Unexpected file(s) in media folder root: ${names}. Expected only Author/ subfolders plus sidecars.`
+            `Unexpected file(s) in the category root: ${names}.`,
+            { fix: FIX.warn_unexpected_entries }
           )
         }
       }
@@ -161,7 +194,9 @@ export function createAudiobooksModule(
         try {
           bookEntries = fs.readdirSync(authorPath, { withFileTypes: true })
         } catch {
-          warnings.add('permission_denied', authorRel, 'Permission denied reading author folder')
+          warnings.add('permission_denied', authorRel, 'Permission denied reading author folder.', {
+            fix: FIX.permission_denied,
+          })
           continue
         }
 
@@ -175,8 +210,8 @@ export function createAudiobooksModule(
             warnings.add(
               'warn_loose_files',
               authorRel,
-              `${looseAuthor.length} loose audio file(s) in author folder — expected a Book subfolder around chapters. ` +
-                `Create a book subfolder and move chapters into it.`
+              `${looseAuthor.length} loose audio file(s) in the author folder, outside any book.`,
+              { fix: FIX.warn_loose_files }
             )
           }
         }
@@ -193,7 +228,8 @@ export function createAudiobooksModule(
             warnings.add(
               'warn_unexpected_entries',
               authorRel,
-              `Unexpected file(s) in author folder: ${names}. Expected only Book/ subfolders plus sidecars.`
+              `Unexpected file(s) in the author folder: ${names}.`,
+              { fix: FIX.warn_unexpected_entries }
             )
           }
         }
@@ -209,7 +245,9 @@ export function createAudiobooksModule(
           try {
             allFiles = fs.readdirSync(bookPath, { withFileTypes: true })
           } catch {
-            warnings.add('permission_denied', bookRel, 'Permission denied reading book folder')
+            warnings.add('permission_denied', bookRel, 'Permission denied reading book folder.', {
+              fix: FIX.permission_denied,
+            })
             continue
           }
 
@@ -223,10 +261,8 @@ export function createAudiobooksModule(
               warnings.add(
                 'warn_extra_subfolders',
                 bookRel,
-                `Unexpected subfolder(s) in book folder: ${names}. ` +
-                  `Expected a flat chapter layout — for multi-disc books, use disc-prefixed numbers ` +
-                  `(e.g. '101 - Chapter.mp3' for disc 1, '201 - Chapter.mp3' for disc 2). ` +
-                  `Files inside these subfolders are not scanned.`
+                `Unexpected subfolder(s) in the book folder: ${names}.`,
+                { fix: FIX.warn_extra_subfolders }
               )
             }
           }
@@ -243,7 +279,8 @@ export function createAudiobooksModule(
               warnings.add(
                 'warn_unexpected_entries',
                 bookRel,
-                `Unexpected file(s) in book folder: ${names}. Expected only chapter files plus sidecars.`
+                `Unexpected file(s) in the book folder: ${names}.`,
+                { fix: FIX.warn_unexpected_entries }
               )
             }
           }
@@ -255,11 +292,9 @@ export function createAudiobooksModule(
 
           if (audioFiles.length === 0) {
             if (rules.checks.warn_no_audio) {
-              warnings.add(
-                'warn_no_audio',
-                bookRel,
-                'No recognized audio files found in book folder'
-              )
+              warnings.add('warn_no_audio', bookRel, 'Book folder has no audio files.', {
+                fix: FIX.warn_no_audio,
+              })
             }
             continue
           }
@@ -270,8 +305,8 @@ export function createAudiobooksModule(
               warnings.add(
                 'warn_non_primary',
                 path.join(bookRel, f.name),
-                `${formatPrimaryExts(rules.primary_extension)} audio file — may need re-encoding`,
-                { extension: ext }
+                `${formatPrimaryExts(rules.primary_extension)} audio file.`,
+                { extension: ext, fix: FIX.warn_non_primary }
               )
             }
           }
@@ -289,8 +324,8 @@ export function createAudiobooksModule(
                 warnings.add(
                   'warn_bad_chapter_name',
                   path.join(bookRel, f.name),
-                  'Chapter file name does not match naming convention — ' +
-                    'expected: 01 - Chapter Name.ext or 101 - Chapter Name.ext (multi-disc)'
+                  `File name is not '01 - Chapter Name'.`,
+                  { fix: FIX.warn_bad_chapter_name }
                 )
               }
               continue
@@ -309,12 +344,13 @@ export function createAudiobooksModule(
             )) {
               const gaps = findNumericGaps(chapters)
               if (gaps.length > 0) {
-                const gapStr = gaps.map(g => `Chapter ${String(g).padStart(2, '0')}`).join(', ')
+                const gapStr = formatGaps(gaps, g => String(g).padStart(2, '0'))
                 const discStr = discChapters.size > 1 ? `Disc ${discNum}` : 'Book'
                 warnings.add(
                   'warn_chapter_gaps',
                   bookRel,
-                  `Potential missing chapters in ${discStr}: ${gapStr}`
+                  `Missing chapters in ${discStr} (${gaps.length}): ${gapStr}.`,
+                  { fix: FIX.warn_chapter_gaps }
                 )
               }
             }
@@ -392,6 +428,7 @@ export function createAudiobooksModule(
       for (const finding of findNameIssues(named, rules.checks)) {
         const { book } = finding
         warnings.add(finding.type, bookWarningPath(book), finding.issue, {
+          fix: finding.fix,
           scope: {
             categories: book.categories.filter(c => c !== 'default'),
             levels: [book.authorFolder, book.title],
@@ -413,11 +450,14 @@ export function createAudiobooksModule(
         warnings.add(
           'warn_duplicate_book',
           path.join(book.authors.join(', '), book.title),
-          `Duplicate book found in multiple categories: ${ordered.join(', ')}`,
+          `Also in ${ordered.length} other categories: ${ordered.join(', ')}.`,
           // The path carries no category — this check spans them by
           // definition — so scope derivation would read the author as one.
           // Spelling it out is also what lets a `folders:` entry reach here.
-          { scope: { categories: ordered, levels: [book.authors.join(', '), book.title] } }
+          {
+            fix: FIX.warn_duplicate_book,
+            scope: { categories: ordered, levels: [book.authors.join(', '), book.title] },
+          }
         )
       }
     },

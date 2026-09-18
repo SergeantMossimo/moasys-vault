@@ -4,10 +4,12 @@ import path from 'path'
 import { describe, it, expect, vi } from 'vitest'
 
 import { defaultShowsRules } from '../../../src/core/rules/shows'
-import { compilePattern } from '../../../src/core/rules/helpers'
+import { compilePattern, LENIENT_EPISODE_FILE } from '../../../src/core/rules/helpers'
 import {
   joinStem,
+  planEpisodeCode,
   planEpisodeTitles,
+  planShowFolder,
   planShowPrefix,
   renameFile,
   sanitizeEpisodeTitle,
@@ -90,6 +92,22 @@ describe('splitStem', () => {
     expect(splitStem('Barry (2018) - 205', fileRegex)).toBeNull()
   })
 
+  it('accepts a 3-digit episode number', () => {
+    expect(splitStem('Saturday Night Live (1975) - s00e201', fileRegex)).toMatchObject({
+      code: 's00e201',
+      seasonNumber: 0,
+      episodeStart: 201,
+    })
+  })
+
+  it('parses an unpadded number only when a fallback regex is supplied', () => {
+    expect(splitStem('Shameless (2011) - s02e4', fileRegex)).toBeNull()
+    expect(splitStem('Shameless (2011) - s02e4', fileRegex, LENIENT_EPISODE_FILE)).toMatchObject({
+      code: 's02e4',
+      episodeStart: 4,
+    })
+  })
+
   it('round-trips through joinStem unchanged', () => {
     for (const stem of [
       'Barry (2018) - s02e05',
@@ -157,7 +175,11 @@ describe('planEpisodeTitles', () => {
    * Build the walked-file list for one season folder directly, so each case
    * states exactly the filenames and TMDB episode list it is about.
    */
-  function runSeason(fileNames: string[], tmdbEpisodes: Array<[number, string]>) {
+  function runSeason(
+    fileNames: string[],
+    tmdbEpisodes: Array<[number, string]>,
+    allowPartial = false
+  ) {
     const files = fileNames.map(fileName => ({
       absDir: `X:/Shows/HD/Show (2020)/Season 01`,
       relDir: 'HD/Show (2020)/Season 01',
@@ -169,7 +191,8 @@ describe('planEpisodeTitles', () => {
       files,
       fileRegex,
       new Map([['Show (2020)', 100]]),
-      new Map([['100:1', new Map(tmdbEpisodes)]])
+      new Map([['100:1', new Map(tmdbEpisodes)]]),
+      allowPartial
     )
   }
 
@@ -215,6 +238,44 @@ describe('planEpisodeTitles', () => {
     )
     expect(plan.entries).toEqual([])
     expect(plan.skipped[0]!.reason).toMatch(/covers 1 of TMDB's 2 episodes/)
+  })
+
+  it('names a partial season with allowPartial, noting every entry for review', () => {
+    const plan = runSeason(
+      ['Show (2020) - s01e01.mp4', 'Show (2020) - s01e03.mp4'],
+      [
+        [1, 'Pilot'],
+        [2, 'Second'],
+        [3, 'Third'],
+      ],
+      true
+    )
+    expect(plan.skipped).toEqual([])
+    expect(plan.entries.map(e => e.to)).toEqual([
+      'Show (2020) - s01e01 - Pilot.mp4',
+      'Show (2020) - s01e03 - Third.mp4',
+    ])
+    for (const entry of plan.entries) {
+      expect(entry.note).toMatch(/partial season — 2 of 3 TMDB episodes/)
+    }
+  })
+
+  it('still skips the whole season under allowPartial when a file references an unlisted episode', () => {
+    const plan = runSeason(
+      ['Show (2020) - s01e01.mp4', 'Show (2020) - s01e05.mp4'],
+      [
+        [1, 'Pilot'],
+        [2, 'Second'],
+      ],
+      true
+    )
+    expect(plan.entries).toEqual([])
+    expect(plan.skipped[0]!.reason).toMatch(/TMDB doesn't list/)
+  })
+
+  it('does not add a partial note to a complete season under allowPartial', () => {
+    const plan = runSeason(['Show (2020) - s01e01.mp4'], [[1, 'Pilot']], true)
+    expect(plan.entries[0]!.note).toBeUndefined()
   })
 
   it('counts a multi-episode file as covering every episode it spans', () => {
@@ -314,6 +375,20 @@ describe('planShowPrefix', () => {
       'Already Correct (2020)': {
         'Season 01': { 'Already Correct (2020) - s01e01.mp4': '' },
       },
+      'Spider-Noir (2026) [True Hue Color]': {
+        'Season 01': {
+          'Spider-Noir (2026) - s01e01.mp4': '',
+          'Spider-Noir (2026) - s01e02.mp4': '',
+        },
+      },
+      // A Plex edition folder. Its files carry the title and year only — the
+      // edition belongs to the show, not to any episode.
+      'Spider-Noir (2026) {edition-Authentic Black and White}': {
+        'Season 01': {
+          'Spider-Noir (2026) - s01e01.mp4': '', // already correct
+          'Spider Noir (2026) - s01e02.mp4': '', // wrong prefix, needs the hyphen
+        },
+      },
     },
   }
 
@@ -344,7 +419,11 @@ describe('planShowPrefix', () => {
           }
         }
       }
-      return planShowPrefix(files, fileRegex)
+      return planShowPrefix(
+        files,
+        fileRegex,
+        compilePattern(defaultShowsRules.patterns.show_folder)
+      )
     } finally {
       cleanupLibrary(root)
     }
@@ -367,7 +446,204 @@ describe('planShowPrefix', () => {
   it('plans nothing for files whose prefix already matches — so a re-run is a no-op', () => {
     const plan = run()
     expect(plan.entries.some(e => e.from.startsWith('Already Correct'))).toBe(false)
-    expect(plan.entries).toHaveLength(3)
+    expect(plan.entries).toHaveLength(4)
+  })
+
+  it('never copies an invalid show folder name into its files', () => {
+    const plan = run()
+    expect(plan.entries.some(e => e.dir.includes('[True Hue Color]'))).toBe(false)
+    expect(plan.review).toEqual([
+      {
+        path: 'SD/Spider-Noir (2026) [True Hue Color]',
+        reason: expect.stringContaining('does not match patterns.show_folder'),
+      },
+    ])
+  })
+
+  /**
+   * Plex keeps an edition on the show folder and off the episode files, so the
+   * prefix is rebuilt from the folder's parsed title and year — never from the
+   * folder name. Copying the name verbatim would push `{edition-…}` onto every
+   * file and break the match.
+   */
+  it('strips the edition tag when rebuilding the prefix', () => {
+    const plan = run()
+    const editionEntries = plan.entries.filter(e => e.dir.includes('{edition-'))
+
+    expect(editionEntries).toEqual([
+      {
+        dir: 'SD/Spider-Noir (2026) {edition-Authentic Black and White}/Season 01',
+        from: 'Spider Noir (2026) - s01e02.mp4',
+        to: 'Spider-Noir (2026) - s01e02.mp4',
+      },
+    ])
+    expect(plan.entries.every(e => !e.to.includes('{edition-'))).toBe(true)
+    // The already-correct file in that folder is left alone, so a re-run after
+    // an apply plans nothing here.
+    expect(plan.entries.some(e => e.from === 'Spider-Noir (2026) - s01e01.mp4')).toBe(false)
+  })
+})
+
+// ─────────────────────────────────────────────
+// planEpisodeCode
+// ─────────────────────────────────────────────
+
+describe('planEpisodeCode', () => {
+  function run(fileNames: string[]) {
+    const files = fileNames.map(fileName => ({
+      absDir: 'X:/Shows/HD/Show (2020)/Season 02',
+      relDir: 'HD/Show (2020)/Season 02',
+      showFolder: 'Show (2020)',
+      seasonFolder: 'Season 02',
+      fileName,
+    }))
+    return planEpisodeCode(files, fileRegex, { episode_code_case: 'lower' })
+  }
+
+  it('restyles the case and pads an unpadded episode number', () => {
+    const plan = run([
+      'Show (2020) - S02e01.mp4',
+      'Show (2020) - s02e4.mp4',
+      'Show (2020) - s02e05.mp4',
+    ])
+    expect(plan.entries.map(e => e.to)).toEqual([
+      'Show (2020) - s02e01.mp4',
+      'Show (2020) - s02e04.mp4',
+    ])
+  })
+
+  it('fixes an over-padded season and a missing separator space', () => {
+    const plan = run([
+      'Cheers (1982) - S010e01.mp4',
+      'Diners, Drive-Ins And Dives (2006) -S01e01.mp4',
+    ])
+    expect(plan.entries.map(e => e.to)).toEqual([
+      'Cheers (1982) - s10e01.mp4',
+      'Diners, Drive-Ins And Dives (2006) - s01e01.mp4',
+    ])
+  })
+
+  it('still ignores codes it cannot read', () => {
+    const plan = run([
+      'Show (2020) - S02e 07.mp4',
+      'Show (2020) - s02e05q.mp4',
+      'Show (2020) - s01emany.mp4',
+      'Show - s00e01.mp4',
+    ])
+    expect(plan.entries).toEqual([])
+  })
+
+  it('leaves a 3-digit episode number unpadded', () => {
+    expect(run(['Show (2020) - S00E201.mp4']).entries[0]!.to).toBe('Show (2020) - s00e201.mp4')
+  })
+
+  it('sends a backwards episode range to review instead of renaming it', () => {
+    const plan = run(['Show (2020) - s00e110-010.mp4'])
+    expect(plan.entries).toEqual([])
+    expect(plan.review[0]!.reason).toMatch(/runs backwards/)
+  })
+})
+
+// ─────────────────────────────────────────────
+// planShowFolder
+// ─────────────────────────────────────────────
+
+describe('planShowFolder', () => {
+  const rules: Parameters<typeof planShowFolder>[1] = {
+    categories: [{ name: 'HD' }, { name: 'SD' }],
+    patterns: defaultShowsRules.patterns,
+  }
+
+  it('plans one folder entry per category that holds the show', () => {
+    const root = buildLibrary(
+      {
+        HD: { 'Saved by Bell (1989)': {} },
+        SD: { 'Saved by Bell (1989)': {}, 'Other (2000)': {} },
+      },
+      'moasys-folder-'
+    )
+    try {
+      const { built, problems } = planShowFolder(
+        root,
+        rules,
+        'Saved by Bell (1989)',
+        'Saved by the Bell (1989)'
+      )
+      expect(problems).toEqual([])
+      expect(built.entries).toEqual([
+        { dir: 'HD', from: 'Saved by Bell (1989)', to: 'Saved by the Bell (1989)', kind: 'folder' },
+        { dir: 'SD', from: 'Saved by Bell (1989)', to: 'Saved by the Bell (1989)', kind: 'folder' },
+      ])
+      expect(validatePlan(makePlan(built.entries), root)).toEqual([])
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+
+  it('requires an exact-case source name', () => {
+    const root = buildLibrary({ HD: { 'ALF (1986)': {} } }, 'moasys-folder-')
+    try {
+      const { built, problems } = planShowFolder(root, rules, 'alf (1986)', 'Alf (1986)')
+      expect(built.entries).toEqual([])
+      expect(problems).toEqual([
+        expect.stringContaining("no show folder named exactly 'alf (1986)'"),
+      ])
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+
+  it('rejects a target that is not a valid show folder name', () => {
+    const root = buildLibrary({ HD: { 'Show (2020)': {} } }, 'moasys-folder-')
+    try {
+      expect(planShowFolder(root, rules, 'Show (2020)', 'Show 2020').problems).toEqual([
+        expect.stringContaining('does not match patterns.show_folder'),
+      ])
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+
+  it('allows a case-only folder rename but rejects an existing sibling', () => {
+    const root = buildLibrary(
+      { HD: { 'Whose Line Is it Anyway (1998)': {}, 'Taken (2020)': {}, 'Show (2020)': {} } },
+      'moasys-folder-'
+    )
+    try {
+      const caseOnly = planShowFolder(
+        root,
+        rules,
+        'Whose Line Is it Anyway (1998)',
+        'Whose Line Is It Anyway (1998)'
+      )
+      expect([
+        ...caseOnly.problems,
+        ...validatePlan(makePlan(caseOnly.built.entries), root),
+      ]).toEqual([])
+
+      const collide = planShowFolder(root, rules, 'Show (2020)', 'Taken (2020)')
+      expect(validatePlan(makePlan(collide.built.entries), root)).toEqual([
+        expect.stringContaining('already exists'),
+      ])
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+
+  it('checks path length against the deepest file after the rename', () => {
+    const deepName = `${'x'.repeat(150)}.mp4`
+    const root = buildLibrary(
+      { HD: { 'Show (2020)': { 'Season 01': { [deepName]: '' } } } },
+      'moasys-folder-'
+    )
+    try {
+      const { built } = planShowFolder(root, rules, 'Show (2020)', `${'Long '.repeat(12)}(2020)`)
+      expect(validatePlan(makePlan(built.entries), root)).toEqual([
+        expect.stringContaining('chars (max 240)'),
+      ])
+    } finally {
+      cleanupLibrary(root)
+    }
   })
 })
 
@@ -521,7 +797,7 @@ describe('renameFile', () => {
 // ─────────────────────────────────────────────
 
 describe('validateUndoManifest', () => {
-  const manifest = (renames: Array<{ from: string; to: string }>) => ({
+  const manifest = (renames: Array<{ from: string; to: string; kind?: 'file' | 'folder' }>) => ({
     generated: '2026-01-01T00:00:00.000Z',
     fix: 'show-prefix',
     drive: 'Test',
@@ -603,6 +879,26 @@ describe('validateUndoManifest', () => {
       ])
       expect(validateUndoManifest(manifest([{ from: 1, to: null } as never]))).toEqual([
         expect.stringContaining('must both be file paths'),
+      ])
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+
+  it('accepts a folder entry, but only when it is marked as a folder', () => {
+    const root = buildLibrary({ HD: { 'New (2020)': {}, 'file.mp4': '' } }, 'moasys-undo-')
+    try {
+      const folder = {
+        from: path.join(root, 'HD', 'Old (2020)'),
+        to: path.join(root, 'HD', 'New (2020)'),
+        kind: 'folder' as const,
+      }
+      expect(validateUndoManifest(manifest([folder]))).toEqual([])
+      expect(
+        validateUndoManifest(manifest([{ ...folder, to: path.join(root, 'HD', 'file.mp4') }]))
+      ).toEqual([expect.stringContaining('is not a folder')])
+      expect(validateUndoManifest(manifest([{ from: folder.from, to: folder.to }]))).toEqual([
+        expect.stringContaining('is not a file'),
       ])
     } finally {
       cleanupLibrary(root)
