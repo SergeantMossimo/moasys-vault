@@ -150,7 +150,7 @@ describe('movies module — warnings', () => {
       },
     })
     expect(
-      result.warnings.some(w => w.issue.includes('does not match Plex naming convention'))
+      result.warnings.some(w => w.issue.includes(`File name is not 'Movie Title (YEAR)'`))
     ).toBe(true)
   })
 
@@ -162,7 +162,7 @@ describe('movies module — warnings', () => {
       },
     })
     expect(
-      result.warnings.some(w => w.issue.includes('does not match Plex naming convention'))
+      result.warnings.some(w => w.issue.includes(`File name is not 'Movie Title (YEAR)'`))
     ).toBe(false)
   })
 
@@ -172,7 +172,9 @@ describe('movies module — warnings', () => {
         UHD: { CrowFolder: { 'The Crow (1994).mp4': '' } },
       },
     })
-    expect(result.warnings.some(w => w.issue.includes('Folder name does not match'))).toBe(true)
+    expect(
+      result.warnings.some(w => w.issue.includes(`Folder name is not 'Movie Title (YEAR)'`))
+    ).toBe(true)
   })
 
   it('warn_title_mismatch: file title differs from folder title', () => {
@@ -181,9 +183,7 @@ describe('movies module — warnings', () => {
         UHD: { 'The Crow (1994)': { 'The Sparrow (1994).mp4': '' } },
       },
     })
-    expect(
-      result.warnings.some(w => w.issue.match(/File title .* does not match folder title/))
-    ).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/File says .*, folder says /))).toBe(true)
   })
 
   it('warn_title_case: capitalization-only drift gets its own bucket', () => {
@@ -212,7 +212,7 @@ describe('movies module — warnings', () => {
         UHD: { 'The Crow (1994)': { 'The Crow (1995).mp4': '' } },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/File year.*does not match folder year/))).toBe(
+    expect(result.warnings.some(w => w.issue.match(/File says \d{4}, folder says \d{4}/))).toBe(
       true
     )
   })
@@ -223,7 +223,7 @@ describe('movies module — warnings', () => {
         UHD: { 'Ancient Film (1500)': { 'Ancient Film (1500).mp4': '' } },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Suspicious year/))).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/Year \d+ is outside/))).toBe(true)
   })
 
   it('warn_empty_edition: {edition-} tag with no value', () => {
@@ -232,7 +232,7 @@ describe('movies module — warnings', () => {
         UHD: { 'The Crow (1994)': { 'The Crow (1994) {edition-}.mp4': '' } },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Empty edition tag/))).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/{edition-} has no value/))).toBe(true)
   })
 
   it('warn_duplicate_edition: two files in same folder parse to same edition', () => {
@@ -248,7 +248,7 @@ describe('movies module — warnings', () => {
         },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Duplicate edition/))).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/already claims/))).toBe(true)
   })
 
   it('warn_multi_quality: a `movies:` entry silences it despite the path having no category', () => {
@@ -290,9 +290,7 @@ describe('movies module — warnings', () => {
         acceptable_quality_combos: [['UHD', 'HD']], // UHD/SD not acceptable
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Movie exists in multiple qualities/))).toBe(
-      true
-    )
+    expect(result.warnings.some(w => w.issue.match(/Exists in multiple qualities/))).toBe(true)
   })
 
   it('warn_multi_quality: silenced when combo is in acceptable_quality_combos', () => {
@@ -361,7 +359,7 @@ describe('movies module — warnings', () => {
         UHD: { 'The Crow (1994)': { 'cover.jpg': '' } }, // only a sidecar
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/No recognized video files/))).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/Movie folder has no video files/))).toBe(true)
   })
 
   it('warn_non_primary: a non-primary file (.mkv when primary is .mp4)', () => {
@@ -393,9 +391,9 @@ describe('movies module — warnings', () => {
         },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Unexpected file\(s\) in movie folder/))).toBe(
-      true
-    )
+    expect(
+      result.warnings.some(w => w.issue.match(/Unexpected file\(s\) in the movie folder/))
+    ).toBe(true)
   })
 
   it('warn_loose_files: video file directly inside a category folder', () => {
@@ -525,7 +523,7 @@ describe('movies module — warn_duplicate_quality', () => {
         ],
       },
     })
-    const bucket = result.grouped['warn_duplicate_quality'] ?? []
+    const bucket = result.grouped['warn_duplicate_quality']?.items ?? []
     expect(bucket.map(r => r.path)).toEqual(['Zulu (2000)', 'Mike (2001)', 'Alpha (2002)'])
   })
 

@@ -240,8 +240,10 @@ interface ProblemGroup {
   files: Set<string>
   first: string
   last: string
-  sample: string
 }
+
+/** How many distinct problems a folder's row names before it says "+N more". */
+const PROBLEM_CLAUSE_LIMIT = 3
 
 /** Up to `max` quoted file names, then a count of the rest. */
 function listNames(paths: string[], max = 5): string {
@@ -249,7 +251,7 @@ function listNames(paths: string[], max = 5): string {
   return names.join(', ') + (paths.length > max ? `, +${paths.length - max} more` : '')
 }
 
-/** Trim a sample line to something readable inside a warning. */
+/** Trim a sample line to something readable inside logs-summary.json. */
 function sampleLine(message: string): string {
   const first = message.split('\n')[0]!
   return first.length > 240 ? `${first.slice(0, 237)}…` : first
@@ -258,7 +260,8 @@ function sampleLine(message: string): string {
 /**
  * Emit one warning per folder and level for the events that land on this
  * drive and media type, listing each distinct problem with its files, line
- * count, time span, and a sample line.
+ * count and time span. What each problem means lives in docs/PLEX.md and its
+ * sample log lines in logs-summary.json, so neither is repeated per folder.
  * @returns how many events landed here
  */
 export function checkPlexLogs(input: PlexLogCheckInput): number {
@@ -289,7 +292,6 @@ export function checkPlexLogs(input: PlexLogCheckInput): number {
         files: new Set<string>(),
         first: event.timestamp,
         last: event.timestamp,
-        sample: sampleLine(event.message),
       }
       entry.lines++
       if (target.isFile) entry.files.add(target.libraryPath)
@@ -303,19 +305,23 @@ export function checkPlexLogs(input: PlexLogCheckInput): number {
     const type = WARNING_TYPE[level]
     if (!rules.checks[type]) continue
     const levelWord = level === 'ERROR' ? 'errors' : 'warnings'
-    const parts = [...problems.values()].map(p => {
-      const files = p.files.size > 0 ? ` for ${listNames([...p.files])}` : ''
-      const when = p.first === p.last ? `at ${p.first}` : `from ${p.first} to ${p.last}`
-      return (
-        `${p.problem.label}${files} — ${p.lines} log line(s) ${when}. ${p.problem.advice} ` +
-        `Sample: "${p.sample}"`
-      )
+    // One clause per distinct problem, naming it and how often it fired. The
+    // per-problem advice and a sample log line used to sit here too, which is
+    // how a single row reached 3,600 characters; both now have one home each —
+    // the advice in docs/PLEX.md, the sample in output/plex/logs-summary.json.
+    const all = [...problems.values()]
+    const parts = all.slice(0, PROBLEM_CLAUSE_LIMIT).map(p => {
+      const files = p.files.size > 0 ? ` for ${listNames([...p.files], 3)}` : ''
+      const when = p.first === p.last ? `at ${p.first}` : `${p.first} to ${p.last}`
+      return `${p.problem.label}${files} — ${p.lines} line(s), ${when}`
     })
-    warnings.add(
-      type,
-      folder,
-      `Plex's logs have ${levelWord} about this folder. ${parts.join(' | ')}`
-    )
+    const more =
+      all.length > PROBLEM_CLAUSE_LIMIT ? `; +${all.length - PROBLEM_CLAUSE_LIMIT} more` : ''
+    warnings.add(type, folder, `Plex logged ${levelWord} here: ${parts.join('; ')}${more}.`, {
+      fix:
+        `What each problem means and whether it needs fixing is in docs/PLEX.md under "Log ` +
+        `warnings"; sample log lines and full counts are in output/plex/logs-summary.json.`,
+    })
   }
   return landed
 }

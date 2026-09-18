@@ -165,7 +165,7 @@ describe('checkPlex — disk vs Plex', () => {
   it('reports trashed files as unavailable, not orphans', () => {
     const warnings = run({ items: [item({ paths: [HEAT], deleted: true })] })
     expect(warnings.map(w => w.type)).toEqual(['warn_plex_unavailable'])
-    expect(warnings[0]!.issue).toMatch(/Empty Trash/)
+    expect(warnings[0]!.fix).toMatch(/Empty Trash/)
   })
 
   it('ignores files mapped to another drive', () => {
@@ -233,6 +233,138 @@ describe('checkPlex — items', () => {
     expect(warnings.map(w => [w.type, w.path])).toEqual([
       ['warn_plex_title_mismatch', 'Firefly (2002)'],
     ])
+  })
+
+  /**
+   * Plex's TV Show Editions. The tag lives on the show folder, so the folder
+   * pattern's `edition` group and Plex's `editionTitle` describe the same
+   * thing and can be compared. Movies are excluded on purpose: their tag is in
+   * the filename, so their folder carries none and every one would read as a
+   * mismatch.
+   */
+  describe('editions', () => {
+    const SHOW_FOLDER = /^(?<title>.+)\s\((?<year>\d{4})\)(?:\s\{edition-(?<edition>[^}]*)\})?$/
+
+    /** A show plus the episode that locates its folder, in one edition folder. */
+    function showWithEdition(opts: {
+      folder: string
+      plexEdition?: string | null
+      mediaType?: MediaType
+      checks?: Partial<typeof defaultPlexRules.checks>
+    }) {
+      const ep = `${opts.folder}/Season 01/Spider-Noir (2026) - S01E01.mkv`
+      return run({
+        mediaType: opts.mediaType ?? 'shows',
+        folderPattern: SHOW_FOLDER,
+        lib: { media_type: 'shows', agent: 'tv.plex.agents.series' },
+        items: [
+          item({
+            rating_key: 's1',
+            type: 'show',
+            title: 'Spider-Noir',
+            year: 2026,
+            // `undefined` here stands for a catalog.json pulled before
+            // editions existed; the caller passes null for "Plex has none".
+            ...(opts.plexEdition === undefined ? {} : { edition_title: opts.plexEdition }),
+          }),
+          item({
+            rating_key: 'e1',
+            type: 'episode',
+            title: 'Step Into My Office',
+            year: 2026,
+            grandparent_rating_key: 's1',
+            paths: [ep],
+          }),
+        ],
+        diskFiles: [ep],
+        checks: opts.checks,
+      })
+    }
+
+    it('says nothing when Plex and the folder agree', () => {
+      expect(
+        showWithEdition({
+          folder: 'Spider-Noir (2026) {edition-True Hue Color}',
+          plexEdition: 'True Hue Color',
+        })
+      ).toEqual([])
+    })
+
+    it('flags a folder Plex disagrees with', () => {
+      const warnings = showWithEdition({
+        folder: 'Spider-Noir (2026) {edition-Authentic Black and White}',
+        plexEdition: 'True Hue Color',
+      })
+      expect(warnings.map(w => [w.type, w.path])).toEqual([
+        ['warn_plex_edition_mismatch', 'Spider-Noir (2026) {edition-Authentic Black and White}'],
+      ])
+      expect(warnings[0]!.issue).toBe(
+        `Plex says 'True Hue Color', the folder says 'Authentic Black and White'.`
+      )
+    })
+
+    it('reports a capitalization-only difference separately', () => {
+      const warnings = showWithEdition({
+        folder: 'Spider-Noir (2026) {edition-True Hue Color}',
+        plexEdition: 'True hue color',
+      })
+      expect(warnings.map(w => w.type)).toEqual(['warn_plex_edition_case'])
+    })
+
+    it('flags a tagged folder Plex shows no edition for', () => {
+      const warnings = showWithEdition({
+        folder: 'Spider-Noir (2026) {edition-True Hue Color}',
+        plexEdition: null,
+      })
+      expect(warnings.map(w => w.type)).toEqual(['warn_plex_edition_mismatch'])
+      expect(warnings[0]!.issue).toContain('Plex shows no edition')
+    })
+
+    it('flags an edition Plex has that the folder does not', () => {
+      const warnings = showWithEdition({
+        folder: 'Spider-Noir (2026)',
+        plexEdition: 'True Hue Color',
+      })
+      expect(warnings.map(w => w.type)).toEqual(['warn_plex_edition_mismatch'])
+      expect(warnings[0]!.issue).toContain('the folder carries no tag')
+    })
+
+    it('treats a bare {edition-} as no edition, matching the scan pass', () => {
+      expect(
+        showWithEdition({ folder: 'Spider-Noir (2026) {edition-}', plexEdition: null })
+      ).toEqual([])
+    })
+
+    it('says nothing for a catalog pulled before editions were supported', () => {
+      expect(showWithEdition({ folder: 'Spider-Noir (2026) {edition-True Hue Color}' })).toEqual([])
+    })
+
+    it('never fires for a movies library, where the tag is on the file', () => {
+      const movie = 'HD/Heat (1995)/Heat (1995) {edition-Extended}.mkv'
+      expect(
+        run({
+          items: [item({ paths: [movie], edition_title: 'Extended' })],
+          diskFiles: [movie],
+        }).filter(w => w.type.startsWith('warn_plex_edition'))
+      ).toEqual([])
+    })
+
+    it('respects its toggles', () => {
+      expect(
+        showWithEdition({
+          folder: 'Spider-Noir (2026) {edition-Authentic Black and White}',
+          plexEdition: 'True Hue Color',
+          checks: { warn_plex_edition_mismatch: false },
+        })
+      ).toEqual([])
+      expect(
+        showWithEdition({
+          folder: 'Spider-Noir (2026) {edition-True Hue Color}',
+          plexEdition: 'True hue color',
+          checks: { warn_plex_edition_case: false },
+        })
+      ).toEqual([])
+    })
   })
 
   it('flags Plex duplicates with every file location', () => {

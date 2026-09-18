@@ -71,6 +71,27 @@ function basename(p: string): string {
 
 const key = (p: string) => p.toLowerCase()
 
+/**
+ * `warn_plex_title_mismatch` fires from two branches — comparing TMDB ids when
+ * the validate pass has run, comparing titles when it hasn't — but both land in
+ * one bucket, so they have to share one `fix`. See `WarningOptions.fix`.
+ */
+const FIX_TITLE_MISMATCH =
+  `Usually Plex matched the wrong title — use "Fix Match…" in Plex. If Plex is right, rename ` +
+  `the folder instead. Where two TMDB ids are shown, one is wrong (often a remake or a ` +
+  `same-title film): look both up on themoviedb.org, and if validation is the wrong one, the ` +
+  `folder's year likely points at the other title.`
+
+/**
+ * `warn_plex_edition_mismatch` fires from three branches — Plex has an edition
+ * the folder doesn't, the folder has one Plex doesn't, and the two disagree —
+ * so all three share one `fix`. See `WarningOptions.fix`.
+ */
+const FIX_EDITION_MISMATCH =
+  `Plex reads the edition off the show folder's {edition-…} tag, so this usually means it ` +
+  `hasn't re-scanned since the folder was renamed: run "Scan Library Files". Editing the ` +
+  `edition in Plex Web also overrides the folder until you clear it.`
+
 /** `a.mkv`, `b.mkv`, `c.mkv` +2 more */
 function listNames(paths: string[], max = 5): string {
   const names = paths.slice(0, max).map(p => `'${basename(p)}'`)
@@ -248,9 +269,13 @@ export function checkPlex(input: PlexCheckInput): PlexCheckStats {
       warnings.add(
         'warn_plex_folder_not_in_library',
         top,
-        `This folder isn't inside any folder of ${libraryNames}, so Plex will never scan its ` +
-          `${files.length} file(s) (${listNames(files, 3)}). The library covers: ${folders}. ` +
-          `In Plex, edit the library and add this folder — or move the files into a folder it already covers.`
+        `Outside every folder of ${libraryNames}, so its ${files.length} file(s) are never ` +
+          `scanned: ${listNames(files, 3)}.`,
+        {
+          fix:
+            `In Plex, edit the library and add this folder — or move the files into one it ` +
+            `already covers (${folders}). Rescanning alone will not help.`,
+        }
       )
     }
   }
@@ -265,14 +290,11 @@ export function checkPlex(input: PlexCheckInput): PlexCheckStats {
         files.length === total
           ? `None of the ${total} file(s) in this folder are in Plex`
           : `${files.length} of the ${total} file(s) in this folder aren't in Plex`
-      warnings.add(
-        'warn_plex_missing_item',
-        folder,
-        `${which} (${listNames(files)}). ` +
-          `Plex never picked them up — in Plex, run "Scan Library Files" on ${libraryNames}. ` +
-          `If they still don't appear, the names probably don't match Plex's naming convention: ` +
-          `check this folder in warnings.json.`
-      )
+      warnings.add('warn_plex_missing_item', folder, `${which}: ${listNames(files)}.`, {
+        fix:
+          `In Plex, run "Scan Library Files" on ${libraryNames}. If they still don't appear, ` +
+          `the names likely break Plex's naming convention — check this folder in warnings.json.`,
+      })
     }
   }
 
@@ -289,15 +311,19 @@ export function checkPlex(input: PlexCheckInput): PlexCheckStats {
     for (const [folder, entries] of groupByFolder(unavailable, e => e.file.library_path)) {
       const paths = entries.map(e => e.file.library_path)
       const back = paths.filter(p => diskPaths.has(key(p)) || input.exists(p))
-      const note =
-        back.length > 0
-          ? ` ${back.length} of them exist on disk again — "Scan Library Files" will restore them.`
-          : ` Once you've confirmed they're really gone, "Empty Trash" on ${libraryNames} removes the stale entries.`
+      // Whether the files came back is a per-row fact, so it stays on the row;
+      // what to do about either case is the same every time, so it's the fix.
+      const note = back.length > 0 ? ` ${back.length} of them are on disk again.` : ''
       warnings.add(
         'warn_plex_unavailable',
         folder,
-        `Plex marks ${entries.length} file(s) here as deleted — they're in the library's trash and ` +
-          `show as unavailable (${listNames(paths)}).${note}`
+        `Plex marks ${entries.length} file(s) here deleted, showing as unavailable: ` +
+          `${listNames(paths)}.${note}`,
+        {
+          fix:
+            `If the files are back on disk, "Scan Library Files" on ${libraryNames} restores ` +
+            `them. If they really are gone, "Empty Trash" clears the stale entries.`,
+        }
       )
     }
   }
@@ -308,10 +334,13 @@ export function checkPlex(input: PlexCheckInput): PlexCheckStats {
       warnings.add(
         'warn_plex_orphan_item',
         folder,
-        `Plex still lists ${entries.length} file(s) here that no longer exist on disk ` +
-          `(${listNames(paths)}), and hasn't noticed they're gone. ` +
-          `In Plex, run "Scan Library Files" on ${libraryNames}, then "Empty Trash" to clear them — ` +
-          `or restore the files if they were moved or deleted by mistake.`
+        `Plex still lists ${entries.length} file(s) here that are gone from disk: ` +
+          `${listNames(paths)}.`,
+        {
+          fix:
+            `In Plex, run "Scan Library Files" on ${libraryNames}, then "Empty Trash" — or ` +
+            `restore the files if they were moved or deleted by mistake.`,
+        }
       )
     }
   }
@@ -345,9 +374,13 @@ export function checkPlex(input: PlexCheckInput): PlexCheckStats {
     warnings.add(
       'warn_plex_unmatched',
       folder,
-      `Plex couldn't match this ${item.type} to its metadata agent — it shows as '${item.title}' ` +
-        `with no poster, summary, or ratings. In Plex, use "Fix Match…" on it. ` +
-        `If no match is offered, check the folder name against Plex's naming convention.`
+      `Plex couldn't match this to its metadata agent — it shows as '${item.title}' with no ` +
+        `poster, summary or ratings.`,
+      {
+        fix:
+          `In Plex, use "Fix Match…" on it. If no match is offered, check the folder name ` +
+          `against Plex's naming convention.`,
+      }
     )
   }
 
@@ -375,11 +408,9 @@ export function checkPlex(input: PlexCheckInput): PlexCheckStats {
         warnings.add(
           'warn_plex_title_mismatch',
           folder,
-          `Plex and the TMDB validation pass matched this folder to different ${item.type}s: ` +
-            `Plex to ${plexLabel} (TMDB ${plexId}), validation to '${tmdb.title ?? 'unknown'}' (TMDB ${tmdb.id}). ` +
-            `One of them is wrong — often a remake or another ${item.type} with the same title. ` +
-            `Look both ids up on themoviedb.org. If Plex is wrong, use "Fix Match…" in Plex with the right id; ` +
-            `if the validation pass is wrong, the folder's year likely points at the other ${item.type}.`
+          `Plex says ${plexLabel} (TMDB ${plexId}), validation says ` +
+            `'${tmdb.title ?? 'unknown'}' (TMDB ${tmdb.id}).`,
+          { fix: FIX_TITLE_MISMATCH }
         )
       }
       return
@@ -402,17 +433,72 @@ export function checkPlex(input: PlexCheckInput): PlexCheckStats {
       warnings.add(
         'warn_plex_title_mismatch',
         folder,
-        `Plex identifies this folder as ${plexLabel}, which doesn't match the folder name. ` +
-          `This usually means Plex matched the wrong ${item.type} — in Plex, use "Fix Match…". ` +
-          `If Plex is right, rename the folder instead. ` +
-          `(Running the validate pass lets this check compare TMDB ids instead of titles.)`
+        `Plex identifies this folder as ${plexLabel}, which doesn't match its name.`,
+        { fix: FIX_TITLE_MISMATCH }
       )
     } else if (comparison === 'case' && rules.checks.warn_plex_title_case) {
       warnings.add(
         'warn_plex_title_case',
         folder,
-        `Plex titles this ${item.type} ${plexLabel} — only the capitalization differs from the folder. ` +
-          `Rename the folder to match if you want the two to agree.`
+        `Capitalization only: Plex titles it ${plexLabel}.`,
+        { fix: `Rename the folder to match if you want the two to agree.` }
+      )
+    }
+  }
+
+  // Same per-folder dedupe as titles, but a separate set: checkTitle returns
+  // early once the TMDB ids agree, and the edition still needs checking then.
+  const editionChecked = new Set<string>()
+
+  /**
+   * Compare Plex's edition name for a show against the `{edition-…}` tag on
+   * its folder. Shows only: on a movie the tag lives in the *filename*, so the
+   * folder carries none and every movie would read as a mismatch.
+   */
+  const checkEdition = (item: PlexCatalogItem, pattern: RegExp): void => {
+    // Absent (rather than null) means this catalog.json predates editions —
+    // there is nothing to compare until the next plex:pull.
+    if (item.edition_title === undefined) return
+
+    const folder = folderOf(item)
+    if (folder === null || editionChecked.has(key(folder))) return
+    const groups = pattern.exec(basename(folder))?.groups
+    if (!groups?.title) return
+    editionChecked.add(key(folder))
+
+    // `groups.edition` is undefined with no tag and '' for a bare
+    // `{edition-}`; the scan pass treats both as "no edition" (warning about
+    // the latter as warn_empty_edition), so fold them together here too.
+    const folderEdition = groups.edition?.trim() ?? ''
+    const plexEdition = item.edition_title ?? ''
+
+    if (folderEdition === plexEdition) return
+
+    if (folderEdition === '' || plexEdition === '') {
+      if (!rules.checks.warn_plex_edition_mismatch) return
+      const issue =
+        plexEdition === ''
+          ? `Folder is tagged '{edition-${folderEdition}}', Plex shows no edition.`
+          : `Plex calls this the '${plexEdition}' edition, the folder carries no tag.`
+      warnings.add('warn_plex_edition_mismatch', folder, issue, { fix: FIX_EDITION_MISMATCH })
+      return
+    }
+
+    if (folderEdition.toLowerCase() !== plexEdition.toLowerCase()) {
+      if (rules.checks.warn_plex_edition_mismatch) {
+        warnings.add(
+          'warn_plex_edition_mismatch',
+          folder,
+          `Plex says '${plexEdition}', the folder says '${folderEdition}'.`,
+          { fix: FIX_EDITION_MISMATCH }
+        )
+      }
+    } else if (rules.checks.warn_plex_edition_case) {
+      warnings.add(
+        'warn_plex_edition_case',
+        folder,
+        `Capitalization only: Plex says '${plexEdition}', the folder says '${folderEdition}'.`,
+        { fix: `Rename the folder's tag to match if you want the two to agree.` }
       )
     }
   }
@@ -428,9 +514,12 @@ export function checkPlex(input: PlexCheckInput): PlexCheckStats {
     warnings.add(
       'warn_plex_duplicate',
       path,
-      `Plex lists '${item.title}' under Duplicates — ${item.files.length} files are merged into one entry: ` +
-        `${locations.join('; ')}. Fine if they're deliberate versions (e.g. HD and UHD, or a director's cut). ` +
-        `If not, delete the extra copy yourself, or use "Split Apart" in Plex if they're different ${item.type}s.`
+      `Plex merges ${item.files.length} files into '${item.title}': ${locations.join('; ')}.`,
+      {
+        fix:
+          `Fine for deliberate versions like HD plus UHD, or a director's cut. Otherwise delete ` +
+          `the extra copy — or use "Split Apart" in Plex if they are actually different titles.`,
+      }
     )
   }
 
@@ -454,6 +543,11 @@ export function checkPlex(input: PlexCheckInput): PlexCheckStats {
         (input.mediaType === 'movies' && item.type === 'movie') ||
         (input.mediaType === 'shows' && item.type === 'show')
       if (input.folderPattern && titled) checkTitle(item, input.folderPattern)
+
+      // Shows only — see checkEdition.
+      if (input.folderPattern && input.mediaType === 'shows' && item.type === 'show') {
+        checkEdition(item, input.folderPattern)
+      }
 
       if (rules.checks.warn_plex_duplicate && item.duplicate) reportDuplicate(item)
     }

@@ -194,7 +194,7 @@ describe('checkPlexLogs', () => {
     const issue = warnings[0]!.issue
     expect(issue).toContain('Credits detection failed')
     expect(issue).toContain("'Cougar Town (2009) - s02e01 - All Mixed Up.mp4'")
-    expect(issue).toContain('3 log line(s) from 2026-09-14 04:04:53.936 to 2026-09-14 04:05:09.415')
+    expect(issue).toContain('3 line(s), 2026-09-14 04:04:53.936 to 2026-09-14 04:05:09.415')
   })
 
   it('splits ERROR and WARN lines into their own warning types, WARN off by default', () => {

@@ -38,6 +38,10 @@
           "type": ["string", "null"],
           "description": "Agent identifier, e.g. plex://movie/5d77…; local://… when unmatched."
         },
+        "edition_title": {
+          "type": ["string", "null"],
+          "description": "Plex's edition name for this item, or null when it has none. Movies take it from the {edition-…} filename tag, shows from the show folder's. Absent in catalog.json files pulled before editions were supported."
+        },
         "external_ids": {
           "type": "array",
           "items": { "type": "string" },
@@ -84,6 +88,7 @@
         "original_title",
         "year",
         "guid",
+        "edition_title",
         "external_ids",
         "grandparent_rating_key",
         "parent_rating_key",

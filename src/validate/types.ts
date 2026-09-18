@@ -183,6 +183,12 @@ export interface SeasonValidation {
 export interface ShowValidation {
   title: string
   year: number
+  /**
+   * Plex's TV Show Editions tag, or null when untagged. Carried so the row
+   * joins back to a specific show folder on disk — `fix:shows` keys on the
+   * folder name, and two editions share one title+year.
+   */
+  edition: string | null
   confidence: 'high' | 'medium' | 'low' | 'none'
   tmdb_id: number | null
   tmdb_title: string | null

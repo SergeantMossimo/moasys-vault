@@ -144,7 +144,9 @@ describe('audiobooks module — warnings', () => {
         },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Chapter file name does not match/))).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/File name is not '01 - Chapter Name'/))).toBe(
+      true
+    )
   })
 
   it('warn_no_audio: empty book folder', () => {
@@ -155,7 +157,7 @@ describe('audiobooks module — warnings', () => {
         },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/No recognized audio files/))).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/folder has no audio files/))).toBe(true)
   })
 
   it('warn_chapter_gaps: missing chapter number in a book', () => {
@@ -171,7 +173,7 @@ describe('audiobooks module — warnings', () => {
         },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Potential missing chapters/))).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/Missing chapters in/))).toBe(true)
   })
 
   it('warn_duplicate_book: a `books:` entry silences it despite the path having no category', () => {
@@ -207,9 +209,7 @@ describe('audiobooks module — warnings', () => {
         },
       },
     })
-    expect(
-      result.warnings.some(w => w.issue.match(/Duplicate book found in multiple categories/))
-    ).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/Also in \d+ other categories/))).toBe(true)
   })
 
   it('warn_duplicate_book: silenced when category set is in acceptable_book_combos', () => {
@@ -226,9 +226,7 @@ describe('audiobooks module — warnings', () => {
         acceptable_book_combos: [['Audible', 'Book On CD']],
       },
     })
-    expect(
-      result.warnings.some(w => w.issue.match(/Duplicate book found in multiple categories/))
-    ).toBe(false)
+    expect(result.warnings.some(w => w.issue.match(/Also in \d+ other categories/))).toBe(false)
   })
 
   it('warn_loose_files: audio files in author folder (no book wrapper)', () => {

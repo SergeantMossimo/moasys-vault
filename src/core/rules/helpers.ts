@@ -232,6 +232,21 @@ export function canonicalEpisodeCode(
 }
 
 /**
+ * A show filename stem that follows the convention except for how its
+ * season/episode code is written: numbers that aren't zero-padded
+ * ('Shameless (2011) - s02e4'), an over-padded season ('Cheers (1982) -
+ * S010e01'), or a missing space around the separator ('Diners, Drive-Ins And
+ * Dives (2006) -S01e01'). The rules' `patterns.file` rejects these, so they
+ * surface as warn_bad_file_name; this pattern is what lets that warning point
+ * at the `episode-code` fix, and what lets that fix mode parse the file in
+ * order to rewrite the code into canonical form.
+ *
+ * Same named groups as the default `patterns.file`, so it can stand in for it.
+ */
+export const LENIENT_EPISODE_FILE =
+  /^(?<title>.+)\s\((?<year>\d{4})\)\s?-\s?S(?<season>\d{1,3})E(?<episode>\d{1,3})(?:-E?(?<episode_end>\d{1,3}))?(?:\s-\s(?<episode_title>.+))?$/i
+
+/**
  * Pull the season/episode code out of a filename stem as RAW TEXT, so callers
  * can compare the casing the user actually wrote rather than a value that has
  * already been normalized by parsing it into integers.
@@ -245,5 +260,5 @@ export function extractEpisodeCode(stem: string, year: number): string | null {
   const markerIndex = stem.indexOf(marker)
   if (markerIndex === -1) return null
   const afterYear = stem.slice(markerIndex + marker.length)
-  return /^\s-\s(S\d{2}E\d{2}(?:-E?\d{2})?)/i.exec(afterYear)?.[1] ?? null
+  return /^\s-\s(S\d{2}E\d{2,3}(?:-E?\d{2,3})?)/i.exec(afterYear)?.[1] ?? null
 }

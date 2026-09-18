@@ -18,7 +18,7 @@ import { MoviesRules } from '../core/rules/movies'
 import { compilePattern, resolveCategories } from '../core/rules/helpers'
 
 import { ProbeCache } from './cache'
-import { ProbeTask, ProbedFile, classifyQuality, probeBatch } from './helpers'
+import { ProbeTask, ProbedFile, classifyQuality, formatBucketRange, probeBatch } from './helpers'
 import { MovieProbeOutput, FileProbe, ProbeData, ProbeResult } from './types'
 
 // ─────────────────────────────────────────────
@@ -258,7 +258,7 @@ export async function probeMovies(
   if (rules.checks.warn_quality_mismatch) {
     for (const { task, data } of probed) {
       if (!data.video) continue // Audio-only files (rare here) — can't classify
-      const { bucket, longEdge, fits } = classifyQuality(
+      const { bucket, fits } = classifyQuality(
         data.video.width,
         data.video.height,
         task.quality,
@@ -268,11 +268,14 @@ export async function probeMovies(
         warnings.add(
           'warn_quality_mismatch',
           task.relativePath,
-          `Quality mismatch — ${data.video.width}x${data.video.height} (long edge ${longEdge}px) ` +
-            `doesn't fit bucket '${bucket.name}' (` +
-            `${bucket.min_width !== undefined ? `min ${bucket.min_width}` : 'no min'}, ` +
-            `${bucket.max_width !== undefined ? `max ${bucket.max_width}` : 'no max'}` +
-            `) for quality '${task.quality}' (category '${task.category}')`
+          `${data.video.width}x${data.video.height} doesn't fit ${bucket.name} ` +
+            `(${formatBucketRange(bucket)})` +
+            `${task.category === bucket.name ? '' : ` for '${task.category}'`}.`,
+          {
+            fix:
+              `Move the movie to the folder matching its resolution, or replace the file with ` +
+              `a better source.`,
+          }
         )
       }
     }
@@ -290,12 +293,13 @@ export async function probeMovies(
       warnings.add(
         'warn_short_duration',
         task.relativePath,
-        `Short runtime — ${formatDuration(data.duration_seconds)}, at or below the ` +
-          `${rules.min_duration_minutes}-minute threshold (min_duration_minutes). ` +
-          `Usually a truncated or failed encode; play the file through to the end and ` +
-          `re-encode from source if it's cut short. If it's a genuine short film, TV ` +
-          `special, or stand-up set, list the movie under \`movies:\` in ` +
-          `ignored/<drive>/movies.yaml`
+        `Runs ${formatDuration(data.duration_seconds)}, at or under the ` +
+          `${rules.min_duration_minutes}-minute min_duration_minutes threshold.`,
+        {
+          fix:
+            `Usually a truncated or failed encode — play it to the end and re-encode from ` +
+            `source if it is cut short. Expected on short films, TV specials and stand-up sets.`,
+        }
       )
     }
   }

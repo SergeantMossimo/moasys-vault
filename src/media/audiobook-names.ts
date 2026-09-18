@@ -53,6 +53,35 @@ export interface NameFinding {
   type: NameCheck
   book: NamedBook
   issue: string
+  /**
+   * The remedy for this check, relayed to `WarningOptions.fix` so it is
+   * written once per bucket instead of on every row. Constant per `type` —
+   * the per-row suggested rename belongs in `issue`, which is the part that
+   * actually differs book to book.
+   */
+  fix: string
+}
+
+/**
+ * The remedy for each name check. Kept in one map so every `findings.push`
+ * of a given type relays the same text — `WarningCollector.groupedByType()`
+ * takes the first it sees and warns if a bucket disagrees with itself.
+ */
+const FIX: Record<NameCheck, string> = {
+  warn_series_name_case: `Rename so one spelling wins — Plex sorts the two apart otherwise.`,
+  warn_series_name_mismatch:
+    `Rename so one spelling wins, whichever is correct — Plex treats the variants as ` +
+    `separate series otherwise.`,
+  warn_author_name_case: `Rename so one spelling wins — Plex treats the variants as separate people.`,
+  warn_author_name_mismatch:
+    `Rename so one spelling wins, whichever is correct — Plex treats differently spelled ` +
+    `authors as separate people.`,
+  warn_encoded_characters:
+    `The folder name has raw HTML entities in it, usually from a download. Rename it to ` +
+    `the characters they stand for.`,
+  warn_mixed_punctuation:
+    `Mixed quote styles make otherwise identical names sort and search differently. ` +
+    `Rename to the style the rest of the library uses.`,
 }
 
 // ─────────────────────────────────────────────
@@ -354,16 +383,18 @@ function checkSeries(books: NamedBook[], preferCurly: boolean): NameFinding[] {
               type: 'warn_series_name_case',
               book,
               issue:
-                `${label} is capitalized '${variant.spelling}' here but '${canonical.spelling}' in ${others}. ` +
-                `Recommended fix: rename the book folder to '${suggested}'.`,
+                `${label} is capitalized '${variant.spelling}' here, '${canonical.spelling}' in ${others}. ` +
+                `Rename to '${suggested}'.`,
+              fix: FIX.warn_series_name_case,
             })
           } else {
             findings.push({
               type: 'warn_series_name_mismatch',
               book,
               issue:
-                `${label} is written '${variant.spelling}' here but '${canonical.spelling}' in ${others}. ` +
-                `Recommended fix: rename the book folder to '${suggested}' (or rename the others if this spelling is correct).`,
+                `${label} is written '${variant.spelling}' here, '${canonical.spelling}' in ${others}. ` +
+                `Rename to '${suggested}'.`,
+              fix: FIX.warn_series_name_mismatch,
             })
           }
         }
@@ -403,11 +434,9 @@ function checkAuthors(books: NamedBook[], preferCurly: boolean): NameFinding[] {
           type: kind === 'case' ? 'warn_author_name_case' : 'warn_author_name_mismatch',
           book,
           issue:
-            `Author is ${kind === 'case' ? 'capitalized' : 'written'} '${variant.spelling}' here but ` +
-            `'${canonical.spelling}' on ${others}. ` +
-            `Recommended fix: rename the author folder to '${suggested}'` +
-            (kind === 'case' ? '.' : ' (or rename the others if this spelling is correct).') +
-            ` Plex treats differently spelled authors as separate people.`,
+            `Author is ${kind === 'case' ? 'capitalized' : 'written'} '${variant.spelling}' here, ` +
+            `'${canonical.spelling}' on ${others}. Rename to '${suggested}'.`,
+          fix: kind === 'case' ? FIX.warn_author_name_case : FIX.warn_author_name_mismatch,
         })
       }
     }
@@ -445,9 +474,8 @@ function checkEncodedCharacters(books: NamedBook[]): NameFinding[] {
     findings.push({
       type: 'warn_encoded_characters',
       book,
-      issue:
-        `The ${where} name contains HTML-encoded text (${[...entities].join(', ')}) instead of the actual characters. ` +
-        `Recommended fix: rename it to '${suggested}'.`,
+      issue: `The ${where} name has HTML entities (${[...entities].join(', ')}). Rename to '${suggested}'.`,
+      fix: FIX.warn_encoded_characters,
     })
   }
   return findings
@@ -481,10 +509,9 @@ function checkPunctuation(books: NamedBook[]): { findings: NameFinding[]; prefer
       type: 'warn_mixed_punctuation',
       book,
       issue:
-        `The ${inTitle ? 'book' : 'author'} folder name uses ${preferCurly ? 'straight' : 'curly'} quotes, ` +
-        `but ${bookCount(majorityCount)} in the library use ${preferCurly ? 'curly' : 'straight'} ones. ` +
-        `Mixed styles make otherwise identical names sort and search differently. ` +
-        `Recommended fix: rename it to '${suggested}'.`,
+        `The ${inTitle ? 'book' : 'author'} folder uses ${preferCurly ? 'straight' : 'curly'} quotes; ` +
+        `${bookCount(majorityCount)} use ${preferCurly ? 'curly' : 'straight'}. Rename to '${suggested}'.`,
+      fix: FIX.warn_mixed_punctuation,
     })
   }
   return { findings, preferCurly }

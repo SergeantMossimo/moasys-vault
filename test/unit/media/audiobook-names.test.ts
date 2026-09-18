@@ -112,9 +112,7 @@ describe('findNameIssues — series', () => {
     expect(findings).toHaveLength(1)
     expect(findings[0]!.type).toBe('warn_series_name_mismatch')
     expect(findings[0]!.book.title).toBe("First and Only - Gaunt's Ghost, Book 1")
-    expect(findings[0]!.issue).toContain(
-      "rename the book folder to 'First and Only - Gaunt's Ghosts, Book 1'"
-    )
+    expect(findings[0]!.issue).toContain("Rename to 'First and Only - Gaunt's Ghosts, Book 1'")
   })
 
   it('lets quote-folded spellings outvote a lone typo when counts tie', () => {
@@ -170,9 +168,7 @@ describe('findNameIssues — authors', () => {
     const findings = findNameIssues(books, ALL_ON)
     expect(findings).toHaveLength(1)
     expect(findings[0]!.type).toBe('warn_author_name_mismatch')
-    expect(findings[0]!.issue).toContain(
-      "rename the author folder to 'Tobias S. Buckell, Eric Nylund'"
-    )
+    expect(findings[0]!.issue).toContain("Rename to 'Tobias S. Buckell, Eric Nylund'")
   })
 
   it('flags capitalization-only author drift as the case variant', () => {

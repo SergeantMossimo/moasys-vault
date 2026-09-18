@@ -74,6 +74,7 @@ describe('shows module — happy paths', () => {
       {
         title: 'Show',
         year: 2020,
+        edition: null,
         seasons: [
           {
             season: '1',
@@ -190,6 +191,139 @@ describe('shows module — happy paths', () => {
   })
 })
 
+/**
+ * Plex's TV Show Editions — `Show (YEAR) {edition-Name}` on the show folder,
+ * never on the season folder or the episode files. Two editions are separate
+ * Plex items with their own watch state, so they stay separate catalog entries
+ * here; merging them would dedupe one edition's episodes against the other's.
+ */
+describe('shows module — editions', () => {
+  const twoEditions: DirSpec = {
+    HD: {
+      'Spider-Noir (2026) {edition-True Hue Color}': {
+        'Season 01': {
+          'Spider-Noir (2026) - S01E01 - Step Into My Office.mp4': '',
+          'Spider-Noir (2026) - S01E02 - Two.mp4': '',
+        },
+      },
+      'Spider-Noir (2026) {edition-Authentic Black and White}': {
+        'Season 01': {
+          'Spider-Noir (2026) - S01E01 - Step Into My Office.mp4': '',
+          'Spider-Noir (2026) - S01E02 - Two.mp4': '',
+        },
+      },
+    },
+  }
+
+  it('catalogs the edition tag and does not warn about the folder name', () => {
+    const result = runShowsScan({
+      spec: {
+        HD: {
+          'Spider-Noir (2026) {edition-True Hue Color}': {
+            'Season 01': { 'Spider-Noir (2026) - S01E01 - Pilot.mp4': '' },
+          },
+        },
+      },
+    })
+    expect(result.warnings.filter(w => w.type === 'warn_bad_show_folder')).toEqual([])
+    expect(result.output).toHaveLength(1)
+    expect(result.output[0]).toMatchObject({
+      title: 'Spider-Noir',
+      year: 2026,
+      edition: 'True Hue Color',
+    })
+    expect(result.output[0]?.seasons[0]?.episodes).toHaveLength(1)
+  })
+
+  it('keeps two editions of one series as separate entries with their own episodes', () => {
+    const result = runShowsScan({ spec: twoEditions })
+
+    expect(result.output).toHaveLength(2)
+    expect(result.output.map(s => s.edition)).toEqual([
+      'Authentic Black and White',
+      'True Hue Color',
+    ])
+    // Each edition keeps both episodes — the merge must not fold them together.
+    for (const show of result.output) {
+      expect(show.title).toBe('Spider-Noir')
+      expect(show.seasons).toHaveLength(1)
+      expect(show.seasons[0]?.episodes.map(e => e.episode_start)).toEqual([1, 2])
+    }
+  })
+
+  it('does not report two editions as duplicate copies of one season', () => {
+    const result = runShowsScan({
+      spec: twoEditions,
+      probes: {
+        'HD/Spider-Noir (2026) {edition-True Hue Color}/Season 01/Spider-Noir (2026) - S01E01 - Step Into My Office.mp4':
+          fakeProbe({ video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 } }),
+        'HD/Spider-Noir (2026) {edition-Authentic Black and White}/Season 01/Spider-Noir (2026) - S01E01 - Step Into My Office.mp4':
+          fakeProbe({ video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 } }),
+      },
+    })
+    expect(result.warnings.filter(w => w.type === 'warn_duplicate_quality')).toEqual([])
+    expect(result.warnings.filter(w => w.type === 'warn_multi_quality')).toEqual([])
+  })
+
+  it('names the tagged folder in a per-season warning path, so ignore entries stay distinct', () => {
+    const result = runShowsScan({
+      spec: {
+        HD: {
+          'Spider-Noir (2026) {edition-True Hue Color}': {
+            'Season 01': { 'Spider-Noir (2026) - S01E01.mp4': '' },
+          },
+        },
+        SD: {
+          'Spider-Noir (2026) {edition-True Hue Color}': {
+            'Season 01': { 'Spider-Noir (2026) - S01E01.mp4': '' },
+          },
+        },
+      },
+      probes: {
+        'HD/Spider-Noir (2026) {edition-True Hue Color}/Season 01/Spider-Noir (2026) - S01E01.mp4':
+          fakeProbe({ video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 } }),
+        'SD/Spider-Noir (2026) {edition-True Hue Color}/Season 01/Spider-Noir (2026) - S01E01.mp4':
+          fakeProbe({ video: { codec: 'h264', width: 640, height: 480, frame_rate: 24 } }),
+      },
+    })
+    const multi = result.warnings.find(w => w.type === 'warn_multi_quality')
+    expect(multi?.path).toBe('Spider-Noir (2026) {edition-True Hue Color} — Season 1')
+    expect(multi?.ignore).toContain('{edition-True Hue Color}')
+  })
+
+  it('warn_empty_edition: {edition-} with no name, catalogued as no edition', () => {
+    const result = runShowsScan({
+      spec: {
+        HD: {
+          'Show (2020) {edition-}': {
+            'Season 01': { 'Show (2020) - S01E01.mp4': '' },
+          },
+        },
+      },
+    })
+    const warning = result.warnings.find(w => w.type === 'warn_empty_edition')
+    expect(warning?.path).toBe('HD/Show (2020) {edition-}')
+    expect(warning?.issue).toBe('{edition-} has no value after the dash.')
+    // Still catalogued, as an untagged show.
+    expect(result.output).toHaveLength(1)
+    expect(result.output[0]?.edition).toBeNull()
+  })
+
+  it('a bracketed suffix is not an edition — it still fails the folder pattern', () => {
+    const result = runShowsScan({
+      spec: {
+        HD: {
+          'Spider-Noir (2026) [True Hue Color]': {
+            'Season 01': { 'Spider-Noir (2026) - S01E01.mp4': '' },
+          },
+        },
+      },
+    })
+    expect(result.warnings.some(w => w.type === 'warn_bad_show_folder')).toBe(true)
+    expect(result.output).toEqual([])
+  })
+})
+
 describe('shows module — warnings', () => {
   it('warn_bad_show_folder: show folder does not match the pattern', () => {
     const result = runShowsScan({
@@ -197,7 +331,9 @@ describe('shows module — warnings', () => {
         HD: { ShowNoYear: { 'Season 01': { 'ShowNoYear - S01E01.mp4': '' } } },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Show folder name does not match/))).toBe(true)
+    expect(
+      result.warnings.some(w => w.issue.match(/Folder name is not 'Show Title \(YEAR\)'/))
+    ).toBe(true)
   })
 
   it('warn_bad_season_folder: season folder is not "Season XX"', () => {
@@ -210,9 +346,7 @@ describe('shows module — warnings', () => {
         },
       },
     })
-    expect(
-      result.warnings.some(w => w.issue.match(/Season folder.*does not match expected format/))
-    ).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/Folder name is not 'Season 01'/))).toBe(true)
   })
 
   it('warn_bad_file_name: episode file does not match the pattern', () => {
@@ -225,9 +359,7 @@ describe('shows module — warnings', () => {
         },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/File name does not match Plex naming/))).toBe(
-      true
-    )
+    expect(result.warnings.some(w => w.issue.match(/File name is not 'Show Title/))).toBe(true)
   })
 
   it('warn_show_year_mismatch: episode file references a different show year', () => {
@@ -240,9 +372,7 @@ describe('shows module — warnings', () => {
         },
       },
     })
-    expect(
-      result.warnings.some(w => w.issue.match(/File show\/year .* does not match show folder/))
-    ).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/File says '.*', folder says '.*'/))).toBe(true)
   })
 
   it('warn_show_title_case: capitalization-only drift gets its own bucket', () => {
@@ -305,7 +435,7 @@ describe('shows module — warnings', () => {
     })
     const fired = result.warnings.filter(w => w.type === 'warn_episode_code_case')
     expect(fired).toHaveLength(1)
-    expect(fired[0]!.issue).toMatch(/2 of 3 episode file\(s\)/)
+    expect(fired[0]!.issue).toMatch(/2\/3 episode codes/)
   })
 
   it('warn_episode_code_case: flags the bare multi-episode suffix', () => {
@@ -346,7 +476,7 @@ describe('shows module — warnings', () => {
         },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/does not match season folder/))).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/File says S\d{2}, folder says/))).toBe(true)
   })
 
   it('warn_episode_gaps: missing episode in a season', () => {
@@ -362,7 +492,7 @@ describe('shows module — warnings', () => {
         },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Potential missing episodes/))).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/Missing episodes \(\d+\): E\d{2}/))).toBe(true)
   })
 
   it('warn_no_videos: season folder is empty', () => {
@@ -373,7 +503,7 @@ describe('shows module — warnings', () => {
         },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/No recognized video files/))).toBe(true)
+    expect(result.warnings.some(w => w.issue.match(/Season folder has no video files/))).toBe(true)
   })
 
   it('warn_non_primary: a .mkv file when primary is .mp4', () => {
@@ -523,9 +653,7 @@ describe('shows module — warn_multi_quality (per-season)', () => {
         acceptable_quality_combos: [['UHD', 'HD']], // HD/SD NOT acceptable
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Season 1 exists in multiple qualities/))).toBe(
-      true
-    )
+    expect(result.warnings.some(w => w.issue.match(/Exists in multiple qualities/))).toBe(true)
   })
 
   it('does NOT fire when different seasons are in different qualities', () => {
@@ -620,7 +748,7 @@ describe('shows module — warn_duplicate_quality (per-season)', () => {
     const dupes = result.warnings.filter(w => w.type === 'warn_duplicate_quality')
     expect(dupes.length).toBe(1)
     expect(dupes[0]?.path).toBe('Show (2020) — Season 1')
-    expect(dupes[0]?.issue).toMatch(/Season 1 has duplicate HD copies in 2 folders: HD, Other HD/)
+    expect(dupes[0]?.issue).toMatch(/Duplicate HD copies in 2 folders: HD, Other HD/)
     expect(result.warnings.some(w => w.type === 'warn_multi_quality')).toBe(false)
   })
 
@@ -664,7 +792,7 @@ describe('shows module — warn_duplicate_quality (per-season)', () => {
         categories: [{ name: 'UHD' }, { name: 'Other UHD' }, { name: 'SD' }, { name: 'Other SD' }],
       },
     })
-    const bucket = result.grouped['warn_duplicate_quality'] ?? []
+    const bucket = result.grouped['warn_duplicate_quality']?.items ?? []
     expect(bucket.map(r => r.path)).toEqual(['Zulu (2000) — Season 1', 'Alpha (2002) — Season 1'])
   })
 

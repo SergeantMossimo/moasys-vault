@@ -134,7 +134,7 @@ describe('probeMusic', () => {
     }
 
     await probeMusic({ root_path: root }, fullRules, cache, warnings)
-    expect(warnings.all().some(w => w.issue.match(/inconsistent audio quality/i))).toBe(true)
+    expect(warnings.all().some(w => w.issue.match(/Mixed track quality/i))).toBe(true)
   })
 
   it('suppresses codec-mix warning when the combo is in acceptable_codec_combos', async () => {
@@ -161,7 +161,7 @@ describe('probeMusic', () => {
     }
 
     await probeMusic({ root_path: root }, fullRules, cache, warnings)
-    expect(warnings.all().some(w => w.issue.match(/inconsistent audio quality/i))).toBe(false)
+    expect(warnings.all().some(w => w.issue.match(/Mixed track quality/i))).toBe(false)
   })
 
   it('still fires for codec mixes NOT in acceptable_codec_combos', async () => {
@@ -189,7 +189,7 @@ describe('probeMusic', () => {
     }
 
     await probeMusic({ root_path: root }, fullRules, cache, warnings)
-    expect(warnings.all().some(w => w.issue.match(/inconsistent audio quality/i))).toBe(true)
+    expect(warnings.all().some(w => w.issue.match(/Mixed track quality/i))).toBe(true)
   })
 
   it('does not silence bitrate-spread cases even when the codec is whitelisted alone', async () => {
@@ -224,7 +224,7 @@ describe('probeMusic', () => {
     }
 
     await probeMusic({ root_path: root }, fullRules, cache, warnings)
-    expect(warnings.all().some(w => w.issue.match(/inconsistent audio quality/i))).toBe(true)
+    expect(warnings.all().some(w => w.issue.match(/Mixed track quality/i))).toBe(true)
   })
 
   it('emits warn_mono_audio summarising mono tracks in an album', async () => {
@@ -253,7 +253,7 @@ describe('probeMusic', () => {
 
     const monoWarnings = warnings.all().filter(w => w.type === 'warn_mono_audio')
     expect(monoWarnings).toHaveLength(1)
-    expect(monoWarnings[0]?.issue).toMatch(/1 of 2 track\(s\) in this album are mono/i)
+    expect(monoWarnings[0]?.issue).toMatch(/1\/2 tracks are mono/i)
     expect(monoWarnings[0]?.path).toMatch(/Music\/Artist\/Album/)
   })
 
@@ -326,7 +326,7 @@ describe('probeMusic', () => {
     })
 
     await probeMusic({ root_path: root }, rules, cache, warnings)
-    expect(warnings.all().some(w => w.issue.match(/distinct artists/i))).toBe(true)
+    expect(warnings.all().some(w => w.issue.match(/distinct AlbumArtist tags/i))).toBe(true)
   })
 
   it('skips warn_compilation_detected when folder is "Various Artists"', async () => {
@@ -354,7 +354,7 @@ describe('probeMusic', () => {
     })
 
     await probeMusic({ root_path: root }, rules, cache, warnings)
-    expect(warnings.all().some(w => w.issue.match(/distinct artists/i))).toBe(false)
+    expect(warnings.all().some(w => w.issue.match(/distinct AlbumArtist tags/i))).toBe(false)
   })
 
   it('emits warn_folder_tag_mismatch when AlbumArtist tag differs from folder name', async () => {
@@ -376,7 +376,9 @@ describe('probeMusic', () => {
     })
 
     await probeMusic({ root_path: root }, rules, cache, warnings)
-    expect(warnings.all().some(w => w.issue.match(/Folder\/tag mismatch.*artist/i))).toBe(true)
+    expect(warnings.all().some(w => w.issue.match(/Artist folder is .*AlbumArtist tag is/i))).toBe(
+      true
+    )
   })
 
   it('emits warn_folder_tag_mismatch when Album tag differs from folder name', async () => {
@@ -397,7 +399,7 @@ describe('probeMusic', () => {
     })
 
     await probeMusic({ root_path: root }, rules, cache, warnings)
-    expect(warnings.all().some(w => w.issue.match(/Folder\/tag mismatch.*album/i))).toBe(true)
+    expect(warnings.all().some(w => w.issue.match(/Album folder is .*Album tag is/i))).toBe(true)
   })
 
   it('emits warn_folder_tag_case, not mismatch, when only capitalization differs', async () => {
@@ -519,9 +521,11 @@ describe('probeMusic', () => {
     })
 
     await probeMusic({ root_path: root }, rules, cache, warnings)
-    const mismatch = warnings.all().find(w => w.issue.match(/Folder\/tag mismatch.*artist/i))
-    expect(mismatch?.issue).toContain("rename folder to 'Friends'") // no colon
-    expect(mismatch?.issue).not.toContain("rename folder to 'Friends:'")
+    const mismatch = warnings
+      .all()
+      .find(w => w.issue.match(/Artist folder is .*AlbumArtist tag is/i))
+    expect(mismatch?.issue).toContain("Suggested folder: 'Friends'") // no colon
+    expect(mismatch?.issue).not.toContain("Suggested folder: 'Friends:'")
   })
 
   it('emits warn_missing_tags when required tag fields are blank', async () => {
@@ -542,7 +546,9 @@ describe('probeMusic', () => {
     })
 
     await probeMusic({ root_path: root }, rules, cache, warnings)
-    expect(warnings.all().some(w => w.issue.match(/missing required tags/i))).toBe(true)
+    expect(warnings.all().some(w => w.issue.match(/missing title, album or artist tags/i))).toBe(
+      true
+    )
   })
 
   it('emits warn_track_number_mismatch when filename track number differs from tag', async () => {
@@ -563,7 +569,9 @@ describe('probeMusic', () => {
     })
 
     await probeMusic({ root_path: root }, rules, cache, warnings)
-    expect(warnings.all().some(w => w.issue.match(/track-number mismatch/i))).toBe(true)
+    expect(
+      warnings.all().some(w => w.issue.match(/number differs between filename and tag/i))
+    ).toBe(true)
   })
 
   it('skips tag-driven checks when no tracks have tags', async () => {

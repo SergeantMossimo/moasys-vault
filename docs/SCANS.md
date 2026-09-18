@@ -42,6 +42,29 @@ npm run all -- --no-plex --no-validate
 
 Steps that aren't set up are skipped with the reason — no TMDB key skips movie and show validation (audiobooks still validate), and no `plex` block or token skips both Plex steps. A failing step stops the run. `plex:logs` isn't included, and `fix:shows` never is.
 
+### Command order
+
+`npm run all` handles the order for you. Running commands individually, each one reads what an earlier one wrote:
+
+| Order | Command                                     | Needs first                                                                |
+| ----- | ------------------------------------------- | -------------------------------------------------------------------------- |
+| 1     | `npm run scan:all [drive]`                  | `config.json`                                                              |
+| 2     | `npm run validate:all [drive]`              | The scan (reads its catalog); a TMDB key for movies and shows              |
+| 3     | `npm run plex:pull`                         | Plex `url` in `config.json` and a token in `.secrets.json`                 |
+| 4     | `npm run plex:check [drive]`                | The scan and the pull; compares TMDB ids when validation has run           |
+| 5     | `npm run plex:logs [drive]`                 | The pull; the server owner's token. Occasional — not part of `npm run all` |
+| 6     | `npm run fix:shows -- --fix <mode> <drive>` | The scan; `episode-titles` also needs validation. Always run by hand       |
+
+### After pulling updates
+
+```bash
+git pull
+npm ci          # install exactly what package-lock.json lists
+npm run all
+```
+
+Your `config.json`, `.secrets.json`, `rules/*.local.yaml`, ignore lists, `output/`, and `cache/` are all gitignored, so a pull never changes them, and warm caches keep the run short. If a release changes an output layout, the commands say which old files can be deleted — see the [Changelog](../CHANGELOG.md).
+
 ### After changing your library
 
 Work through the `*warnings.json` files in `output/<drive>/<type>/` ([Output](OUTPUT.md) explains each one), fix what you want to fix, then re-run what the change affects:
@@ -78,7 +101,7 @@ The first scan of a library is the slow one — inspecting a file takes 100–30
 | `validate:movies` | ~10 min    |
 | `validate:shows`  | ~3 min     |
 
-**Faster first scans.** On an SSD or network share, set `probe_concurrency` on the root in `config.json` to inspect several files at once — 4–8 usually cuts the first scan several times over. Leave it at the default of 1 for spinning disks. See [Configuration](CONFIG.md#configjson).
+**Faster first scans.** On an SSD or network share, set `probe_concurrency` on the root in `config.json` to inspect several files at once — 4–8 usually cuts the first scan several times over. For a NAS with a RAID array of hard disks, start at about one per disk (4 for a 4-disk RAID 5). Leave it at the default of 1 for a single spinning disk, and lower it while the array is rebuilding or degraded. See [Configuration](CONFIG.md#configjson).
 
 **The cache.** `cache/<drive>/<type>-probe.json` is keyed by `path | modification time | size`, with the path relative to the drive's `root_path`, so replacing or renaming a file re-inspects it. Each drive keeps its own file — a shared one would let one drive's orphan cleanup delete the other's entries. Delete the file to force a full re-inspection.
 
@@ -302,7 +325,7 @@ The scan pass has its own offline name checks for audiobooks that don't need Ope
 
 Everything else in MOASYS-Vault is read-only: it tells you what's wrong and you fix it. This one command is the exception, for the cases where "fix it yourself" means renaming thousands of files by hand.
 
-It **only ever renames files**. No deletes, no moves between folders, no folder renames, no writes to file contents.
+It **only ever renames**. No deletes, no moves between folders, no writes to file contents. Folders are renamed only by `show-folder`, one show you name explicitly per run.
 
 ### Safety model
 
@@ -314,11 +337,20 @@ It **only ever renames files**. No deletes, no moves between folders, no folder 
 
 ### Modes
 
-| Mode             | What it does                                                                                                 | Fixes                                             |
-| ---------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
-| `show-prefix`    | Rewrites each file's `<Title> (<Year>)` prefix to match its show folder exactly                              | `warn_show_year_mismatch`, `warn_show_title_case` |
-| `episode-titles` | Appends the trailing `- <Episode Title>` from the TMDB cache                                                 | `warn_missing_episode_title`                      |
-| `episode-code`   | Normalizes the season/episode code to your `episode_code_case` and the canonical `-e02` multi-episode suffix | `warn_episode_code_case`                          |
+| Mode             | What it does                                                                                                                                                      | Fixes                                                                               |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `show-prefix`    | Rewrites each file's `<Title> (<Year>)` prefix to the title and year its show folder names (an `{edition-…}` tag stays on the folder)                             | `warn_show_year_mismatch`, `warn_show_title_case`                                   |
+| `episode-titles` | Appends the trailing `- <Episode Title>` from the TMDB cache                                                                                                      | `warn_missing_episode_title`                                                        |
+| `episode-code`   | Normalizes the season/episode code to your `episode_code_case` and the canonical `-e02` multi-episode suffix, and zero-pads unpadded numbers (`s02e4` → `s02e04`) | `warn_episode_code_case`, `warn_bad_file_name` (unpadded)                           |
+| `show-folder`    | Renames one show folder, given `--show "<Old Name>"` and `--to "<New Name>"`, in every category that holds it                                                     | `warn_show_year_mismatch`, `warn_show_title_case` when the folder is the wrong side |
+
+When the folder rather than its files is wrong, run `show-folder` first, then `show-prefix` to bring the files in line. The dry run prints the TMDB title and the files' most common prefix as hints — the target is always the one you pass:
+
+```bash
+npm run fix:shows -- --fix show-folder external --show "Saved by Bell (1989)" --to "Saved by the Bell (1989)"
+```
+
+After a folder rename, re-run `npm run validate:shows <drive>` before `episode-titles` — it looks shows up by folder name.
 
 `episode-titles` reads `output/<drive>/shows/data/validation.json` and `cache/tmdb-show-seasons.json`, so **run `npm run validate:shows <drive>` first**. It makes no network calls of its own.
 
@@ -342,7 +374,7 @@ To reverse a run:
 npm run fix:shows -- --undo output/external/shows/fixes/rename-undo-2026-09-07T21-57-53-887Z.json
 ```
 
-The manifest is checked in full before anything is renamed. If any entry would move a file to a different folder, rename it over a file that now exists, or collide with another entry, the undo is aborted and nothing changes — so a hand-edited or stale manifest can't destroy a file.
+The manifest is checked in full before anything is renamed. If any entry would move a file or folder to a different parent folder, rename a folder from an entry not marked as one, rename it over a file that now exists, or collide with another entry, the undo is aborted and nothing changes — so a hand-edited or stale manifest can't destroy a file.
 
 ### The season guard on `episode-titles`
 
@@ -354,6 +386,12 @@ So `episode-titles` skips a season entirely unless both hold:
 2. **The season's files cover exactly as many TMDB episodes as TMDB lists.** Catches seasons that are missing episodes locally.
 
 The guard is all-or-nothing: a skipped season keeps _every_ file untouched, including ones that would have resolved fine. That's deliberate — a partially-named season with one wrong title is worse than an unnamed one.
+
+**`--allow-partial`** relaxes only the second check, for a library that holds part of a season (13 of TMDB's 26 episodes, say). Each file still gets the title TMDB lists for its number, and the first check still skips the whole season if any file's number is missing from TMDB. The count can no longer catch a numbering offset (DVD vs. aired order, a merged two-parter), so every entry from a partial season carries a `partial season — N of M TMDB episodes` note in the dry run. Spot-check those before `--apply`:
+
+```bash
+npm run fix:shows -- --fix episode-titles external --allow-partial
+```
 
 What's counted is the number of **TMDB episodes resolved**, not local files, which makes multi-episode files come out right in both directions: one file spanning `E01-E02` counts as two episodes, and a file spanning a two-parter that TMDB merged into a single entry counts as one.
 

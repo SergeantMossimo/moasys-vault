@@ -305,6 +305,21 @@ describe('isWarningIgnored', () => {
       expect(isWarningIgnored(scope('HD', 'Show (2000)', 'Season 01', 'S01E01-E02'), l)).toBe(true)
     })
 
+    it('aliases a 3-digit episode code', () => {
+      const l = list('shows', { episodes: ['Saturday Night Live (1975)/S00E201'] })
+      expect(
+        isWarningIgnored(
+          scope(
+            'HD',
+            'Saturday Night Live (1975)',
+            'Season 00',
+            'Saturday Night Live (1975) - s00e201.mp4'
+          ),
+          l
+        )
+      ).toBe(true)
+    })
+
     it('does not alias a different episode', () => {
       const l = list('shows', { episodes: ['My Name Is Earl (2005)/S03E01'] })
       expect(

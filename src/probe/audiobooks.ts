@@ -241,6 +241,7 @@ function checkBookTags(
       : path.join(identity.authorFolder, book.title)
     for (const finding of findings) {
       warnings.add(finding.type, bookPath, finding.issue, {
+        fix: finding.fix,
         scope: { categories, levels: [identity.authorFolder, book.title] },
       })
     }

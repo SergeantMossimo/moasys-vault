@@ -11,12 +11,16 @@
       "properties": {
         "title": { "type": "string", "minLength": 1 },
         "year": { "type": "integer", "minimum": 1888 },
+        "edition": {
+          "type": ["string", "null"],
+          "description": "Plex TV Show Editions tag off the show folder ('Show (2026) {edition-True Hue Color}'), or null when untagged. Editions of one series are separate entries — Plex tracks their watch state separately."
+        },
         "seasons": {
           "type": "array",
           "items": { "$ref": "#/$defs/SeasonOutput" }
         }
       },
-      "required": ["title", "year", "seasons"],
+      "required": ["title", "year", "edition", "seasons"],
       "additionalProperties": false
     },
     "SeasonOutput": {

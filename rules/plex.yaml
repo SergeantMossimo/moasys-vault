@@ -22,6 +22,8 @@ checks:
   warn_plex_unmatched: true      # Movie/show/album not matched to the library's agent
   warn_plex_title_mismatch: true # Plex's title/year names something else — likely a wrong match
   warn_plex_title_case: true     # Plex's title differs from the folder only in capitalization
+  warn_plex_edition_mismatch: true # Plex's edition name disagrees with the folder's {edition-…} tag (shows only)
+  warn_plex_edition_case: true   # Plex's edition differs from the folder's tag only in capitalization
   warn_plex_duplicate: true      # Listed under Plex's Duplicates filter
   warn_plex_log_error: true      # plex:logs — ERROR lines about a file or folder
   warn_plex_log_warning: false   # plex:logs — WARN lines about a file or folder (mostly FFmpeg notes)

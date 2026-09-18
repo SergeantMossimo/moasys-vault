@@ -30,11 +30,16 @@ npm install
 # Tell the scanner where your library lives — edit the paths, drop types you don't have
 cp config.example.json config.json
 
-# First scan — slow once while every file is inspected, fast after that
-npm run scan:all
+# Optional: a TMDB key and/or Plex token for the cross-checks
+cp .secrets.json.example .secrets.json
+
+# Everything routine — slow once while every file is inspected, fast after that
+npm run all
 ```
 
-Then open `output/<drive>/<type>/warnings.json`, fix what you want to fix, and re-scan. [Scans](docs/SCANS.md) walks through the full workflow, including validation and Plex setup.
+Then open the `*warnings.json` files in `output/<drive>/<type>/`, fix what you want to fix, and re-run. [Scans](docs/SCANS.md#workflow) covers the full workflow, which commands depend on which, and updating after a `git pull`.
+
+**Updating:** `git pull`, then `npm ci` and `npm run all`. Your `config.json`, `.secrets.json`, local rules, ignore lists, and caches are gitignored, so a pull never touches them.
 
 ## Commands
 

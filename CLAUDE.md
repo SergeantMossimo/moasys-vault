@@ -25,9 +25,10 @@ Project files (source code, rules YAMLs, `config.json`, README, etc.) are fair g
 
 Its guarantees, all of which must survive any change you make to it:
 
-- **Renames files, nothing else.** `fs.renameSync` file → file inside one directory. No `unlink`, `rmdir`, `cp`, or content write; folder names are never touched.
+- **Renames, nothing else.** `fs.renameSync` file → file inside one directory. No `unlink`, `rmdir`, `cp`, or content write. The only folder rename is `--fix show-folder`, which renames exactly the show folder named by `--show` to the explicit `--to` (never a derived target) inside its own category folder; its undo entries carry `kind: 'folder'`, and `validateUndoManifest()` refuses a directory on any entry not marked that way.
 - **The drive name is mandatory** — it reuses `resolveRoot()` but deliberately drops the default-to-first-root fallback the scan runners have, so a forgotten argument can't silently target the primary server.
 - **Dry run unless `--apply`.** Every run writes the full plan to `output/<drive>/shows/fixes/rename-plan.json` first.
+- **`episode-titles` season guard.** A season is named only if every file's number exists in TMDB and the files cover TMDB's full count. The user-approved `--allow-partial` flag relaxes only the count check, and it notes every entry it plans that way.
 - **All-or-nothing on unsafe entries.** Collisions, illegal characters, or over-long paths abort before the first rename; a season is never left half-renamed. Files with no data are _skipped_, which is separate and non-blocking.
 - **An undo manifest is written before the first rename**, replayable with `--undo`. `validateUndoManifest()` checks the whole manifest before replaying any of it — every rename stays inside one folder and overwrites nothing — so a hand-edited or stale manifest can't destroy a file.
 - **Case-only renames go through a two-step temporary name.** See `renameFile()` — a plain `fs.renameSync` is a silent no-op for these on case-insensitive filesystems, and the user's External drive is exFAT. This bit once: a run reported 726 successful renames while leaving 174 files untouched.
@@ -92,11 +93,18 @@ The loader (`src/core/rules/loader.ts`) deep-merges the layers, resolves the `'c
 
 ## Warnings philosophy
 
-Every check emits warnings only. Never auto-fix. Warning messages should include a **recommended fix** when possible (see existing `warn_loose_files` / `warn_quality_mismatch` messages for the pattern). Each warning is gated by a `rules.checks.warn_*` toggle so the user can silence noise.
+Every check emits warnings only. Never auto-fix. Each warning should carry a **recommended fix** when possible, passed as `options.fix` — see below. Each warning is gated by a `rules.checks.warn_*` toggle so the user can silence noise.
 
 Each call to `warnings.add(type, path, issue, options?)` passes a stable `type` — almost always the matching `warn_*` identifier from the rules schema. The exceptions are filesystem-level failures that aren't user-toggleable (e.g. `permission_denied`). The `type` becomes the bucket key under `by_type` in `warnings.json` and the `checks` toggle name; ignore lists no longer reference it. If you add a new check, the `type` string must equal the rules toggle name. `WarningCollector` exposes three views: `all()` for a flat sorted list (used by tests + per-type summary), `groupedByType()` for the on-disk shape, and `countByType()` for the run-output breakdown.
 
 When a collector is constructed with an ignore list (every runner does), each row also carries `ignore` — the narrowest ready-to-paste entry from `suggestIgnoreEntry()` in `src/core/ignored.ts`. It comes from the same scope as matching, so a check with a correct path or `options.scope` gets a correct suggestion for free.
+
+**`issue` states the fact; `fix` states the remedy.** On disk each bucket is `{ fix, items }`: `groupedByType()` hoists `options.fix` onto the bucket so the remedy is written once, not on every row — repeated per row it was 43% of all warning text, and rows averaged 264 characters. The rules:
+
+- **A `fix` must be constant per warning type.** The first one a bucket sees wins, and `groupedByType()` logs a `[WARN]` if a bucket sees two. Never interpolate a per-row value into it. When a type fires from several call sites, keep its text in the file's `FIX` map (see `src/media/shows.ts`) so every site shares it.
+- **Keep the remedy off the row.** A per-row suggestion that differs row to row (a suggested folder name, say) is a fact and belongs in `issue`; generic advice goes in `fix`. Don't tell the user how to silence a check — the row's `ignore` entry and the bucket key already do.
+- **Don't restate the bucket key.** No leading `Quality mismatch — ` or `Folder/tag mismatch: `.
+- **Lead with names and numbers; target ≤120 characters, 160 at most.** Cap lists with the `, +N more` convention — `formatGaps()` in `src/core/gaps.ts` for number runs, the `listNames` helpers for files.
 
 **Summarize checks that fire wholesale.** When a problem usually affects a whole season or album at once, emit one warning for the season or album folder with counts and a few samples, not one per file — see `warn_missing_episode_title`, `warn_episode_code_case`, and shows `warn_quality_mismatch` (one row per episode once produced 7,346 rows on a single drive).
 

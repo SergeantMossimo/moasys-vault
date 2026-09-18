@@ -24,6 +24,19 @@ import { readTags } from './id3'
 import { deriveAudioQuality, summarizeAlbumQuality } from './music-quality'
 import { ArtistProbeOutput, AlbumProbeOutput, TrackProbe, ProbeData, ProbeResult } from './types'
 
+/**
+ * The remedy for the tag checks that fire from more than one call site, kept
+ * in one map so each bucket's `fix` reads the same whichever site produced the
+ * row — the artist and album comparisons share both of these. See
+ * `WarningOptions.fix`.
+ */
+const FIX = {
+  warn_folder_tag_mismatch:
+    `Rename the folder, or correct the tag — whichever is wrong. Plex catalogues from the ` +
+    `tag, so a mismatch files the album under one name while you browse for another.`,
+  warn_folder_tag_case: `Make them agree, so Plex and your filesystem don't present one name two ways.`,
+} as const
+
 // ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
@@ -330,10 +343,13 @@ export async function probeMusic(
         warnings.add(
           'warn_quality_inconsistent',
           albumWarningPath(album.media_type, artist.artist, album.album),
-          `Album has inconsistent audio quality across tracks: ${album.audio_quality_summary.join(', ')}. ` +
-            `Usually means a mid-album re-encode or files added at different bitrates. ` +
-            `Re-encode the outliers to match the album's primary quality.`,
-          { scope: albumWarningScope(album.media_type, artist.artist, album.album) }
+          `Mixed track quality: ${album.audio_quality_summary.join(', ')}.`,
+          {
+            fix:
+              `Usually a mid-album re-encode, or files added at different bitrates. Re-encode ` +
+              `the outliers to match the rest of the album.`,
+            scope: albumWarningScope(album.media_type, artist.artist, album.album),
+          }
         )
       }
     }
@@ -358,12 +374,14 @@ export async function probeMusic(
         warnings.add(
           'warn_mono_audio',
           albumWarningPath(album.media_type, artist.artist, album.album),
-          `${mono} of ${totalWithAudio} track(s) in this album are mono (single audio channel). ` +
-            `Most music since the late 1950s is stereo — mono usually indicates a bad rip or a ` +
-            `downloaded preview. Re-rip from a stereo source, or — if the mono is intentional ` +
-            `(pre-stereo recording, mono master) — list the album under 'albums:' in ` +
-            `ignored/<drive>/music.yaml, which silences its other warnings too.`,
-          { scope: albumWarningScope(album.media_type, artist.artist, album.album) }
+          `${mono}/${totalWithAudio} tracks are mono (one audio channel).`,
+          {
+            fix:
+              `Most music since the late 1950s is stereo, so mono usually means a bad rip or a ` +
+              `preview download — re-rip from a stereo source. Expected on pre-stereo recordings ` +
+              `and mono masters.`,
+            scope: albumWarningScope(album.media_type, artist.artist, album.album),
+          }
         )
       }
     }
@@ -496,11 +514,15 @@ function analyzeTags(
         warnings.add(
           'warn_compilation_detected',
           albumPath,
-          `Album has tracks by ${albumArtistSet.size} distinct artists (per AlbumArtist tag: ${sample}${more}) ` +
-            `but isn't in a 'Various Artists' folder. ` +
-            `Recommended fix: move this album to '<category>/Various Artists/${album.album}/' and ensure ` +
-            `each track's AlbumArtist tag is set to 'Various Artists' (per-track Artist tag stays the actual performer).`,
-          albumOpts
+          `${albumArtistSet.size} distinct AlbumArtist tags (${sample}${more}), but not under ` +
+            `'Various Artists'.`,
+          {
+            ...albumOpts,
+            fix:
+              `Move the album to '<category>/Various Artists/<Album>/' and set every track's ` +
+              `AlbumArtist tag to 'Various Artists'. The per-track Artist tag stays the actual ` +
+              `performer.`,
+          }
         )
       }
 
@@ -514,18 +536,17 @@ function analyzeTags(
           warnings.add(
             'warn_folder_tag_mismatch',
             albumPath,
-            `Folder/tag mismatch: artist folder is '${artist.artist}' but AlbumArtist tag is '${tagValue}'. ` +
-              `Recommended fix: rename folder to '${suggestedFolderName(tagValue)}' (or update the tag if the folder is correct). ` +
-              `Without this, Plex may catalog the album under one name while users browse under the other.`,
-            albumOpts
+            `Artist folder is '${artist.artist}', AlbumArtist tag is '${tagValue}'. ` +
+              `Suggested folder: '${suggestedFolderName(tagValue)}'.`,
+            { ...albumOpts, fix: FIX.warn_folder_tag_mismatch }
           )
         } else if (comparison === 'case-only' && rules.checks.warn_folder_tag_case) {
           warnings.add(
             'warn_folder_tag_case',
             albumPath,
-            `Folder/tag capitalization differs: artist folder is '${artist.artist}' but AlbumArtist tag is '${tagValue}'. ` +
-              `Only the capitalization differs. Make them agree so Plex and your filesystem present the artist identically.`,
-            albumOpts
+            `Capitalization only: artist folder '${artist.artist}' vs AlbumArtist tag ` +
+              `'${tagValue}'.`,
+            { ...albumOpts, fix: FIX.warn_folder_tag_case }
           )
         }
       }
@@ -538,17 +559,16 @@ function analyzeTags(
           warnings.add(
             'warn_folder_tag_mismatch',
             albumPath,
-            `Folder/tag mismatch: album folder is '${album.album}' but Album tag is '${tagValue}'. ` +
-              `Recommended fix: rename folder to '${suggestedFolderName(tagValue)}' or update the tag.`,
-            albumOpts
+            `Album folder is '${album.album}', Album tag is '${tagValue}'. ` +
+              `Suggested folder: '${suggestedFolderName(tagValue)}'.`,
+            { ...albumOpts, fix: FIX.warn_folder_tag_mismatch }
           )
         } else if (comparison === 'case-only' && rules.checks.warn_folder_tag_case) {
           warnings.add(
             'warn_folder_tag_case',
             albumPath,
-            `Folder/tag capitalization differs: album folder is '${album.album}' but Album tag is '${tagValue}'. ` +
-              `Only the capitalization differs. Make them agree so Plex and your filesystem present the album identically.`,
-            albumOpts
+            `Capitalization only: album folder '${album.album}' vs Album tag '${tagValue}'.`,
+            { ...albumOpts, fix: FIX.warn_folder_tag_case }
           )
         }
       }
@@ -563,10 +583,11 @@ function analyzeTags(
         warnings.add(
           'warn_missing_tags',
           albumPath,
-          `${missingTagsTracks.length} track(s) missing required tags (title, album, or artist/album_artist). ` +
-            `Affected: ${sample}${more}. ` +
-            `Plex will fall back to filename parsing for these tracks. Tag them properly for cleaner library metadata.`,
-          albumOpts
+          `${missingTagsTracks.length} tracks missing title, album or artist tags: ${sample}${more}.`,
+          {
+            ...albumOpts,
+            fix: `Plex falls back to parsing the filename for these. Tag them for cleaner metadata.`,
+          }
         )
       }
 
@@ -581,10 +602,12 @@ function analyzeTags(
         warnings.add(
           'warn_track_number_mismatch',
           albumPath,
-          `${trackNumberMismatches.length} track(s) with track-number mismatch between filename and tag. ` +
-            `${sample}${more}. ` +
-            `Usually an accidental rename — verify the tag is right, then rename the file.`,
-          albumOpts
+          `${trackNumberMismatches.length} tracks whose number differs between filename and tag: ` +
+            `${sample}${more}.`,
+          {
+            ...albumOpts,
+            fix: `Usually an accidental rename — check the tag is right, then rename the file.`,
+          }
         )
       }
     }

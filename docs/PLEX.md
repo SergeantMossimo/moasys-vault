@@ -99,7 +99,7 @@ npm run plex:pull movies "tv shows"
 | TV Shows     | shows, episodes             |
 | Music        | artists, albums, and tracks |
 
-Each item carries its Plex title, original title, year, agent guid, external ids (`imdb://`, `tmdb://`, `tvdb://`), parent/grandparent keys and titles, whether Plex lists it under **Duplicates**, and its files. Each file records the path as Plex sees it, the configured drive and library-relative path it maps to on this machine, and whether Plex has flagged it deleted.
+Each item carries its Plex title, original title, year, agent guid, edition name (`edition_title` — Plex's `{edition-…}` for a movie or a show, `null` otherwise), external ids (`imdb://`, `tmdb://`, `tvdb://`), parent/grandparent keys and titles, whether Plex lists it under **Duplicates**, and its files. Each file records the path as Plex sees it, the configured drive and library-relative path it maps to on this machine, and whether Plex has flagged it deleted.
 
 JSON Schemas for these files are in [`schemas/`](../schemas/): `plex-libraries.json`, `plex-catalog.json`, and `plex-collections.json`.
 
@@ -184,6 +184,8 @@ This writes `unfiltered/plex-warnings.json` and leaves the normal `plex-warnings
 | `warn_plex_unmatched`             | A movie, show, or album Plex couldn't match to its agent. Use **Fix Match…**. Skipped for libraries using the Personal Media agent, where nothing is ever matched, and for audiobooks, which Plex looks up in music databases that don't carry them.                                                                                                                                                                                                                                                                                                                        |
 | `warn_plex_title_mismatch`        | Plex probably matched the wrong movie or show. When the validate pass has run, this compares TMDB ids: Plex's id vs the one the validator matched — same-title films and remakes are caught even when the titles are identical, and a different title with the same id is not reported. Without validation it compares titles, allowing canonical titles that wrap the folder's (`Star Wars: Episode VI - Return of the Jedi`), Plex's `(2014)` / `(US)` suffixes and bare year suffixes (`Space King 2024`, when the year matches), leading articles, and years one apart. |
 | `warn_plex_title_case`            | Plex's title matches the folder except for capitalization.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `warn_plex_edition_mismatch`      | Plex's edition name for a show disagrees with the `{edition-…}` tag on its folder — including one side having an edition and the other not. Usually Plex hasn't rescanned since the folder was renamed; an edition set by hand in Plex Web also overrides the folder. Shows only: a movie's tag is in the filename, so its folder has nothing to compare.                                                                                                                                                                                                                   |
+| `warn_plex_edition_case`          | Plex's edition matches the folder's tag except for capitalization.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `warn_plex_duplicate`             | Plex lists the item under **Duplicates** — several files merged into one entry. Fine for deliberate versions like HD + UHD or a director's cut; if they're different titles, **Split Apart** in Plex. Editions (`{edition-…}`) are separate Plex items, so they don't appear here.                                                                                                                                                                                                                                                                                          |
 
 Toggle any of these in `rules/plex.yaml` (or `rules/plex.local.yaml` for personal overrides).
@@ -191,7 +193,7 @@ Toggle any of these in `rules/plex.yaml` (or `rules/plex.local.yaml` for persona
 ### What it compares
 
 - **Files on disk** come from `data/probe.json`, which lists every _primary-format_ file the scan inspected. A file in a non-primary format that's missing from Plex isn't reported; one Plex has that isn't in `data/probe.json` is checked directly on disk before being called an orphan.
-- **Title checks** run for movies and shows only, once per folder (editions share one), using the folder pattern from `rules/movies.yaml` / `rules/shows.yaml`. Run `npm run validate:movies` / `validate:shows` first for the more precise TMDB-id comparison; only high- and medium-confidence validation matches are used. Music and audiobook titles in Plex come from embedded tags, which the scan already compares with folders.
+- **Title checks** run for movies and shows only, once per folder (movie editions share one), using the folder pattern from `rules/movies.yaml` / `rules/shows.yaml`. **Edition checks** run for shows only, once per show folder — see `warn_plex_edition_mismatch` above. Run `npm run validate:movies` / `validate:shows` first for the more precise TMDB-id comparison; only high- and medium-confidence validation matches are used. Music and audiobook titles in Plex come from embedded tags, which the scan already compares with folders.
 - **Only this drive.** Plex files that map to a different drive, or to no configured root, are left out.
 
 ---
@@ -239,7 +241,7 @@ Ids are looked up in the catalogs from your last pull. The run prints how many l
 
 ### Log warnings
 
-One warning per folder, listing each distinct problem with the files involved, the number of log lines, when they were logged, and a sample line.
+One warning per folder, naming up to three distinct problems with the files involved, the number of log lines, and when they were logged. What each problem means is in the table below, keyed by the name the warning uses; the sample log lines behind it are in [`logs-summary.json`](#logs-summaryjson).
 
 | Warning                 | What it means                                                                                                                            |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
@@ -248,14 +250,14 @@ One warning per folder, listing each distinct problem with the files involved, t
 
 Problems with a plain-language explanation:
 
-| Problem                                    | What to do                                                                                                                                                                                            |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Credits detection failed                   | Plex gave up and the files get no **Skip Credits** button. Whole seasons failing together usually means the encoding, not damage — nothing to fix. A single failing file is worth playing to the end. |
-| Credits detection on a multi-part item     | Plex can't detect credits on an item split across files (`Part 1` / `Part 2`). Combine the parts if you want Skip Credits.                                                                            |
-| An embedded date tag is invalid            | Fix the date in the file's metadata with a tag editor, or ignore it if Plex shows the right date.                                                                                                     |
-| FFmpeg reported a problem reading the file | Usually a harmless muxing quirk. If the file plays badly, remux or replace it.                                                                                                                        |
+| Problem                                                            | What to do                                                                                                                                                                                            |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Credits detection failed                                           | Plex gave up and the files get no **Skip Credits** button. Whole seasons failing together usually means the encoding, not damage — nothing to fix. A single failing file is worth playing to the end. |
+| Credits detection doesn't support items split across several files | Plex can't detect credits on an item split across files (`Part 1` / `Part 2`). Combine the parts if you want Skip Credits.                                                                            |
+| An embedded date tag is invalid                                    | Fix the date in the file's metadata with a tag editor, or ignore it if Plex shows the right date.                                                                                                     |
+| Plex's media analysis (FFmpeg) reported a problem reading the file | Usually a harmless muxing quirk. If the file plays badly, remux or replace it.                                                                                                                        |
 
-Anything else gets a generic note and the sample line to search for.
+Anything else is reported as _Plex logged a problem while working on this item_ — search the Plex forums for its sample line in `logs-summary.json`.
 
 ### `logs-summary.json`
 

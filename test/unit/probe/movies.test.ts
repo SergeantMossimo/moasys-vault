@@ -97,7 +97,7 @@ describe('probeMovies', () => {
       },
     })
     return probeMovies({ root_path: root }, rules, cache, warnings).then(() => {
-      expect(warnings.all().some(w => w.issue.match(/Quality mismatch/))).toBe(true)
+      expect(warnings.all().some(w => w.type === 'warn_quality_mismatch')).toBe(true)
     })
   })
 
@@ -116,7 +116,7 @@ describe('probeMovies', () => {
     })
 
     await probeMovies({ root_path: root }, rules, cache, warnings)
-    expect(warnings.all().some(w => w.issue.match(/Quality mismatch/))).toBe(true)
+    expect(warnings.all().some(w => w.type === 'warn_quality_mismatch')).toBe(true)
   })
 
   it('skips warn_quality_mismatch for general-tag categories with no detected quality', async () => {
@@ -134,7 +134,7 @@ describe('probeMovies', () => {
     })
 
     await probeMovies({ root_path: root }, rules, cache, warnings)
-    expect(warnings.all().some(w => w.issue.match(/Quality mismatch/))).toBe(false)
+    expect(warnings.all().some(w => w.type === 'warn_quality_mismatch')).toBe(false)
   })
 
   it('silences warn_quality_mismatch when the toggle is false', async () => {
@@ -151,7 +151,7 @@ describe('probeMovies', () => {
     })
 
     await probeMovies({ root_path: root }, rules, cache, warnings)
-    expect(warnings.all().some(w => w.issue.match(/Quality mismatch/))).toBe(false)
+    expect(warnings.all().some(w => w.type === 'warn_quality_mismatch')).toBe(false)
   })
 
   it('emits warn_short_duration for a file at or below min_duration_minutes', async () => {
@@ -169,7 +169,7 @@ describe('probeMovies', () => {
     await probeMovies({ root_path: root }, rules, cache, warnings)
     const hit = warnings.all().find(w => w.type === 'warn_short_duration')
     expect(hit).toBeDefined()
-    expect(hit?.issue).toMatch(/Short runtime — 2m 05s/)
+    expect(hit?.issue).toMatch(/Runs 2m 05s/)
   })
 
   it('fires warn_short_duration exactly at the threshold (at-or-below, not strictly-below)', async () => {
@@ -289,8 +289,10 @@ describe('probeMovies', () => {
     expect(warnings.all().some(w => w.type === 'warn_short_duration')).toBe(false)
   })
 
+  // The message used to spell out how to silence the check. That advice now
+  // lives on the row itself, as a ready-to-paste level-keyed `ignore` entry.
   it('points warn_short_duration at the level-keyed ignore list', async () => {
-    const { rules, root, cache, warnings } = setup({
+    const { rules, root, cache } = setup({
       spec: { HD: { 'X (2000)': { 'X (2000).mp4': '' } } },
       rules: { min_duration_minutes: 30, checks: SHORT_DURATION_ON },
       probes: {
@@ -300,13 +302,13 @@ describe('probeMovies', () => {
         }),
       },
     })
+    const warnings = new WarningCollector({ mediaType: 'movies', entries: [] })
 
     await probeMovies({ root_path: root }, rules, cache, warnings)
     const hit = warnings.all().find(w => w.type === 'warn_short_duration')
-    expect(hit?.issue).toMatch(/ignored\/<drive>\/movies\.yaml/)
-    expect(hit?.issue).toMatch(/under `movies:`/)
+    expect(hit?.ignore).toBe('files: X (2000)/X (2000).mp4')
     // The per-type `types:` form was removed from ignore lists and now fails to load.
-    expect(hit?.issue).not.toMatch(/types:/)
+    expect(hit?.ignore).not.toMatch(/types:/)
   })
 
   it('fires warn_short_duration in a general-tag category, unlike warn_quality_mismatch', async () => {

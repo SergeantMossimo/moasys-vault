@@ -44,6 +44,49 @@ import { deriveQuality } from '../probe/helpers'
 // ─────────────────────────────────────────────
 
 /**
+ * The remedy for each warning type, written once per bucket in warnings.json
+ * rather than repeated on every row — see `WarningOptions.fix`.
+ *
+ * They live in one map because several types fire from more than one call site
+ * (`warn_unexpected_entries` from both the category root and a movie folder,
+ * for instance) and a `fix` must read the same whichever site produced the row.
+ * Keep each one generic enough to cover every site that uses it, and keep
+ * per-row detail in the `issue` instead.
+ */
+const FIX = {
+  warn_loose_files:
+    `Plex expects every movie inside its own 'Movie Title (YEAR)/' folder. Move each file ` +
+    `into one — loose files are not in the catalog.`,
+  warn_unexpected_entries:
+    `Expected only movie folders or video files, plus Plex sidecars. Move or delete ` +
+    `anything else.`,
+  warn_extra_subfolders:
+    `Plex expects every video directly inside the 'Movie Title (YEAR)/' folder. Move them ` +
+    `up — files in these subfolders are not scanned.`,
+  warn_no_videos: `Add the movie file, or delete the empty folder.`,
+  warn_non_primary: `Re-encode to your primary format if you want one format throughout.`,
+  warn_bad_file_name: `Rename to 'Movie Title (YEAR).ext', matching its folder.`,
+  warn_bad_folder_name: `Rename to 'Movie Title (YEAR)', e.g. 'Alien (1979)'.`,
+  warn_empty_edition: `Name the edition — '{edition-Director's Cut}' — or drop the tag entirely.`,
+  warn_suspicious_year: `Check the year against the real release date; it is usually a typo.`,
+  warn_title_mismatch: `Rename the file to match its folder, or move it to the right folder.`,
+  warn_title_case:
+    `Match the file's capitalization to the folder, so Plex and your filesystem don't ` +
+    `present the same movie two ways.`,
+  warn_year_mismatch: `Rename the file to match its folder, or move it to the right folder.`,
+  warn_duplicate_edition:
+    `Two files in one folder claim the same edition, so Plex shows only one. Give each a ` +
+    `distinct '{edition-Name}' tag, or delete the redundant file.`,
+  warn_duplicate_quality:
+    `Same movie at the same quality in two places — one is redundant. Keep the copy in the ` +
+    `folder you want and delete the rest.`,
+  warn_multi_quality:
+    `Expected when you keep a UHD and an HD copy. If it isn't deliberate, delete the ` +
+    `redundant copy — or whitelist the pair via acceptable_quality_combos in rules/movies.yaml.`,
+  permission_denied: `Check the folder's permissions, or whether the drive is still mounted.`,
+} as const
+
+/**
  * Parse a Plex movie folder name using the configured folder pattern.
  * Returns { title, year } or null if the name doesn't match the pattern.
  *
@@ -170,8 +213,8 @@ export function createMoviesModule(
           warnings.add(
             'warn_loose_files',
             folderName,
-            `${looseRoot.length} loose video file(s) in media folder root — Plex expects each movie inside a 'Movie Title (YEAR)' folder. ` +
-              `Move each file into its own correctly-named folder.`
+            `${looseRoot.length} loose video file(s) in the category root.`,
+            { fix: FIX.warn_loose_files }
           )
         }
       }
@@ -188,8 +231,8 @@ export function createMoviesModule(
           warnings.add(
             'warn_unexpected_entries',
             folderName,
-            `Unexpected file(s) in media folder root: ${names}. ` +
-              `Expected only Movie Title (YEAR)/ subfolders plus Plex sidecars (${rules.sidecar_extensions.join(', ')}).`
+            `Unexpected file(s) in the category root: ${names}.`,
+            { fix: FIX.warn_unexpected_entries }
           )
         }
       }
@@ -205,7 +248,9 @@ export function createMoviesModule(
         try {
           allFiles = fs.readdirSync(movieFolderPath, { withFileTypes: true })
         } catch {
-          warnings.add('permission_denied', folderRel, 'Permission denied reading folder')
+          warnings.add('permission_denied', folderRel, 'Permission denied reading folder.', {
+            fix: FIX.permission_denied,
+          })
           continue
         }
 
@@ -218,9 +263,8 @@ export function createMoviesModule(
             warnings.add(
               'warn_extra_subfolders',
               folderRel,
-              `Unexpected subfolder(s) in movie folder: ${names}. ` +
-                `Plex expects all video files directly inside the Movie Title (YEAR)/ folder. ` +
-                `Files inside these subfolders are not scanned.`
+              `Unexpected subfolder(s) in the movie folder: ${names}.`,
+              { fix: FIX.warn_extra_subfolders }
             )
           }
         }
@@ -237,8 +281,8 @@ export function createMoviesModule(
             warnings.add(
               'warn_unexpected_entries',
               folderRel,
-              `Unexpected file(s) in movie folder: ${names}. ` +
-                `Expected only video files plus Plex sidecars (${rules.sidecar_extensions.join(', ')}).`
+              `Unexpected file(s) in the movie folder: ${names}.`,
+              { fix: FIX.warn_unexpected_entries }
             )
           }
         }
@@ -251,7 +295,9 @@ export function createMoviesModule(
 
         if (videoFiles.length === 0) {
           if (rules.checks.warn_no_videos) {
-            warnings.add('warn_no_videos', folderRel, 'No recognized video files found in folder')
+            warnings.add('warn_no_videos', folderRel, 'Movie folder has no video files.', {
+              fix: FIX.warn_no_videos,
+            })
           }
           continue
         }
@@ -262,8 +308,8 @@ export function createMoviesModule(
             warnings.add(
               'warn_non_primary',
               path.join(folderRel, f.name),
-              `${formatPrimaryExts(rules.primary_extension)} video file — may need re-encoding`,
-              { extension: ext }
+              `${formatPrimaryExts(rules.primary_extension)} video file.`,
+              { extension: ext, fix: FIX.warn_non_primary }
             )
           }
         }
@@ -280,7 +326,8 @@ export function createMoviesModule(
               warnings.add(
                 'warn_bad_file_name',
                 path.join(folderRel, f.name),
-                'File name does not match Plex naming convention'
+                `File name is not 'Movie Title (YEAR)'.`,
+                { fix: FIX.warn_bad_file_name }
               )
             }
             continue
@@ -294,7 +341,8 @@ export function createMoviesModule(
               warnings.add(
                 'warn_empty_edition',
                 path.join(folderRel, f.name),
-                'Empty edition tag found — {edition-} has no value after the dash'
+                '{edition-} has no value after the dash.',
+                { fix: FIX.warn_empty_edition }
               )
             }
             edition = null // Treat as no edition so file still gets catalogued
@@ -305,7 +353,8 @@ export function createMoviesModule(
               warnings.add(
                 'warn_suspicious_year',
                 path.join(folderRel, f.name),
-                `Suspicious year (${fileYear}) — expected between ${yearMin} and ${yearMax}`
+                `Year ${fileYear} is outside ${yearMin}–${yearMax}.`,
+                { fix: FIX.warn_suspicious_year }
               )
             }
           }
@@ -315,7 +364,8 @@ export function createMoviesModule(
               warnings.add(
                 'warn_bad_folder_name',
                 folderRel,
-                'Folder name does not match Plex naming convention'
+                `Folder name is not 'Movie Title (YEAR)'.`,
+                { fix: FIX.warn_bad_folder_name }
               )
             }
           } else {
@@ -330,7 +380,8 @@ export function createMoviesModule(
                 warnings.add(
                   'warn_title_mismatch',
                   path.join(folderRel, f.name),
-                  `File title '${fileTitle}' does not match folder title '${folderTitle}'`
+                  `File says '${fileTitle}', folder says '${folderTitle}'.`,
+                  { fix: FIX.warn_title_mismatch }
                 )
               }
             } else if (fileTitle !== folderTitle) {
@@ -338,9 +389,8 @@ export function createMoviesModule(
                 warnings.add(
                   'warn_title_case',
                   path.join(folderRel, f.name),
-                  `File title '${fileTitle}' differs from folder title '${folderTitle}' only in capitalization. ` +
-                    `Plex catalogues it fine either way. Rename the file to match the folder ` +
-                    `(or the folder to match the file, whichever is correct).`
+                  `Capitalization only: file '${fileTitle}' vs folder '${folderTitle}'.`,
+                  { fix: FIX.warn_title_case }
                 )
               }
             }
@@ -350,7 +400,8 @@ export function createMoviesModule(
                 warnings.add(
                   'warn_year_mismatch',
                   path.join(folderRel, f.name),
-                  `File year (${fileYear}) does not match folder year (${folderYear}) in '${entry.name}'`
+                  `File says ${fileYear}, folder says ${folderYear}.`,
+                  { fix: FIX.warn_year_mismatch }
                 )
               }
             }
@@ -364,7 +415,8 @@ export function createMoviesModule(
               warnings.add(
                 'warn_duplicate_edition',
                 path.join(folderRel, f.name),
-                `Duplicate edition — another file already claims ${!edition ? 'no edition' : `'${edition}'`}: '${existing}'`
+                `'${existing}' already claims ${!edition ? 'no edition' : `'${edition}'`}.`,
+                { fix: FIX.warn_duplicate_edition }
               )
             }
           } else {
@@ -451,9 +503,9 @@ export function createMoviesModule(
             warnings.add(
               'warn_duplicate_quality',
               movieDisplayName(record),
-              `Duplicate ${quality} copies in ${cats.length} folders: ${cats.join(', ')} — ` +
-                `keep one and delete the rest`,
+              `Duplicate ${quality} copies in ${cats.length} folders: ${cats.join(', ')}.`,
               {
+                fix: FIX.warn_duplicate_quality,
                 // Group the bucket by quality (UHD, then HD, then SD) rather
                 // than by title, so the worst offenders read together.
                 sortKey: qualitySortKey(quality),
@@ -476,9 +528,10 @@ export function createMoviesModule(
             warnings.add(
               'warn_multi_quality',
               movieDisplayName(record),
-              `Movie exists in multiple qualities: ${sortQualities(qualities).join(', ')}`,
+              `Exists in multiple qualities: ${sortQualities(qualities).join(', ')}.`,
               // Display label, not a library path — see warn_duplicate_quality.
               {
+                fix: FIX.warn_multi_quality,
                 scope: {
                   categories: distinctCategories(record.versions),
                   levels: [movieDisplayName(record)],

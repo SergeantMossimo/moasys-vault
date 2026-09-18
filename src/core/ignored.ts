@@ -217,10 +217,10 @@ function episodeCodeOf(name: string): string | null {
   const raw =
     year !== undefined
       ? extractEpisodeCode(stem, Number(year))
-      : (/^(S\d{2}E\d{2}(?:-E?\d{2})?)$/i.exec(stem)?.[1] ?? null)
+      : (/^(S\d{2}E\d{2,3}(?:-E?\d{2,3})?)$/i.exec(stem)?.[1] ?? null)
   if (raw === null) return null
 
-  const m = /^S(\d{2})E(\d{2})(?:-E?(\d{2}))?$/i.exec(raw)
+  const m = /^S(\d{2})E(\d{2,3})(?:-E?(\d{2,3}))?$/i.exec(raw)
   if (m === null) return null
   const start = Number(m[2])
   return canonicalEpisodeCode(

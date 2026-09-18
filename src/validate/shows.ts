@@ -12,6 +12,7 @@
  * map cleanly to anyone's local library (early extras, web shorts, etc).
  */
 
+import { toComparableFolderName } from '../core/files'
 import { EpisodeOutput, ShowOutput, WarningCollector } from '../core/types'
 import { ShowsRules } from '../core/rules/shows'
 
@@ -201,7 +202,11 @@ function findEpisodeTitleMismatches(
     // already surfaces structural issues.
     if (tmdbTitles.length === 0) continue
 
-    const normalize = (s: string) => stripFilenameIllegalChars(s).trim().toLowerCase()
+    // toComparableFolderName, not a bare strip: deleting an illegal character
+    // can leave a trailing period exposed ('Sheila E.', '7:00 A.M.') that the
+    // filename can't store, and the loose tier turns the deleted '/' or ':'
+    // into a space, so neither tier matched before.
+    const normalize = (s: string) => toComparableFolderName(s).toLowerCase()
     const localSafe = normalize(ep.title)
     const tmdbSafe = tmdbTitles.map(normalize)
 
@@ -295,6 +300,7 @@ export async function validateShows(
     const entry: ShowValidation = {
       title: show.title,
       year: show.year,
+      edition: show.edition,
       confidence: resolved.confidence,
       tmdb_id: resolved.best_id,
       tmdb_title: null,
@@ -347,7 +353,12 @@ export async function validateShows(
     // the first season's first version) so flat-library and quality-organized
     // users both get a clickable, copy-pasteable folder path. "default" is
     // the sentinel for an empty `categories` config — skip the prefix there.
-    const label = `${show.title} (${show.year})`
+    // The label has to be the folder name as it sits on disk — edition tag
+    // included — so the path is clickable and an ignore entry for one edition
+    // doesn't silence the other.
+    const label = show.edition
+      ? `${show.title} (${show.year}) {edition-${show.edition}}`
+      : `${show.title} (${show.year})`
     const firstCategory = show.seasons[0]?.versions[0]?.category
     const showPath =
       firstCategory && firstCategory !== 'default' ? `${firstCategory}/${label}` : label
@@ -364,8 +375,13 @@ export async function validateShows(
       warnings.add(
         'warn_tmdb_no_match',
         showPath,
-        `TMDB found no match for '${show.title}' (${show.year}). Possible typo or this show isn't in TMDB.`,
-        { scope: showScope }
+        `TMDB has nothing matching '${show.title}' (${show.year}).`,
+        {
+          fix:
+            `Usually a typo in the title or year, or a missing diacritic. Check the folder ` +
+            `against themoviedb.org — some obscure shows genuinely aren't listed.`,
+          scope: showScope,
+        }
       )
     } else if (resolved.confidence === 'low' && rules.checks.warn_tmdb_low_confidence) {
       const altText =
@@ -375,8 +391,12 @@ export async function validateShows(
       warnings.add(
         'warn_tmdb_low_confidence',
         showPath,
-        `TMDB low-confidence match: best guess is '${entry.tmdb_title}' (${entry.tmdb_first_air_year}).${altText} Review and confirm.`,
-        { scope: showScope }
+        `Best TMDB guess is '${entry.tmdb_title}' (${entry.tmdb_first_air_year}), below the ` +
+          `confidence threshold.${altText}`,
+        {
+          fix: `Check the match on themoviedb.org and correct the folder name if it is wrong.`,
+          scope: showScope,
+        }
       )
     }
 
@@ -390,8 +410,14 @@ export async function validateShows(
       warnings.add(
         'warn_tmdb_title_canonical',
         showPath,
-        `TMDB canonical title differs: folder is '${show.title}', TMDB filename-safe form is '${entry.tmdb_title_filename_safe}'. Consider renaming the folder to match.`,
-        { scope: showScope }
+        `Folder is '${show.title}', TMDB's filename-safe form is ` +
+          `'${entry.tmdb_title_filename_safe}'.`,
+        {
+          fix:
+            `Rename the folder to match if you want TMDB's exact wording. Expected whenever a ` +
+            `title matched via the loose tier — this is a suggestion, not an error.`,
+          scope: showScope,
+        }
       )
     }
 
@@ -410,11 +436,15 @@ export async function validateShows(
           warnings.add(
             'warn_tmdb_episode_count',
             `${seasonShowPath}/Season ${season.season}`,
-            `Season ${season.season} has ${season.local_episode_count} of ${season.tmdb_episode_count} episodes per TMDB (${season.missing} missing). Identify gaps via shows.json or the scan's potential-missing-episodes warning.`,
+            `${season.local_episode_count}/${season.tmdb_episode_count} episodes per TMDB — ` +
+              `${season.missing} missing.`,
             // `Season 3` here is the parsed TMDB number, not the on-disk
             // `Season 03` folder; core/ignored.ts folds the two onto one key
             // so a single `seasons:` entry covers this and the scan pass.
             {
+              fix:
+                `Find which are missing via warn_episode_gaps in warnings.json, or shows.json. ` +
+                `TMDB counts specials and unaired episodes that you may not want.`,
               scope: {
                 categories: categoriesOf(show.seasons[s]?.versions ?? []),
                 levels: [label, `Season ${season.season}`],
@@ -481,13 +511,16 @@ export async function validateShows(
           warnings.add(
             'warn_tmdb_episode_name_mismatch',
             `${seasonShowPath}/${epLabel}`,
-            `Episode title '${m.local}' differs from TMDB's ${tmdbExpected}. Verify which is correct.`,
+            `Episode title is '${m.local}', TMDB says ${tmdbExpected}.`,
             // The path's last segment is an episode CODE, not a filename, so
             // derivation would read it as a season. Naming the season
             // explicitly puts the code at the episode level, where an
             // `episodes:` entry — written as the code OR as the episode's
             // filename — can reach it.
             {
+              fix:
+                `Rename the file to TMDB's title, or ignore this — TMDB carries alternate and ` +
+                `translated titles, and an episode out of order will mismatch every title after it.`,
               scope: {
                 categories: categoriesOf(localSeason.versions),
                 levels: [label, `Season ${seasonNumber}`, epLabel],

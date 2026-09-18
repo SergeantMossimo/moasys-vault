@@ -15,12 +15,17 @@ import { PatternSchema, CategorySchema } from './helpers'
 export const ShowsRulesSchema = z.object({
   /**
    * Regex patterns for show, season, and episode names.
-   * - `show_folder` must capture: title, year
+   * - `show_folder` must capture: title, year, and optionally edition
    * - `season_folder` must capture: season (number string, will be parseInt'd)
    * - `file` must capture: title, year, season, episode, and optionally episode_end
    *
    * `season_folder` and `file` default to case-insensitive matching (`flags: 'i'`)
    * so `season 01` and `s01e01` are accepted too.
+   *
+   * The optional `edition` group on `show_folder` is Plex's TV Show Editions
+   * convention — `Show Title (YEAR) {edition-Name}`. Plex defines an edition at
+   * the SHOW level only, never per-season or per-episode, so `file` carries no
+   * edition group: episodes inside an edition folder are named normally.
    */
   patterns: z.object({
     show_folder: PatternSchema,
@@ -102,6 +107,13 @@ export const ShowsRulesSchema = z.object({
     warn_non_primary: z.boolean(),
     warn_no_videos: z.boolean(),
     warn_bad_show_folder: z.boolean(),
+    /**
+     * A show folder carries `{edition-}` with nothing after the dash. Plex
+     * reads that as an empty edition name; the scanner treats it as no edition
+     * at all so the show is still catalogued. Mirrors the movies rule of the
+     * same name — warnings files are per-type, so the shared name is fine.
+     */
+    warn_empty_edition: z.boolean(),
     warn_bad_season_folder: z.boolean(),
     warn_bad_file_name: z.boolean(),
     warn_show_year_mismatch: z.boolean(),
@@ -209,11 +221,11 @@ export type ShowsRules = z.infer<typeof ShowsRulesSchema>
 
 export const defaultShowsRules: ShowsRules = ShowsRulesSchema.parse({
   patterns: {
-    show_folder: '^(?<title>.+)\\s\\((?<year>\\d{4})\\)$',
+    show_folder: '^(?<title>.+)\\s\\((?<year>\\d{4})\\)(?:\\s\\{edition-(?<edition>[^}]*)\\})?$',
     season_folder: { pattern: '^Season\\s(?<season>\\d{2})$', flags: 'i' },
     file: {
       pattern:
-        '^(?<title>.+)\\s\\((?<year>\\d{4})\\)\\s-\\sS(?<season>\\d{2})E(?<episode>\\d{2})(?:-E?(?<episode_end>\\d{2}))?(?:\\s-\\s(?<episode_title>.+))?$',
+        '^(?<title>.+)\\s\\((?<year>\\d{4})\\)\\s-\\sS(?<season>\\d{2})E(?<episode>\\d{2,3})(?:-E?(?<episode_end>\\d{2,3}))?(?:\\s-\\s(?<episode_title>.+))?$',
       flags: 'i',
     },
   },
@@ -247,6 +259,7 @@ export const defaultShowsRules: ShowsRules = ShowsRulesSchema.parse({
     warn_non_primary: true,
     warn_no_videos: true,
     warn_bad_show_folder: true,
+    warn_empty_edition: true,
     warn_bad_season_folder: true,
     warn_bad_file_name: true,
     warn_show_year_mismatch: true,

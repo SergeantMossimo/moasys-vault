@@ -175,6 +175,8 @@ export interface ShowSeasonProbe {
 export interface ShowProbeOutput {
   title: string
   year: number
+  /** Plex's TV Show Editions tag off the show folder, or null when untagged. */
+  edition: string | null
   seasons: ShowSeasonProbe[]
 }
 
