@@ -556,7 +556,7 @@ The defaults live in code at `src/core/rules/<type>.ts` alongside the schema, an
 
 ## `ignored/<drive>/<type>.yaml` — silencing specific warnings
 
-For warnings you can't or don't want to fix (an incomplete season that never aired, a folder name you've decided not to change, a known false positive), drop an ignore file under that drive's folder. Matching warnings are silently dropped from `warnings.json` and `validation-warnings.json`, and counted in the run summary.
+For warnings you can't or don't want to fix (an incomplete season that never aired, a folder name you've decided not to change, a known false positive), drop an ignore file under that drive's folder. Matching warnings are silently dropped from every warnings file — and so from the merged report, which reads the filtered files — and counted in the run summary.
 
 Ignore lists are **per drive** as well as per type, because warning paths are relative to that drive's `root_path` — the same relative path can mean different files on different drives.
 
@@ -577,7 +577,7 @@ ignored/
 
 Each `.yaml.example` at the top level ships with commented usage patterns. To use: copy it to `ignored/<drive>/<type>.yaml` (lowercase drive name, drop the `.example` suffix) and uncomment / edit the entries you need. A drive with nothing to silence needs no file — and no folder — at all.
 
-**You rarely need to write an entry from scratch.** Every row in a `*warnings.json` file carries an `ignore` field with the narrowest entry that silences it — `"ignore": "seasons: Firefly (2002)/Season 01"` means add `- Firefly (2002)/Season 01` under `seasons:`. See [Silencing a row](OUTPUT.md#silencing-a-row).
+**The warnings files give you the names to use.** The last segment of a folder entry's `path` is exactly what goes under the matching level key — `"path": "HD/Firefly (2002)"` becomes `- Firefly (2002)` under `shows:`, silencing that whole entry. (Drop the category: a name is matched independently of it, so one entry covers the show wherever it lives.) For something narrower, join it with a row's relative `path`: a row at `Season 01` becomes `- Firefly (2002)/Season 01` under `seasons:`. A `path` with no `/` names a category folder, which goes under `folders:`. Names YAML would misread — one starting with `'`, say — need quoting.
 
 ### Entries are bare names, grouped by level
 

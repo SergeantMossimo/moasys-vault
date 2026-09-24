@@ -9,9 +9,14 @@ import {
   joinStem,
   planEpisodeCode,
   planEpisodeTitles,
+  planRenumber,
+  planSeasonCode,
   planShowFolder,
   planShowPrefix,
+  planTrailingSeparator,
   renameFile,
+  replaceEpisodeInCode,
+  replaceSeasonInCode,
   sanitizeEpisodeTitle,
   splitStem,
   validatePlan,
@@ -545,8 +550,444 @@ describe('planEpisodeCode', () => {
 })
 
 // ─────────────────────────────────────────────
+// planSeasonCode
+// ─────────────────────────────────────────────
+
+describe('replaceSeasonInCode', () => {
+  it('rewrites the season and leaves casing and the episode part alone', () => {
+    expect(replaceSeasonInCode('s06e01', 1)).toBe('s01e01')
+    expect(replaceSeasonInCode('S06E01', 1)).toBe('S01E01')
+    expect(replaceSeasonInCode('S06E01-E02', 1)).toBe('S01E01-E02')
+    expect(replaceSeasonInCode('s06e201', 10)).toBe('s10e201')
+  })
+
+  it('keeps an over-padded season over-padded rather than normalizing it', () => {
+    expect(replaceSeasonInCode('s006e01', 1)).toBe('s001e01')
+  })
+
+  it('returns null for a code that does not open with a season', () => {
+    expect(replaceSeasonInCode('e01', 1)).toBeNull()
+  })
+})
+
+describe('planSeasonCode', () => {
+  const seasonFolderRegex = compilePattern(defaultShowsRules.patterns.season_folder)
+
+  function run(seasonFolder: string, fileNames: string[], showFolder = 'Show (2020)') {
+    const files = fileNames.map(fileName => ({
+      absDir: `X:/Shows/HD/${showFolder}/${seasonFolder}`,
+      relDir: `HD/${showFolder}/${seasonFolder}`,
+      showFolder,
+      seasonFolder,
+      fileName,
+    }))
+    return planSeasonCode(
+      files,
+      fileRegex,
+      seasonFolderRegex,
+      defaultShowsRules.ignored_season_names
+    )
+  }
+
+  it('renumbers files to the season their folder names', () => {
+    const plan = run('Season 01', [
+      'Icons Unearthed (2022) - s06e01.mp4',
+      'Icons Unearthed (2022) - s06e02.mp4',
+    ])
+    expect(plan.entries.map(e => e.to)).toEqual([
+      'Icons Unearthed (2022) - s01e01.mp4',
+      'Icons Unearthed (2022) - s01e02.mp4',
+    ])
+    expect(plan.entries.every(e => e.note === undefined)).toBe(true)
+  })
+
+  it('preserves an episode title and the extension', () => {
+    const plan = run('Season 02', ['Show (2020) - S05E03 - The Good Boy Box.mkv'])
+    expect(plan.entries[0]!.to).toBe('Show (2020) - S02E03 - The Good Boy Box.mkv')
+  })
+
+  it('plans nothing when the code already matches the folder', () => {
+    expect(run('Season 03', ['Show (2020) - s03e01.mp4']).entries).toEqual([])
+  })
+
+  it('skips a named season folder once, not once per file', () => {
+    const plan = run('Specials', ['Show (2020) - s04e01.mp4', 'Show (2020) - s04e02.mp4'])
+    expect(plan.entries).toEqual([])
+    expect(plan.skipped).toHaveLength(1)
+    expect(plan.skipped[0]!.reason).toMatch(/no season number to align to/)
+  })
+
+  it('sends a folder the rules reject to review instead of reading a number out of it', () => {
+    const plan = run('Season  01', ['Show (2020) - s05e01.mp4'])
+    expect(plan.entries).toEqual([])
+    expect(plan.review).toHaveLength(1)
+    expect(plan.review[0]!.reason).toMatch(/warn_bad_season_folder/)
+  })
+
+  it('notes every entry from a folder holding more than one season number', () => {
+    const plan = run('Season 01', [
+      'Show (2020) - s01e01.mp4',
+      'Show (2020) - s06e02.mp4',
+      'Show (2020) - s07e03.mp4',
+    ])
+    // The already-correct s01e01 plans nothing; the other two are renumbered
+    // and both carry the note, including the first one seen.
+    expect(plan.entries.map(e => e.to)).toEqual([
+      'Show (2020) - s01e02.mp4',
+      'Show (2020) - s01e03.mp4',
+    ])
+    expect(plan.entries.every(e => /more than one season number/.test(e.note ?? ''))).toBe(true)
+  })
+
+  it('leaves a name the rules reject alone', () => {
+    const plan = run('Season 01', ['Show (2020) - s06e4.mp4', 'Show - s06e01.mp4'])
+    expect(plan.entries).toEqual([])
+    expect(plan.skipped).toHaveLength(2)
+  })
+
+  it('is a no-op on a second run', () => {
+    const first = run('Season 01', ['Show (2020) - s06e01.mp4'])
+    const second = run('Season 01', [first.entries[0]!.to])
+    expect(second.entries).toEqual([])
+  })
+})
+
+// ─────────────────────────────────────────────
 // planShowFolder
 // ─────────────────────────────────────────────
+
+// ─────────────────────────────────────────────
+// planRenumber
+// ─────────────────────────────────────────────
+
+describe('replaceEpisodeInCode', () => {
+  it('rewrites the episode number, keeping season and case', () => {
+    expect(replaceEpisodeInCode('S03E18', 21)).toBe('S03E21')
+    expect(replaceEpisodeInCode('s03e18', 21)).toBe('s03e21')
+  })
+
+  it('pads to at least two digits', () => {
+    expect(replaceEpisodeInCode('s01e09', 10)).toBe('s01e10')
+    expect(replaceEpisodeInCode('s01e01', 9)).toBe('s01e09')
+  })
+
+  it('returns null for a multi-episode range rather than mangling it', () => {
+    expect(replaceEpisodeInCode('s01e01-e02', 3)).toBeNull()
+  })
+})
+
+describe('planRenumber', () => {
+  function run(fileNames: string[], seasonFolder = 'Season 03', showFolder = 'Show (2020)') {
+    const files = fileNames.map(fileName => ({
+      absDir: `X:/Shows/HD/${showFolder}/${seasonFolder}`,
+      relDir: `HD/${showFolder}/${seasonFolder}`,
+      showFolder,
+      seasonFolder,
+      fileName,
+    }))
+    return planRenumber(files, fileRegex)
+  }
+
+  it('plans nothing when every episode already has its own number', () => {
+    const plan = run(['Show (2020) - s03e01.mp4', 'Show (2020) - s03e02.mp4'])
+    expect(plan.entries).toEqual([])
+  })
+
+  it('gives the second part of a two-parter the next number', () => {
+    const plan = run([
+      'Show (2020) - s03e01 - Finale Part 1.mp4',
+      'Show (2020) - s03e01 - Finale Part 2.mp4',
+    ])
+    expect(plan.entries.map(e => e.to)).toEqual(['Show (2020) - s03e02 - Finale Part 2.mp4'])
+  })
+
+  it('shifts everything below a mid-season duplicate', () => {
+    const plan = run([
+      'Show (2020) - s03e01 - Opener Part 1.mp4',
+      'Show (2020) - s03e01 - Opener Part 2.mp4',
+      'Show (2020) - s03e02 - Second.mp4',
+      'Show (2020) - s03e03 - Third.mp4',
+    ])
+    // Highest-first, so each target is free when it is reached.
+    expect(plan.entries.map(e => [e.from, e.to])).toEqual([
+      ['Show (2020) - s03e03 - Third.mp4', 'Show (2020) - s03e04 - Third.mp4'],
+      ['Show (2020) - s03e02 - Second.mp4', 'Show (2020) - s03e03 - Second.mp4'],
+      ['Show (2020) - s03e01 - Opener Part 2.mp4', 'Show (2020) - s03e02 - Opener Part 2.mp4'],
+    ])
+  })
+
+  it('accumulates the offset across several duplicates', () => {
+    const plan = run([
+      'Show (2020) - s03e01 - A Part 1.mp4',
+      'Show (2020) - s03e01 - A Part 2.mp4',
+      'Show (2020) - s03e02 - B.mp4',
+      'Show (2020) - s03e03 - C Part 1.mp4',
+      'Show (2020) - s03e03 - C Part 2.mp4',
+      'Show (2020) - s03e04 - D.mp4',
+    ])
+    const to = new Map(plan.entries.map(e => [e.from, e.to]))
+    expect(to.get('Show (2020) - s03e01 - A Part 2.mp4')).toBe(
+      'Show (2020) - s03e02 - A Part 2.mp4'
+    )
+    expect(to.get('Show (2020) - s03e02 - B.mp4')).toBe('Show (2020) - s03e03 - B.mp4')
+    expect(to.get('Show (2020) - s03e03 - C Part 1.mp4')).toBe(
+      'Show (2020) - s03e04 - C Part 1.mp4'
+    )
+    expect(to.get('Show (2020) - s03e03 - C Part 2.mp4')).toBe(
+      'Show (2020) - s03e05 - C Part 2.mp4'
+    )
+    expect(to.get('Show (2020) - s03e04 - D.mp4')).toBe('Show (2020) - s03e06 - D.mp4')
+  })
+
+  it('orders (1) before (2) as well as Part 1 before Part 2', () => {
+    const plan = run([
+      'Show (2020) - s03e01 - Peril (2).mp4',
+      'Show (2020) - s03e01 - Peril (1).mp4',
+    ])
+    // (1) keeps e01; only (2) moves.
+    expect(plan.entries.map(e => [e.from, e.to])).toEqual([
+      ['Show (2020) - s03e01 - Peril (2).mp4', 'Show (2020) - s03e02 - Peril (2).mp4'],
+    ])
+  })
+
+  it('PRESERVES a gap rather than re-sequencing from 1', () => {
+    // e03 is missing. Renumbering must not pull e04 down into it — that file
+    // is genuinely absent (warn_episode_gaps), not mis-numbered.
+    const plan = run([
+      'Show (2020) - s03e01 - A Part 1.mp4',
+      'Show (2020) - s03e01 - A Part 2.mp4',
+      'Show (2020) - s03e04 - D.mp4',
+    ])
+    const to = new Map(plan.entries.map(e => [e.from, e.to]))
+    expect(to.get('Show (2020) - s03e01 - A Part 2.mp4')).toBe(
+      'Show (2020) - s03e02 - A Part 2.mp4'
+    )
+    expect(to.get('Show (2020) - s03e04 - D.mp4')).toBe('Show (2020) - s03e05 - D.mp4')
+  })
+
+  it('plans nothing for a season whose only oddity is a gap', () => {
+    const plan = run(['Show (2020) - s03e01.mp4', 'Show (2020) - s03e05.mp4'])
+    expect(plan.entries).toEqual([])
+  })
+
+  it('notes entries from a season that has gaps', () => {
+    const plan = run([
+      'Show (2020) - s03e01 - A Part 1.mp4',
+      'Show (2020) - s03e01 - A Part 2.mp4',
+      'Show (2020) - s03e04 - D.mp4',
+    ])
+    expect(plan.entries.every(e => e.note?.includes('gaps'))).toBe(true)
+  })
+
+  it('shifts files that reuse a number a multi-episode file covers', () => {
+    // The Middle S04: a two-part premiere as one file, then every file after
+    // it numbered one low.
+    const plan = run([
+      'Show (2020) - s03e01-e02.mp4',
+      'Show (2020) - s03e02.mp4',
+      'Show (2020) - s03e03.mp4',
+    ])
+    expect(plan.skipped).toEqual([])
+    expect(plan.entries.map(e => [e.from, e.to])).toEqual([
+      ['Show (2020) - s03e03.mp4', 'Show (2020) - s03e04.mp4'],
+      ['Show (2020) - s03e02.mp4', 'Show (2020) - s03e03.mp4'],
+    ])
+    expect(plan.entries.every(e => e.note?.includes("multi-episode 's03e01-e02'"))).toBe(true)
+  })
+
+  it('plans nothing for a correctly numbered multi-episode file', () => {
+    const plan = run([
+      'Show (2020) - s03e01.mp4',
+      'Show (2020) - s03e02-e03.mp4',
+      'Show (2020) - s03e04.mp4',
+    ])
+    expect(plan.entries).toEqual([])
+    expect(plan.skipped).toEqual([])
+  })
+
+  it('handles a duplicate after a multi-episode file', () => {
+    const plan = run([
+      'Show (2020) - s03e01-e02 - Double.mp4',
+      'Show (2020) - s03e03 - C Part 1.mp4',
+      'Show (2020) - s03e03 - C Part 2.mp4',
+    ])
+    expect(plan.entries.map(e => [e.from, e.to])).toEqual([
+      ['Show (2020) - s03e03 - C Part 2.mp4', 'Show (2020) - s03e04 - C Part 2.mp4'],
+    ])
+    // Its shift comes from the duplicate, not the multi-episode file.
+    expect(plan.entries[0]?.note).toBeUndefined()
+  })
+
+  it('skips a multi-episode file sharing its start with another file', () => {
+    const plan = run(['Show (2020) - s03e01-e02.mp4', 'Show (2020) - s03e01.mp4'])
+    expect(plan.entries).toEqual([])
+    expect(plan.skipped[0]?.reason).toContain('shares its number')
+  })
+
+  it('skips a season where a multi-episode file would itself have to move', () => {
+    const plan = run([
+      'Show (2020) - s03e01 - A Part 1.mp4',
+      'Show (2020) - s03e01 - A Part 2.mp4',
+      'Show (2020) - s03e02-e03.mp4',
+    ])
+    expect(plan.entries).toEqual([])
+    expect(plan.skipped[0]?.reason).toContain('itself have to move')
+  })
+
+  it('still sees a gap after a multi-episode file', () => {
+    const plan = run([
+      'Show (2020) - s03e01-e02.mp4',
+      'Show (2020) - s03e02.mp4',
+      'Show (2020) - s03e05.mp4',
+    ])
+    const to = new Map(plan.entries.map(e => [e.from, e.to]))
+    expect(to.get('Show (2020) - s03e02.mp4')).toBe('Show (2020) - s03e03.mp4')
+    expect(to.get('Show (2020) - s03e05.mp4')).toBe('Show (2020) - s03e06.mp4')
+    expect(plan.entries.every(e => e.note?.includes('gaps'))).toBe(true)
+  })
+
+  it('keeps seasons independent', () => {
+    const s3 = run(
+      ['Show (2020) - s03e01 - A Part 1.mp4', 'Show (2020) - s03e01 - A Part 2.mp4'],
+      'Season 03'
+    )
+    const s4 = run(['Show (2020) - s04e01.mp4'], 'Season 04')
+    expect(s3.entries).toHaveLength(1)
+    expect(s4.entries).toEqual([])
+  })
+
+  it('produces a plan validatePlan accepts against a real tree', () => {
+    const root = buildLibrary(
+      {
+        'Show (2020)': {
+          'Season 03': {
+            'Show (2020) - s03e01 - A Part 1.mp4': '',
+            'Show (2020) - s03e01 - A Part 2.mp4': '',
+            'Show (2020) - s03e02 - B.mp4': '',
+            'Show (2020) - s03e03 - C.mp4': '',
+          },
+        },
+      },
+      'moasys-renumber-'
+    )
+    try {
+      const files = fs.readdirSync(path.join(root, 'Show (2020)', 'Season 03')).map(fileName => ({
+        absDir: path.join(root, 'Show (2020)', 'Season 03'),
+        relDir: 'Show (2020)/Season 03',
+        showFolder: 'Show (2020)',
+        seasonFolder: 'Season 03',
+        fileName,
+      }))
+      const plan = planRenumber(files, fileRegex)
+      expect(plan.entries).toHaveLength(3)
+      expect(validatePlan({ ...makePlan(plan.entries), fix: 'renumber' }, root)).toEqual([])
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+})
+
+// ─────────────────────────────────────────────
+// planTrailingSeparator
+// ─────────────────────────────────────────────
+
+describe('planTrailingSeparator', () => {
+  function run(fileNames: string[], seasonFolder = 'Season 01', showFolder = 'Hercules (1998)') {
+    const files = fileNames.map(fileName => ({
+      absDir: `X:/Shows/SD/${showFolder}/${seasonFolder}`,
+      relDir: `SD/${showFolder}/${seasonFolder}`,
+      showFolder,
+      seasonFolder,
+      fileName,
+    }))
+    return planTrailingSeparator(files, fileRegex)
+  }
+
+  it('trims a dangling separator left by a deleted episode title', () => {
+    const plan = run(['Hercules (1998) - s01e12 -.mp4'])
+    expect(plan.entries.map(e => e.to)).toEqual(['Hercules (1998) - s01e12.mp4'])
+  })
+
+  it('leaves a already-valid name alone', () => {
+    const plan = run(['Hercules (1998) - s01e11.mp4', 'Hercules (1998) - s01e13 - Some Title.mp4'])
+    expect(plan.entries).toEqual([])
+    expect(plan.skipped).toEqual([])
+  })
+
+  it('handles a trailing space-dash-space and a bare trailing dash', () => {
+    const plan = run(['Hercules (1998) - s01e12 - .mp4', 'Hercules (1998) - s01e13-.mp4'])
+    expect(plan.entries.map(e => e.to)).toEqual([
+      'Hercules (1998) - s01e12.mp4',
+      'Hercules (1998) - s01e13.mp4',
+    ])
+  })
+
+  it('leaves debris alone when the name parses WITH it, rather than editing a valid title', () => {
+    // '- The Apollo Mission -' matches patterns.file already: the title group
+    // is greedy, so the trailing dash is captured as part of the title. The
+    // mode repairs names that do not parse; trimming a name that does would
+    // mean rewriting a title the rules accept, on a guess about the user's
+    // intent. Reported by warn_bad_file_name it is not, so it stays put.
+    const plan = run(['Hercules (1998) - s01e12 - The Apollo Mission -.mp4'])
+    expect(plan.entries).toEqual([])
+    expect(plan.skipped).toEqual([])
+  })
+
+  it('does NOT touch a name that still fails to parse once trimmed', () => {
+    // Trailing characters were not this file's real problem, so trimming them
+    // would just produce a differently-broken name.
+    const plan = run(['random file -.mp4'])
+    expect(plan.entries).toEqual([])
+    expect(plan.skipped).toHaveLength(1)
+    expect(plan.skipped[0]?.reason).toContain('still does not match')
+  })
+
+  it('reports an unparseable name with nothing to trim rather than planning it', () => {
+    const plan = run(['random file.mp4'])
+    expect(plan.entries).toEqual([])
+    expect(plan.skipped).toHaveLength(1)
+    expect(plan.skipped[0]?.reason).toContain('no trailing separator')
+  })
+
+  it('always produces a target that is a prefix of the original', () => {
+    const plan = run(['Hercules (1998) - s01e12 -.mp4', 'Hercules (1998) - s01e13 - .mp4'])
+    for (const entry of plan.entries) {
+      const fromStem = entry.from.replace(/\.mp4$/, '')
+      const toStem = entry.to.replace(/\.mp4$/, '')
+      expect(fromStem.startsWith(toStem)).toBe(true)
+    }
+  })
+
+  it('lets validatePlan catch a trim that would collide with an existing file', () => {
+    const root = buildLibrary(
+      {
+        'Hercules (1998) - s01e12 -.mp4': '',
+        'Hercules (1998) - s01e12.mp4': '',
+      },
+      'moasys-trailing-'
+    )
+    try {
+      const plan = planTrailingSeparator(
+        [
+          {
+            absDir: root,
+            relDir: '',
+            showFolder: 'Hercules (1998)',
+            seasonFolder: 'Season 01',
+            fileName: 'Hercules (1998) - s01e12 -.mp4',
+          },
+        ],
+        fileRegex
+      )
+      expect(plan.entries).toHaveLength(1)
+      const problems = validatePlan({ ...makePlan(plan.entries), fix: 'trailing-separator' }, root)
+      expect(problems).toHaveLength(1)
+      expect(problems[0]).toContain('already exists')
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+})
 
 describe('planShowFolder', () => {
   const rules: Parameters<typeof planShowFolder>[1] = {
@@ -714,6 +1155,60 @@ describe('validatePlan', () => {
     expect(problems).toHaveLength(1)
     expect(problems[0]).toContain('chars (max 240)')
   })
+
+  it('accepts a target an EARLIER entry vacates — the renumber chain', () => {
+    // b.mp4 exists, but entry 0 moves it to c.mp4 before entry 1 needs it.
+    const root = buildLibrary({ 'a.mp4': '', 'b.mp4': '' }, 'moasys-validate-')
+    try {
+      expect(
+        validatePlan(
+          makePlan([
+            { dir: '', from: 'b.mp4', to: 'c.mp4' },
+            { dir: '', from: 'a.mp4', to: 'b.mp4' },
+          ]),
+          root
+        )
+      ).toEqual([])
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+
+  it('still rejects a target vacated only by a LATER entry', () => {
+    // Same two renames in the order `apply` would actually run them wrong:
+    // a → b happens while b is still there, destroying it.
+    const root = buildLibrary({ 'a.mp4': '', 'b.mp4': '' }, 'moasys-validate-')
+    try {
+      const problems = validatePlan(
+        makePlan([
+          { dir: '', from: 'a.mp4', to: 'b.mp4' },
+          { dir: '', from: 'b.mp4', to: 'c.mp4' },
+        ]),
+        root
+      )
+      expect(problems).toHaveLength(1)
+      expect(problems[0]).toContain('already exists')
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+
+  it('still rejects a swap, which no ordering can make safe', () => {
+    const root = buildLibrary({ 'a.mp4': '', 'b.mp4': '' }, 'moasys-validate-')
+    try {
+      const problems = validatePlan(
+        makePlan([
+          { dir: '', from: 'a.mp4', to: 'b.mp4' },
+          { dir: '', from: 'b.mp4', to: 'a.mp4' },
+        ]),
+        root
+      )
+      expect(problems.length).toBeGreaterThan(0)
+      expect(problems[0]).toContain('already exists')
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
 })
 
 // ─────────────────────────────────────────────
@@ -830,6 +1325,37 @@ describe('validateUndoManifest', () => {
     const root = buildLibrary({ 'old.mp4': 'someone else', 'new.mp4': '' }, 'moasys-undo-')
     try {
       const m = manifest([{ from: path.join(root, 'old.mp4'), to: path.join(root, 'new.mp4') }])
+      expect(validateUndoManifest(m)).toEqual([
+        expect.stringContaining('already exists — undoing would overwrite it'),
+      ])
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+
+  it('accepts a renumber chain, where a LATER entry lifts the occupant off first', () => {
+    // A renumber applied b→c then a→b. On disk now: b.mp4 and c.mp4.
+    // Undo runs in reverse: a→b is reverted first, freeing b for b→c's revert.
+    const root = buildLibrary({ 'b.mp4': '', 'c.mp4': '' }, 'moasys-undo-')
+    try {
+      const m = manifest([
+        { from: path.join(root, 'b.mp4'), to: path.join(root, 'c.mp4') },
+        { from: path.join(root, 'a.mp4'), to: path.join(root, 'b.mp4') },
+      ])
+      expect(validateUndoManifest(m)).toEqual([])
+    } finally {
+      cleanupLibrary(root)
+    }
+  })
+
+  it('still refuses when the occupant is only lifted by an EARLIER entry', () => {
+    // Reverse order: undoing entry 1 first would write b over a live b.mp4.
+    const root = buildLibrary({ 'b.mp4': 'someone else', 'c.mp4': '' }, 'moasys-undo-')
+    try {
+      const m = manifest([
+        { from: path.join(root, 'a.mp4'), to: path.join(root, 'b.mp4') },
+        { from: path.join(root, 'b.mp4'), to: path.join(root, 'c.mp4') },
+      ])
       expect(validateUndoManifest(m)).toEqual([
         expect.stringContaining('already exists — undoing would overwrite it'),
       ])

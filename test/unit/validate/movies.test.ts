@@ -760,9 +760,6 @@ describe('validateMovies — warn_tmdb_runtime_mismatch', () => {
     const hits = await run({ tmdbRuntime: 5, localMinutes: 115 })
     expect(hits).toHaveLength(1)
     expect(hits[0]?.issue).toMatch(/longer/)
-    // The direction-specific advice moved into the bucket's fix, which has to
-    // cover both directions at once.
-    expect(hits[0]?.fix).toMatch(/Longer is usually a wrong match/)
   })
 
   it('stays silent inside the tolerance band', async () => {
@@ -841,11 +838,11 @@ describe('validateMovies — warn_tmdb_runtime_mismatch', () => {
     expect(hits[0]?.path).toBe('HD/The Crow (1994)/The Crow (1994).mp4')
   })
 
-  // Silencing used to be spelled out in the message. The ready-to-paste entry
-  // on the row replaces the ignore-file half; the toggle is the bucket key.
-  it('carries a ready-to-paste ignore entry for the offending file', async () => {
+  // The check's `path` is what an ignore entry has to match, so it must stay a
+  // real file path rather than a display label.
+  it('anchors the warning at the offending file so the ignore list can reach it', async () => {
     const hits = await run({ tmdbRuntime: 102, localMinutes: 5, ignoreList: true })
-    expect(hits[0]?.ignore).toBe('files: The Crow (1994)/The Crow (1994).mp4')
+    expect(hits[0]?.path).toBe('HD/The Crow (1994)/The Crow (1994).mp4')
   })
 
   it('does not fire when TMDB found no match at all', async () => {

@@ -37,7 +37,7 @@ cp .secrets.json.example .secrets.json
 npm run all
 ```
 
-Then open the `*warnings.json` files in `output/<drive>/<type>/`, fix what you want to fix, and re-run. [Scans](docs/SCANS.md#workflow) covers the full workflow, which commands depend on which, and updating after a `git pull`.
+Then open `output/<drive>/<type>/all-warnings.json`, fix what you want to fix, and re-run. Warnings are grouped by folder — one entry per show or movie, listing everything every command found on it — so you work through your library item by item rather than joining findings across files. [Scans](docs/SCANS.md#workflow) covers the full workflow, which commands depend on which, and updating after a `git pull`.
 
 **Updating:** `git pull`, then `npm ci` and `npm run all`. Your `config.json`, `.secrets.json`, local rules, ignore lists, and caches are gitignored, so a pull never touches them.
 
@@ -45,13 +45,14 @@ Then open the `*warnings.json` files in `output/<drive>/<type>/`, fix what you w
 
 | Command                                     | What it does                                                                                   |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `npm run all [drive]`                       | Everything routine: scan → validate → Plex pull → Plex check                                   |
+| `npm run all [drive]`                       | Everything routine: scan → validate → Plex pull → Plex check → report                          |
 | `npm run scan:all [drive]`                  | Scan all four media types                                                                      |
 | `npm run <type> [drive]`                    | Scan one type: `movies`, `shows`, `music`, `audiobooks`                                        |
 | `npm run validate:all [drive]`              | Cross-check against TMDB (movies, shows) and Open Library (audiobooks); also `validate:<type>` |
 | `npm run plex:pull`                         | Download every Plex library's catalog and collections                                          |
 | `npm run plex:check [drive]`                | Compare the Plex pull with your scans                                                          |
 | `npm run plex:logs [drive]`                 | Turn errors from Plex's logs into warnings on the files they concern                           |
+| `npm run report [drive]`                    | Fold every warnings file into `all-warnings.json`, one entry per folder                        |
 | `npm run fix:shows -- --fix <mode> <drive>` | Repair flagged show filenames — the one command that renames files; dry run unless `--apply`   |
 
 `[drive]` is a root's `name` from `config.json`; leave it off to use the first root for each type.

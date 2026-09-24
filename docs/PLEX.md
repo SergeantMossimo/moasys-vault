@@ -147,7 +147,7 @@ It reads `output/plex/` and each type's `output/<drive>/<type>/data/probe.json`,
 output/<drive>/<type>/plex-warnings.json
 ```
 
-Same shape as `warnings.json`, and your `ignored/<drive>/<type>.yaml` lists apply to it. Run the scan and `plex:pull` first:
+Same folder-grouped shape as `warnings.json`, and your `ignored/<drive>/<type>.yaml` lists apply to it. `npm run report` folds it in alongside the scan and validate findings, so a show with both a Plex problem and a naming problem is one entry there. Run the scan and `plex:pull` first:
 
 ```bash
 npm run scan:all
@@ -186,7 +186,7 @@ This writes `unfiltered/plex-warnings.json` and leaves the normal `plex-warnings
 | `warn_plex_title_case`            | Plex's title matches the folder except for capitalization.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `warn_plex_edition_mismatch`      | Plex's edition name for a show disagrees with the `{edition-…}` tag on its folder — including one side having an edition and the other not. Usually Plex hasn't rescanned since the folder was renamed; an edition set by hand in Plex Web also overrides the folder. Shows only: a movie's tag is in the filename, so its folder has nothing to compare.                                                                                                                                                                                                                   |
 | `warn_plex_edition_case`          | Plex's edition matches the folder's tag except for capitalization.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `warn_plex_duplicate`             | Plex lists the item under **Duplicates** — several files merged into one entry. Fine for deliberate versions like HD + UHD or a director's cut; if they're different titles, **Split Apart** in Plex. Editions (`{edition-…}`) are separate Plex items, so they don't appear here.                                                                                                                                                                                                                                                                                          |
+| `warn_plex_duplicate`             | Plex lists the item under **Duplicates** — several files merged into one entry. A multi-quality set your `acceptable_quality_combos` whitelists (UHD + HD by default) is **not** reported, so this agrees with the scan's `warn_multi_quality`; two copies inside one quality tier still are, as `warn_duplicate_quality` has it. Otherwise delete the extra copy, or **Split Apart** in Plex if they're different titles. Editions (`{edition-…}`) are separate Plex items, so they don't appear here.                                                                     |
 
 Toggle any of these in `rules/plex.yaml` (or `rules/plex.local.yaml` for personal overrides).
 
@@ -215,7 +215,7 @@ output/plex/logs-summary.json                  ← every distinct problem in the
 cache/plex-logs/latest.zip                     ← the archive as downloaded
 ```
 
-`plex-log-warnings.json` has the `warnings.json` shape, and your ignore lists apply to it. Like `plex:check`, it takes a drive name and `--no-ignore`.
+`plex-log-warnings.json` has the `warnings.json` shape, and your ignore lists apply to it. Like `plex:check`, it takes a drive name and `--no-ignore`, and `npm run report` folds it into `all-warnings.json`.
 
 ### Where the logs come from
 

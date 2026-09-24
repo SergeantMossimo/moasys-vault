@@ -10,6 +10,9 @@
  *   2. validate   npm run validate:all [drive]   (movies/shows skipped without a TMDB key)
  *   3. plex pull  npm run plex:pull              (only when Plex is configured)
  *   4. plex check npm run plex:check [drive]     (only when Plex is configured)
+ *   5. report     npm run report [drive]
+ *
+ * The report runs last so it folds in whatever the earlier steps just wrote.
  *
  * `plex:logs` isn't included — it needs the server owner's token and is an
  * occasional deep-dive rather than part of a routine refresh. `fix:shows`
@@ -40,11 +43,14 @@ interface Options {
   drive?: string
   validate: boolean
   plex: boolean
+  report: boolean
 }
+
+const SKIP_FLAGS = ['--no-validate', '--no-plex', '--no-report']
 
 function parseArgs(argv: string[]): Options | 'help' {
   if (argv.includes('--help') || argv.includes('-h')) return 'help'
-  const unknown = argv.filter(a => a.startsWith('-') && a !== '--no-validate' && a !== '--no-plex')
+  const unknown = argv.filter(a => a.startsWith('-') && !SKIP_FLAGS.includes(a))
   if (unknown.length > 0) {
     console.error(`\n  Error: unknown flag '${unknown[0]}'`)
     process.exit(1)
@@ -53,6 +59,7 @@ function parseArgs(argv: string[]): Options | 'help' {
     drive: argv.find(a => !a.startsWith('-')),
     validate: !argv.includes('--no-validate'),
     plex: !argv.includes('--no-plex'),
+    report: !argv.includes('--no-report'),
   }
 }
 
@@ -78,6 +85,15 @@ export function planSteps(
     },
     { name: 'plex pull', script: 'src/plex/pull.ts', args: [], skip: plexSkip },
     { name: 'plex check', script: 'src/plex/check.ts', args: ['--all', ...drive], skip: plexSkip },
+    // Last, so it folds in whatever the steps above just wrote. It reads only
+    // output/, so a skipped step above just shows up as a source it reports as
+    // missing rather than a failure here.
+    {
+      name: 'report',
+      script: 'src/report.ts',
+      args: ['--all', ...drive],
+      skip: opts.report ? null : '--no-report',
+    },
   ]
 }
 
@@ -91,14 +107,17 @@ function printHelp(): void {
   MOASYS-Vault — run every routine pass
 
   Usage:
-    npm run all [drive]                 scan → validate → plex pull → plex check
+    npm run all [drive]                 scan → validate → plex pull → plex check → report
     npm run all -- --no-validate        Skip the TMDB / Open Library pass
     npm run all -- --no-plex            Skip the Plex steps
+    npm run all -- --no-report          Skip the merged all-warnings.json
 
   [drive] names a root from config.json, as for the individual commands.
   Types without that drive are skipped. Plex steps run only when config.json
   has a "plex" block and .secrets.json has a Plex token. Validation of movies
-  and shows needs a TMDB key; without one those types are skipped.
+  and shows needs a TMDB key; without one those types are skipped. The report
+  runs last and folds every warnings file written above into one entry per
+  folder; a step that was skipped is listed as a missing source in that file.
 
   Not included: plex:logs (needs the server owner's token) and fix:shows
   (the one command that renames files — always run it yourself).

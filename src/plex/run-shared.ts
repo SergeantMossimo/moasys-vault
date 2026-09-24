@@ -12,7 +12,7 @@ import { MediaRootConfig, WarningCollector } from '../core/types'
 import { driveSlug } from '../core/config'
 import { loadIgnoreList } from '../core/ignored'
 import { reportLegacyOutputFiles, typeOutputPaths } from '../core/output-paths'
-import { compilePattern } from '../core/rules/helpers'
+import { buildCategoryQualityMap, compilePattern, resolveCategories } from '../core/rules/helpers'
 import { loadTypeRules } from '../core/rules/registry'
 import { PROJECT_ROOT } from '../core/project'
 import { warningBreakdown, writeWarnings } from '../core/runner-shared'
@@ -33,18 +33,21 @@ export function noIgnoreRequested(argv: string[] = process.argv.slice(2)): boole
 }
 
 /**
- * Where a warnings file goes. A `--no-ignore` review writes the same file name
- * into `unfiltered/`, so it never replaces the filtered output you work from.
+ * Where a warnings file goes. The filtered path comes straight from
+ * `typeOutputPaths`, so output-paths.ts stays the only place a per-type output
+ * path is joined. A `--no-ignore` review writes the same file name into
+ * `unfiltered/`, so it never replaces the filtered output you work from.
  */
 export function warningsPath(
   root: MediaRootConfig,
   mediaType: MediaType,
-  name: string,
+  which: 'plexWarnings' | 'plexLogWarnings',
   unfiltered: boolean
 ): string {
   const out = typeOutputPaths(PROJECT_ROOT, driveSlug(root.name), mediaType)
   reportLegacyOutputFiles(out)
-  return path.join(unfiltered ? out.unfilteredDir : out.dir, `${name}.json`)
+  const filtered = out[which]
+  return unfiltered ? path.join(out.unfilteredDir, path.basename(filtered)) : filtered
 }
 
 /** A collector with the drive's ignore list — or none, for a `--no-ignore` review. */
@@ -70,28 +73,47 @@ export function plexWarningCollector(
 
 /**
  * What each type contributes: whether its folders are categorized (for
- * ignore-list scope) and, for movies/shows, the folder pattern that yields
- * the title and year Plex's are compared against.
+ * ignore-list scope), for movies/shows the folder pattern that yields the
+ * title and year Plex's are compared against, and the same quality data the
+ * scan's duplicate checks run on.
+ *
+ * The quality pair is what stops `warn_plex_duplicate` contradicting the scan.
+ * Plex merges a UHD and an HD copy into one item and lists it as a duplicate,
+ * but that pairing is the default `acceptable_quality_combos` entry, so the
+ * scan deliberately says nothing — without these the Plex check would report
+ * every combo the user has already whitelisted. Music and audiobooks have no
+ * such rules, so they get an empty map and no combos.
  */
 export function typeRules(mediaType: MediaType): {
   hasCategories: boolean
   folderPattern: RegExp | null
+  categoryQuality: Map<string, string>
+  acceptableCombos: readonly string[][]
 } {
   const hasCategories = loadTypeRules(mediaType).categories.length > 0
   switch (mediaType) {
     case 'movies':
+    case 'shows': {
+      const rules = loadTypeRules(mediaType)
       return {
         hasCategories,
-        folderPattern: compilePattern(loadTypeRules('movies').patterns.folder),
+        folderPattern: compilePattern(
+          mediaType === 'movies'
+            ? loadTypeRules('movies').patterns.folder
+            : loadTypeRules('shows').patterns.show_folder
+        ),
+        categoryQuality: buildCategoryQualityMap(resolveCategories(rules.categories)),
+        acceptableCombos: rules.acceptable_quality_combos,
       }
-    case 'shows':
-      return {
-        hasCategories,
-        folderPattern: compilePattern(loadTypeRules('shows').patterns.show_folder),
-      }
+    }
     case 'music':
     case 'audiobooks':
-      return { hasCategories, folderPattern: null }
+      return {
+        hasCategories,
+        folderPattern: null,
+        categoryQuality: new Map(),
+        acceptableCombos: [],
+      }
   }
 }
 

@@ -7,6 +7,7 @@ The day-to-day guide: how to run MOASYS-Vault, what each pass does, and how long
 | [Scan](#scan-pass)                                        | `npm run <type> [drive]`           | Inspects every file and walks your folders. Writes your catalog and a list of hygiene issues.       |
 | [Validate](#validate-pass)                                | `npm run validate:<type> [drive]`  | Cross-checks the catalog against TheMovieDB (movies, shows) or Open Library (audiobooks). Optional. |
 | [Plex](PLEX.md)                                           | `npm run plex:pull` / `plex:check` | Compares what Plex has with what's on disk. Optional.                                               |
+| [Report](#merged-report)                                  | `npm run report [drive]`           | Folds every pass's warnings into one entry per folder. The file you actually work from.             |
 | [Fix show filenames](#fixing-filenames--npm-run-fixshows) | `npm run fix:shows`                | Renames flagged episode files. The only command that writes to your library.                        |
 
 Every command takes an optional drive name — a root's `name` from `config.json`. Leave it off and each type uses its first root. Drives are scanned independently and never merged; see [Selecting a drive](CONFIG.md#selecting-a-drive).
@@ -35,9 +36,10 @@ Then, optionally, set up the cross-checks:
 Once set up, one command runs every routine pass for a drive, in dependency order:
 
 ```bash
-npm run all                          # scan → validate → plex pull → plex check
+npm run all                          # scan → validate → plex pull → plex check → report
 npm run all external                 # the same, for the root named "External"
 npm run all -- --no-plex --no-validate
+npm run all -- --no-report           # skip just the merged report
 ```
 
 Steps that aren't set up are skipped with the reason — no TMDB key skips movie and show validation (audiobooks still validate), and no `plex` block or token skips both Plex steps. A failing step stops the run. `plex:logs` isn't included, and `fix:shows` never is.
@@ -52,8 +54,11 @@ Steps that aren't set up are skipped with the reason — no TMDB key skips movie
 | 2     | `npm run validate:all [drive]`              | The scan (reads its catalog); a TMDB key for movies and shows              |
 | 3     | `npm run plex:pull`                         | Plex `url` in `config.json` and a token in `.secrets.json`                 |
 | 4     | `npm run plex:check [drive]`                | The scan and the pull; compares TMDB ids when validation has run           |
-| 5     | `npm run plex:logs [drive]`                 | The pull; the server owner's token. Occasional — not part of `npm run all` |
-| 6     | `npm run fix:shows -- --fix <mode> <drive>` | The scan; `episode-titles` also needs validation. Always run by hand       |
+| 5     | `npm run report [drive]`                    | Nothing — it merges whichever of the above have run, and names the rest    |
+| 6     | `npm run plex:logs [drive]`                 | The pull; the server owner's token. Occasional — not part of `npm run all` |
+| 7     | `npm run fix:shows -- --fix <mode> <drive>` | The scan; `episode-titles` also needs validation. Always run by hand       |
+
+`npm run report` runs last because it folds together what the others wrote. It reads only files under `output/`, never your library, so it works with the drive unplugged — and a command you haven't run is listed in the report's `sources` block with a null count rather than silently looking clean.
 
 ### After pulling updates
 
@@ -67,7 +72,7 @@ Your `config.json`, `.secrets.json`, `rules/*.local.yaml`, ignore lists, `output
 
 ### After changing your library
 
-Work through the `*warnings.json` files in `output/<drive>/<type>/` ([Output](OUTPUT.md) explains each one), fix what you want to fix, then re-run what the change affects:
+Work through `output/<drive>/<type>/all-warnings.json` — one entry per show, movie, artist, or author, listing everything every command found on it, so you fix one item at a time instead of joining findings across four files. ([Output](OUTPUT.md#all-warningsjson-the-merged-report) explains the shape, and the per-command files behind it.) Then re-run what your change affects:
 
 | You changed...                                   | Re-run                                                               |
 | ------------------------------------------------ | -------------------------------------------------------------------- |
@@ -312,12 +317,41 @@ No key and no setup. Each book is searched on [Open Library](https://openlibrary
 Open Library is community-edited and inconsistent: one book appears as several editions titled `The Flood (Halo)`, `Halo` with subtitle `the flood`, `Star Wars - Thrawn Trilogy - Dark Force Rising`. So the folder title is compared against **every** result, and one matching edition is enough. Case, punctuation, a colon where the folder has a dash, a franchise prefix Open Library leaves off, and series text Open Library pads in are all ignored. What's left to warn about:
 
 - **`warn_openlibrary_title_mismatch`** — nothing matches, but a book by the same author is within a couple of characters. The shape of a typo; the message gives Open Library's spelling.
-- **`warn_openlibrary_author_mismatch`** — the title matches but none of your folder's authors do. Usually an author-folder typo, occasionally a different book with the same title.
+- **`warn_openlibrary_author_mismatch`** — the title matches but none of your folder's authors do. Usually an author-folder typo, occasionally a different book with the same title. **Off by default**: the scan already compares each author folder against its sibling folders (`warn_author_name_mismatch`) and against the embedded artist tag (`warn_author_tag_mismatch`), so one typo produced three findings for one rename — and Open Library credits narrators, translators and editors as authors.
 - **`warn_openlibrary_title_case`** and **`warn_openlibrary_not_found`** — both **off by default**. Open Library's capitalization is unreliable, and translated books are often listed only under their original title (the Witcher novels appear as `Krew elfów` and friends), so these are mostly noise. Turn them on in `rules/audiobooks.local.yaml` for a one-off audit.
 
 Results are cached in `cache/openlibrary-search.json`, shared across drives. Like the TMDB pass, an empty result is never cached, so a book Open Library didn't know is asked again next run. `--refresh-older-than=Nd` works the same way. Requests are held to one per second as Open Library asks; a first run over ~110 books takes about two minutes, and warm runs make no requests.
 
 The scan pass has its own offline name checks for audiobooks that don't need Open Library at all — series and author spelling drift across books, HTML entities in folder names, and embedded tags that disagree with the folders. See the [Audiobooks warning table](OUTPUT.md#audiobooks).
+
+---
+
+## Merged report
+
+`npm run report [drive]`, or `npm run report -- --type shows [drive]` for one type. It runs last in `npm run all`.
+
+Each pass writes its own warnings file, which means one show can be listed in four places. The report folds all of them into `output/<drive>/<type>/all-warnings.json` — **one entry per top-level folder**, listing every finding from every command on that show, movie, artist, or author. That's the file to work from: you fix one item at a time rather than joining four files by hand.
+
+It reads only files under `output/`, never your media library, so it works with the drive unplugged.
+
+### Reading the `sources` block
+
+The report starts by naming every command that can contribute and what each one did — all four, or three for music, which has no validate pass. Read it first:
+
+| `status`     | Means                                                                                                   |
+| ------------ | ------------------------------------------------------------------------------------------------------- |
+| `ok`         | Folded in, and no older than the scan                                                                   |
+| `stale`      | Older than `warnings.json` — folded in anyway, but it may describe a library that's since changed       |
+| `missing`    | That command has never run for this drive and type. Nothing from it is in the report                    |
+| `unreadable` | Present but unusable — a damaged file, or one written before warnings were grouped by folder. Re-run it |
+
+A command that hasn't run reports `"count": null`, **not `0`**. That distinction matters: without it, a report covering only the scan would look like a clean library rather than a partial picture. The `note` on each non-`ok` source names the command that refreshes it.
+
+### Why findings aren't deduplicated
+
+Two checks can describe the same season, and both are worth acting on — `warn_episode_gaps` tells you _which_ episodes are missing, `warn_tmdb_episode_count` tells you _how many_ TMDB expects. The report keeps both and just sorts them together: seasons are ordered canonically, so the scan's `Season 03` sits directly above the validate pass's `Season 3`.
+
+See [Output](OUTPUT.md#all-warningsjson-the-merged-report) for the full shape.
 
 ---
 
@@ -337,12 +371,15 @@ It **only ever renames**. No deletes, no moves between folders, no writes to fil
 
 ### Modes
 
-| Mode             | What it does                                                                                                                                                      | Fixes                                                                               |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `show-prefix`    | Rewrites each file's `<Title> (<Year>)` prefix to the title and year its show folder names (an `{edition-…}` tag stays on the folder)                             | `warn_show_year_mismatch`, `warn_show_title_case`                                   |
-| `episode-titles` | Appends the trailing `- <Episode Title>` from the TMDB cache                                                                                                      | `warn_missing_episode_title`                                                        |
-| `episode-code`   | Normalizes the season/episode code to your `episode_code_case` and the canonical `-e02` multi-episode suffix, and zero-pads unpadded numbers (`s02e4` → `s02e04`) | `warn_episode_code_case`, `warn_bad_file_name` (unpadded)                           |
-| `show-folder`    | Renames one show folder, given `--show "<Old Name>"` and `--to "<New Name>"`, in every category that holds it                                                     | `warn_show_year_mismatch`, `warn_show_title_case` when the folder is the wrong side |
+| Mode                 | What it does                                                                                                                                                                                                         | Fixes                                                                               |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `show-prefix`        | Rewrites each file's `<Title> (<Year>)` prefix to the title and year its show folder names (an `{edition-…}` tag stays on the folder)                                                                                | `warn_show_year_mismatch`, `warn_show_title_case`                                   |
+| `episode-titles`     | Appends the trailing `- <Episode Title>` from the TMDB cache                                                                                                                                                         | `warn_missing_episode_title`                                                        |
+| `episode-code`       | Normalizes the season/episode code to your `episode_code_case` and the canonical `-e02` multi-episode suffix, and zero-pads unpadded numbers (`s02e4` → `s02e04`)                                                    | `warn_episode_code_case`, `warn_bad_file_name` (unpadded)                           |
+| `season-code`        | Rewrites each file's season number to the one its `Season NN` folder names, leaving the episode number and the code's casing alone (`s06e01` → `s01e01`)                                                             | `warn_season_mismatch`                                                              |
+| `renumber`           | Gives each file its own episode number where a two-parter was split into two files sharing one code (`s03e18` ×2 → `s03e21`, `s03e22`), or a file reuses a number a multi-episode file covers, shifting what follows | Duplicate episode codes; `warn_tmdb_episode_count` where TMDB merges the parts      |
+| `trailing-separator` | Trims separator debris off a name that parses once it is gone (`- s01e12 -.mp4` → `- s01e12.mp4`), the shape left when a title is deleted but its `-` is not                                                         | `warn_bad_file_name` for that shape only                                            |
+| `show-folder`        | Renames one show folder, given `--show "<Old Name>"` and `--to "<New Name>"`, in every category that holds it                                                                                                        | `warn_show_year_mismatch`, `warn_show_title_case` when the folder is the wrong side |
 
 When the folder rather than its files is wrong, run `show-folder` first, then `show-prefix` to bring the files in line. The dry run prints the TMDB title and the files' most common prefix as hints — the target is always the one you pass:
 
@@ -351,6 +388,72 @@ npm run fix:shows -- --fix show-folder external --show "Saved by Bell (1989)" --
 ```
 
 After a folder rename, re-run `npm run validate:shows <drive>` before `episode-titles` — it looks shows up by folder name.
+
+`season-code` resolves a season mismatch in one direction only: **the folder is right and the code is wrong.** The other reading — that the code is right and the file is simply in the wrong folder — needs the file moved, and this tool never moves anything between directories. Check which side is actually wrong before you `--apply`. Two folders are left alone rather than guessed at: a named season from `ignored_season_names` (`Specials`) has no number to align to and is _skipped_, and a folder the rules reject (`Season  01` with a doubled space) goes to _review_, since renaming the folder is the fix there. Where a season folder holds files from more than one season, every planned entry carries a note, because at least one of those files is misfiled whichever way you read it.
+
+### `trailing-separator` — a name nothing else can see
+
+Deleting an episode title but leaving the `-` that introduced it produces a name that matches neither `patterns.file` nor the lenient fallback:
+
+```text
+Hercules (1998) - s01e12 -.mp4
+```
+
+That is `warn_bad_file_name`, and it makes the file invisible to **every other mode** — a file has to parse before `show-prefix`, `episode-titles` or `episode-code` can rewrite one part of its name, so those files are not merely skipped, they never enter a plan. This mode exists to get them back to parseable:
+
+```bash
+npm run fix:shows -- --fix trailing-separator external --show "Hercules (1998)"
+npm run fix:shows -- --fix trailing-separator external --show "Hercules (1998)" --apply
+```
+
+The rule is self-verifying: trim trailing whitespace and hyphens, then rename **only if the result matches `patterns.file`**. Nothing is inferred and no target is constructed, so the new name is always a prefix of the old one. A name that still fails to parse once trimmed is reported and left alone — the trailing characters were not its real problem.
+
+A name that parses _with_ its debris is also left alone. `episode_title` is greedy, so `- s01e12 - The Apollo Mission -` matches with the dash inside the title: untidy, but the rules accept it, so trimming it would mean rewriting a valid title on a guess at intent.
+
+Run it before `episode-titles`, then re-scan — the season guard counts files it can parse, so a season full of unreadable names looks partial until they are repaired.
+
+### `renumber` — two files, one episode number
+
+A two-part episode held as two files that both carry the same code is invisible to the scanner but not to Plex, which matches on the episode number and so reads them as two _versions_ of one episode rather than two episodes:
+
+```text
+My Name Is Earl (2005) - s03e18 - Camdenites Part 1.mp4
+My Name Is Earl (2005) - s03e18 - Camdenites Part 2.mp4
+```
+
+`renumber` gives each file its own number. Parts take consecutive numbers in filename order (`Part 1` before `Part 2`, `(1)` before `(2)`), and everything below shifts up by as many extra parts as appeared above it — so the whole season stays in order:
+
+```bash
+npm run fix:shows -- --fix renumber server --show "My Name Is Earl (2005)"          # preview
+npm run fix:shows -- --fix renumber server --show "My Name Is Earl (2005)" --apply
+```
+
+**Gaps are preserved.** The new number is the old one plus an offset, never a re-sequence from 1. A gap means a missing episode (`warn_episode_gaps`), and closing it would renumber the season around a file you still mean to add, leaving every title below the gap on the wrong number. A season whose only oddity is a gap plans nothing at all.
+
+A multi-episode file (`s04e01-e02`) claims every number in its range, so a file after it that reuses one of those numbers — the usual result of a two-part premiere held as one file, with every file after it numbered one low — shifts past the range the same way a duplicate does:
+
+```text
+The Middle (2009) - s04e01-e02.mp4        The Middle (2009) - s04e01-e02.mp4
+The Middle (2009) - s04e02.mp4       →    The Middle (2009) - s04e03.mp4
+The Middle (2009) - s04e03.mp4            The Middle (2009) - s04e04.mp4
+```
+
+Each of those entries is flagged for review in the dry run, because the other reading — a single episode mislabelled as a range — needs the multi-episode file renamed instead; check the season against TMDB before `--apply`. Two shapes are still _skipped_ whole rather than guessed at: a multi-episode file sharing its start number with another file (nothing says which comes first), and one that would itself have to move (its range would need rewriting).
+
+Entries come out highest-number-first, because a new number is always at or above the old one and each target has to be vacated before anything moves onto it. This is the one mode that plans a target which currently exists on disk; `validatePlan` allows it only when an **earlier** entry moves that file away, so a genuine clobber — or a swap, which no ordering can save — still aborts the run before the first rename. Undo replays in reverse and applies the mirror of the same rule.
+
+One thing `renumber` cannot know is whether the parts are really two episodes. Where TMDB merges a two-parter into a single entry, renumbering deliberately diverges from TMDB and `validate:shows` will report the season as holding one episode too many. [TheTVDB](https://thetvdb.com) usually numbers the parts separately, so its numbering is generally what a renumbered season matches — worth checking the show there before `--apply`.
+
+A show split into one folder per subject — each with a single `Season 01`, but files still numbered for the season they were in upstream — takes all three file modes in order, then a re-scan:
+
+```bash
+npm run fix:shows -- --fix season-code  external --apply   # s06e01 → s01e01
+npm run fix:shows -- --fix show-prefix  external --apply   # prefix → the folder's title and year
+npm run validate:shows external                            # match each folder to its own TMDB id
+npm run fix:shows -- --fix episode-titles external --apply # now the codes line up with TMDB's seasons
+```
+
+`season-code` comes first: `episode-titles` looks the season up by the number in the filename, so it finds nothing for a file claiming a season its TMDB entry doesn't have.
 
 `episode-titles` reads `output/<drive>/shows/data/validation.json` and `cache/tmdb-show-seasons.json`, so **run `npm run validate:shows <drive>` first**. It makes no network calls of its own.
 

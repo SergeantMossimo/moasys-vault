@@ -132,26 +132,26 @@ describe('suggestIgnoreEntry', () => {
   })
 })
 
-describe('WarningCollector ignore suggestions', () => {
-  it('adds an ignore entry to each row when constructed with an ignore list', () => {
+describe('WarningCollector and the ignore list', () => {
+  // Suggestions are no longer written to the warnings files. What still has to
+  // hold is that a warning's path normalizes and that matching silences it.
+  it('normalizes backslashes so the matcher and the output agree', () => {
     const wc = new WarningCollector({ mediaType: 'shows', entries: [] })
     wc.add('warn_episode_gaps', 'HD\\Firefly (2002)\\Season 01', 'gap')
-    expect(wc.groupedByType()['warn_episode_gaps']?.items).toEqual([
-      {
-        path: 'HD/Firefly (2002)/Season 01',
-        issue: 'gap',
-        ignore: 'seasons: Firefly (2002)/Season 01',
-      },
-    ])
+    const folder = wc.groupedByFolder()[0]
+    expect(folder?.path).toBe('HD/Firefly (2002)')
+    expect(folder?.rows).toEqual([{ type: 'warn_episode_gaps', path: 'Season 01', issue: 'gap' }])
   })
 
-  it('leaves rows unchanged when no ignore list was supplied', () => {
-    const wc = new WarningCollector()
-    wc.add('warn_x', 'HD/Firefly (2002)', 'x')
-    expect(wc.groupedByType()['warn_x']?.items).toEqual([{ path: 'HD/Firefly (2002)', issue: 'x' }])
+  it('writes no ignore entry on a folder or a row', () => {
+    const wc = new WarningCollector({ mediaType: 'shows', entries: [] })
+    wc.add('warn_show_year_mismatch', 'HD/Firefly (2002)', 'year')
+    const folder = wc.groupedByFolder()[0]
+    expect('ignore' in (folder ?? {})).toBe(false)
+    expect('ignore' in (folder?.rows[0] ?? {})).toBe(false)
   })
 
-  it('never suggests an entry for a warning that was silenced', () => {
+  it('silences a warning an entry reaches', () => {
     const list = parseIgnoreList({ shows: ['Firefly (2002)'] }, 'shows', 'test.yaml')
     const wc = new WarningCollector(list)
     wc.add('warn_x', 'HD/Firefly (2002)/Season 01', 'x')

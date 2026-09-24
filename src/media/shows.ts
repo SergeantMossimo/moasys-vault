@@ -36,7 +36,6 @@ import {
   compilePattern,
   extractEpisodeCode,
   isAcceptableCombo,
-  qualitySortKey,
   resolveCategories,
   LENIENT_EPISODE_FILE,
   sortQualities,
@@ -50,8 +49,10 @@ import { deriveQuality } from '../probe/helpers'
 // ─────────────────────────────────────────────
 
 /**
- * The remedy for each warning type, written once per bucket in warnings.json
- * rather than repeated on every row — see `WarningOptions.fix`.
+ * The remedy for each warning type. Not written to warnings.json — the remedy
+ * is identical on every row of a type, so its home is the warning tables in
+ * docs/OUTPUT.md. Kept here so it sits beside the check it belongs to, and so
+ * one wording is shared when a type fires from several call sites.
  *
  * They live in one map because several types fire from more than one call site
  * (`warn_loose_files` from both the category root and a show folder, for
@@ -784,9 +785,6 @@ export function createShowsModule(
                 `Duplicate ${quality} copies in ${cats.length} folders: ${cats.join(', ')}.`,
                 {
                   fix: FIX.warn_duplicate_quality,
-                  // Group the bucket by quality (UHD, then HD, then SD) rather
-                  // than by show title, so the worst offenders read together.
-                  sortKey: qualitySortKey(quality),
                   scope: { categories: cats, levels: seasonLevels },
                 }
               )

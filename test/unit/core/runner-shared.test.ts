@@ -224,45 +224,67 @@ describe('writeWarnings', () => {
     logSpy.mockRestore()
   })
 
-  it('writes a warnings file with the by_type shape', () => {
+  it('writes a warnings file grouped by folder', () => {
     const out = path.join(tmpDir, 'warnings.json')
     const warnings = new WarningCollector()
-    warnings.add('warn_bad_file_name', 'path/to/file', 'bad name')
+    warnings.add('warn_bad_file_name', 'HD/Firefly (2002)/ep.mp4', 'bad name')
 
     writeWarnings(out, warnings)
     const parsed = JSON.parse(fs.readFileSync(out, 'utf-8'))
     expect(parsed.count).toBe(1)
-    expect(parsed.by_type).toEqual({
-      warn_bad_file_name: { items: [{ path: 'path/to/file', issue: 'bad name' }] },
-    })
+    expect(parsed.folder_count).toBe(1)
+    expect(parsed.by_type).toEqual({ warn_bad_file_name: 1 })
+    expect(parsed.folders).toEqual([
+      {
+        path: 'HD/Firefly (2002)',
+        count: 1,
+        rows: [{ type: 'warn_bad_file_name', path: 'ep.mp4', issue: 'bad name' }],
+      },
+    ])
     expect(parsed.generated).toMatch(/^\d{4}-\d{2}-\d{2}T/) // ISO 8601
   })
 
-  it('writes an empty by_type object when no warnings were collected', () => {
+  it('writes an empty folders array when no warnings were collected', () => {
     const out = path.join(tmpDir, 'warnings.json')
     writeWarnings(out, new WarningCollector())
     const parsed = JSON.parse(fs.readFileSync(out, 'utf-8'))
     expect(parsed.count).toBe(0)
+    expect(parsed.folder_count).toBe(0)
+    expect(parsed.folders).toEqual([])
     expect(parsed.by_type).toEqual({})
+  })
+
+  // Neither the remedy nor the ignore suggestion is written any more — both
+  // were the same text on every row of a type, which is what buried the facts.
+  it('writes neither fix text nor ignore entries', () => {
+    const out = path.join(tmpDir, 'warnings.json')
+    const warnings = new WarningCollector({ mediaType: 'shows', entries: [] })
+    warnings.add('warn_q', 'HD/A (2001)/Season 01', 'first', { fix: 'Do the thing.' })
+
+    writeWarnings(out, warnings)
+    const text = fs.readFileSync(out, 'utf-8')
+    expect(text).not.toContain('Do the thing.')
+    expect(text).not.toContain('ignore')
+    expect(text).not.toContain('fixes')
   })
 
   it('preserves the optional extension field on individual warnings', () => {
     const out = path.join(tmpDir, 'warnings.json')
     const warnings = new WarningCollector()
-    warnings.add('warn_non_primary', 'path/to/file.mkv', 'Non-MP4', { extension: '.mkv' })
+    warnings.add('warn_non_primary', 'HD/Movie (1999)/file.mkv', 'Non-MP4', { extension: '.mkv' })
 
     writeWarnings(out, warnings)
     const parsed = JSON.parse(fs.readFileSync(out, 'utf-8'))
-    expect(parsed.by_type.warn_non_primary.items[0].extension).toBe('.mkv')
+    expect(parsed.folders[0].rows[0].extension).toBe('.mkv')
   })
 
-  it('logs the warning count', () => {
+  it('logs the warning count and the folder count', () => {
     const out = path.join(tmpDir, 'warnings.json')
     const warnings = new WarningCollector()
-    warnings.add('warn_a', 'a', '1')
-    warnings.add('warn_b', 'b', '2')
+    warnings.add('warn_a', 'HD/A (2001)', '1')
+    warnings.add('warn_b', 'HD/B (2002)', '2')
     writeWarnings(out, warnings)
-    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/2 warnings/))
+    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/2 warnings across 2 folders/))
   })
 })
 
@@ -291,6 +313,16 @@ describe('WarningCollector', () => {
     const wc = new WarningCollector()
     wc.add('warn_thing', 'a', 'x')
     expect('extension' in (wc.all()[0] ?? {})).toBe(false)
+  })
+
+  it('keeps the derived scope internal — no ignore entry without a list', () => {
+    // `add()` always derives a scope now, because the folder grouping keys on
+    // it. That must stay invisible: a collector built with no ignore list
+    // still suggests nothing, and `scope` never reaches a caller.
+    const wc = new WarningCollector()
+    wc.add('warn_thing', 'HD/Firefly (2002)', 'x')
+    expect(wc.all()).toEqual([{ type: 'warn_thing', path: 'HD/Firefly (2002)', issue: 'x' }])
+    expect('scope' in (wc.all()[0] ?? {})).toBe(false)
   })
 
   it('returns a defensive copy from all()', () => {
@@ -368,119 +400,32 @@ describe('WarningCollector', () => {
     expect(wc.silencedCount()).toBe(1)
   })
 
-  describe('groupedByType', () => {
+  // `fix` is still accepted by `add()` so the ~100 call sites that document
+  // their remedy keep compiling, but it is no longer written anywhere: the
+  // remedy is identical for every row of a type, so its home is the warning
+  // tables in docs/OUTPUT.md.
+  it('accepts a fix option without putting it in the output', () => {
+    const wc = new WarningCollector()
+    wc.add('warn_q', 'HD/A (2001)', 'first', { fix: 'Do the thing.' })
+
+    expect(JSON.stringify(wc.groupedByFolder())).not.toContain('Do the thing.')
+    expect('fix' in (wc.all()[0] ?? {})).toBe(false)
+  })
+
+  describe('tallyByType', () => {
     it('returns an empty object when nothing was collected', () => {
-      const wc = new WarningCollector()
-      expect(wc.groupedByType()).toEqual({})
+      expect(new WarningCollector().tallyByType()).toEqual({})
     })
 
-    it('groups warnings by type with path-sorted rows per bucket', () => {
+    it('mirrors countByType so the file and the console agree', () => {
       const wc = new WarningCollector()
-      wc.add('warn_b', 'z', '1')
-      wc.add('warn_a', 'y', '2')
-      wc.add('warn_a', 'x', '3')
+      wc.add('warn_a', 'x', '1')
+      wc.add('warn_b', 'y', '2')
+      wc.add('warn_b', 'z', '3')
 
-      const grouped = wc.groupedByType()
-      // Outer keys are sorted alphabetically for stable JSON output.
-      expect(Object.keys(grouped)).toEqual(['warn_a', 'warn_b'])
-      expect(grouped['warn_a']?.items).toEqual([
-        { path: 'x', issue: '3' },
-        { path: 'y', issue: '2' },
-      ])
-      expect(grouped['warn_b']?.items).toEqual([{ path: 'z', issue: '1' }])
-    })
-
-    it('preserves the extension field on individual rows', () => {
-      const wc = new WarningCollector()
-      wc.add('warn_non_primary', 'file.mkv', 'Non-MP4', { extension: '.mkv' })
-      expect(wc.groupedByType()['warn_non_primary']?.items).toEqual([
-        { path: 'file.mkv', issue: 'Non-MP4', extension: '.mkv' },
-      ])
-    })
-
-    it('omits the extension field when it was not provided', () => {
-      const wc = new WarningCollector()
-      wc.add('warn_thing', 'p', 'i')
-      expect('extension' in (wc.groupedByType()['warn_thing']?.items[0] ?? {})).toBe(false)
-    })
-
-    it('orders rows by sortKey when one is supplied, overriding path order', () => {
-      const wc = new WarningCollector()
-      wc.add('warn_q', 'Zebra', 'z', { sortKey: '00|UHD' })
-      wc.add('warn_q', 'Apple', 'a', { sortKey: '01|HD' })
-      expect(wc.groupedByType()['warn_q']?.items.map(r => r.path)).toEqual(['Zebra', 'Apple'])
-    })
-
-    it('falls back to path order within a single sortKey group', () => {
-      const wc = new WarningCollector()
-      wc.add('warn_q', 'Zebra', 'z', { sortKey: '01|HD' })
-      wc.add('warn_q', 'Apple', 'a', { sortKey: '01|HD' })
-      expect(wc.groupedByType()['warn_q']?.items.map(r => r.path)).toEqual(['Apple', 'Zebra'])
-    })
-
-    it('never serializes sortKey to the on-disk row', () => {
-      const wc = new WarningCollector()
-      wc.add('warn_q', 'p', 'i', { sortKey: '00|UHD' })
-      expect(wc.groupedByType()['warn_q']?.items).toEqual([{ path: 'p', issue: 'i' }])
-    })
-
-    it('applies the same ordering in all() so the summary matches the file', () => {
-      const wc = new WarningCollector()
-      wc.add('warn_q', 'Zebra', 'z', { sortKey: '00|UHD' })
-      wc.add('warn_q', 'Apple', 'a', { sortKey: '01|HD' })
-      expect(wc.all().map(w => w.path)).toEqual(['Zebra', 'Apple'])
-    })
-
-    // The whole point of hoisting: the remedy is written once per bucket
-    // instead of repeated on every row.
-    it('hoists fix to the bucket and keeps it off the rows', () => {
-      const wc = new WarningCollector()
-      wc.add('warn_q', 'a', 'first', { fix: 'Do the thing.' })
-      wc.add('warn_q', 'b', 'second', { fix: 'Do the thing.' })
-
-      const bucket = wc.groupedByType()['warn_q']
-      expect(bucket?.fix).toBe('Do the thing.')
-      expect(bucket?.items).toEqual([
-        { path: 'a', issue: 'first' },
-        { path: 'b', issue: 'second' },
-      ])
-    })
-
-    it('omits fix entirely when no row supplied one', () => {
-      const wc = new WarningCollector()
-      wc.add('warn_q', 'p', 'i')
-      expect('fix' in (wc.groupedByType()['warn_q'] ?? {})).toBe(false)
-    })
-
-    it('hoists a fix supplied only by a later row', () => {
-      const wc = new WarningCollector()
-      wc.add('warn_q', 'a', 'first')
-      wc.add('warn_q', 'b', 'second', { fix: 'Do the thing.' })
-      expect(wc.groupedByType()['warn_q']?.fix).toBe('Do the thing.')
-    })
-
-    // A check that interpolates a per-row value into its fix would silently
-    // publish one row's variant as the whole bucket's remedy — say so.
-    it('takes the first fix and warns when a bucket disagrees with itself', () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      const wc = new WarningCollector()
-      wc.add('warn_q', 'a', 'first', { fix: 'Rename a.' })
-      wc.add('warn_q', 'b', 'second', { fix: 'Rename b.' })
-
-      expect(wc.groupedByType()['warn_q']?.fix).toBe('Rename a.')
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('warn_q'))
-      warnSpy.mockRestore()
-    })
-
-    it('stays quiet when every row of a type agrees on the fix', () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      const wc = new WarningCollector()
-      wc.add('warn_q', 'a', 'first', { fix: 'Same.' })
-      wc.add('warn_q', 'b', 'second', { fix: 'Same.' })
-
-      wc.groupedByType()
-      expect(warnSpy).not.toHaveBeenCalled()
-      warnSpy.mockRestore()
+      expect(wc.tallyByType()).toEqual({ warn_b: 2, warn_a: 1 })
+      // Worst first, matching countByType's order.
+      expect(Object.keys(wc.tallyByType())).toEqual(['warn_b', 'warn_a'])
     })
   })
 

@@ -19,6 +19,9 @@ describe('typeOutputPaths', () => {
     expect(out.catalog).toBe(path.join(dir, 'shows.json'))
     expect(out.warnings).toBe(path.join(dir, 'warnings.json'))
     expect(out.validationWarnings).toBe(path.join(dir, 'validation-warnings.json'))
+    expect(out.plexWarnings).toBe(path.join(dir, 'plex-warnings.json'))
+    expect(out.plexLogWarnings).toBe(path.join(dir, 'plex-log-warnings.json'))
+    expect(out.allWarnings).toBe(path.join(dir, 'all-warnings.json'))
   })
 
   it('puts probe and validation data under data/', () => {

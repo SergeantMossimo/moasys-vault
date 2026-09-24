@@ -39,9 +39,9 @@ function runShowsScan(opts: {
   try {
     const records = scan({ root_path: root }, module, warnings, probes)
     const output = module.serialize(records)
-    // `grouped` is the on-disk warnings.json shape — the only view that
-    // exercises per-bucket row ordering.
-    return { output, warnings: warnings.all(), grouped: warnings.groupedByType() }
+    // `folders` is the on-disk warnings.json shape — the only view that
+    // exercises folder grouping and relative row paths.
+    return { output, warnings: warnings.all(), folders: warnings.groupedByFolder() }
   } finally {
     logSpy.mockRestore()
     cleanupLibrary(root)
@@ -288,7 +288,6 @@ describe('shows module — editions', () => {
     })
     const multi = result.warnings.find(w => w.type === 'warn_multi_quality')
     expect(multi?.path).toBe('Spider-Noir (2026) {edition-True Hue Color} — Season 1')
-    expect(multi?.ignore).toContain('{edition-True Hue Color}')
   })
 
   it('warn_empty_edition: {edition-} with no name, catalogued as no edition', () => {
@@ -780,7 +779,11 @@ describe('shows module — warn_duplicate_quality (per-season)', () => {
     expect(result.warnings.some(w => w.type === 'warn_duplicate_quality')).toBe(false)
   })
 
-  it('orders the bucket by quality (UHD, HD, SD), alphabetically within each tier', () => {
+  it('files each duplicate on its show folder, with the season as a relative row', () => {
+    // The check spans categories, so its `path` is a display label
+    // (`Zulu (2000) — Season 1`) rather than a real path. Grouping rebuilds the
+    // tail from the explicit scope, so the label's facts survive as the folder
+    // plus a relative row path — nothing is lost.
     const result = runShowsScan({
       spec: {
         UHD: { 'Zulu (2000)': { 'Season 01': { 'Zulu (2000) - S01E01.mp4': '' } } },
@@ -792,8 +795,12 @@ describe('shows module — warn_duplicate_quality (per-season)', () => {
         categories: [{ name: 'UHD' }, { name: 'Other UHD' }, { name: 'SD' }, { name: 'Other SD' }],
       },
     })
-    const bucket = result.grouped['warn_duplicate_quality']?.items ?? []
-    expect(bucket.map(r => r.path)).toEqual(['Zulu (2000) — Season 1', 'Alpha (2002) — Season 1'])
+    const dupes = result.folders.filter(f => f.rows.some(r => r.type === 'warn_duplicate_quality'))
+    expect(dupes.map(f => f.path)).toEqual(['SD/Alpha (2002)', 'UHD/Zulu (2000)'])
+    for (const folder of dupes) {
+      const row = folder.rows.find(r => r.type === 'warn_duplicate_quality')
+      expect(row?.path).toBe('Season 1')
+    }
   })
 
   it('is not silenceable via acceptable_quality_combos', () => {
