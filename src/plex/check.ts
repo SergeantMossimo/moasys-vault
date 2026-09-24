@@ -138,7 +138,7 @@ function runType(
     return
   }
 
-  const { folderPattern } = typeRules(mediaType)
+  const { folderPattern, categoryQuality, acceptableCombos } = typeRules(mediaType)
   const warnings = plexWarningCollector(root, mediaType, unfiltered)
 
   const tmdbMatches = readTmdbMatches(mediaType, out.validation)
@@ -154,6 +154,8 @@ function runType(
     exists: relative => fs.existsSync(path.join(root.root_path, relative)),
     folderPattern,
     tmdbMatches,
+    categoryQuality,
+    acceptableCombos,
     rules: plexRules,
     warnings,
   })
@@ -161,7 +163,7 @@ function runType(
   console.log(
     `    [PLEX] ${stats.plexFiles} Plex files on this drive from ${catalogs.map(c => `'${c.library.title}'`).join(', ')}; ${stats.diskFiles} files from the scan`
   )
-  writePlexWarnings(warningsPath(root, mediaType, 'plex-warnings', unfiltered), warnings)
+  writePlexWarnings(warningsPath(root, mediaType, 'plexWarnings', unfiltered), warnings)
 }
 
 // ─────────────────────────────────────────────

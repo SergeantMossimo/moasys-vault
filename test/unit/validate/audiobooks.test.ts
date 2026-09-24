@@ -161,6 +161,22 @@ describe('validateAudiobooks', () => {
     )
     expect(search).toHaveBeenCalledTimes(2)
     expect(out[0]!.status).toBe('author_mismatch')
+    // The record still carries the mismatch; the warning is off by default
+    // because the scan already compares the author folder two other ways.
+    expect(warnings.all()).toEqual([])
+  })
+
+  it('warns on an author mismatch once the check is turned on', async () => {
+    const { client } = mockClient((_q, author) =>
+      author ? [] : [doc('Halo: Battle Born', ['Cassandra Rose Clarke'])]
+    )
+    await validateAudiobooks(
+      [book('Halo - Battle Born', ['Cassandra Rose Clark'])],
+      { ...rules, checks: { ...rules.checks, warn_openlibrary_author_mismatch: true } },
+      client,
+      memoryCache(),
+      warnings
+    )
     expect(warnings.all().map(w => w.type)).toEqual(['warn_openlibrary_author_mismatch'])
   })
 

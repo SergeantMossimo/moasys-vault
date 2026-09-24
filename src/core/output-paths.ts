@@ -8,6 +8,7 @@
  * and the warnings files. Everything else sits one level down:
  *
  *   output/<drive>/<type>/
+ *   ├── all-warnings.json           report — every command's warnings, merged
  *   ├── <type>.json                 catalog
  *   ├── warnings.json               scan
  *   ├── validation-warnings.json    validate
@@ -35,6 +36,16 @@ export interface TypeOutputPaths {
   catalog: string
   warnings: string
   validationWarnings: string
+  /** plex-warnings.json — written by plex:check. */
+  plexWarnings: string
+  /** plex-log-warnings.json — written by plex:logs. */
+  plexLogWarnings: string
+  /**
+   * all-warnings.json — written by `npm run report`, which folds the four
+   * files above into one entry per top-level folder. The only warnings file
+   * that is read back rather than just written.
+   */
+  allWarnings: string
   /** data/probe.json — written by the scan, read by validate and plex:check. */
   probe: string
   /** data/validation.json — written by validate, read by plex:check and fix:shows. */
@@ -57,6 +68,9 @@ export function typeOutputPaths(
     catalog: path.join(dir, `${mediaType}.json`),
     warnings: path.join(dir, 'warnings.json'),
     validationWarnings: path.join(dir, 'validation-warnings.json'),
+    plexWarnings: path.join(dir, 'plex-warnings.json'),
+    plexLogWarnings: path.join(dir, 'plex-log-warnings.json'),
+    allWarnings: path.join(dir, 'all-warnings.json'),
     probe: path.join(dir, DATA_DIR, 'probe.json'),
     validation: path.join(dir, DATA_DIR, 'validation.json'),
     fixesDir: path.join(dir, FIXES_DIR),

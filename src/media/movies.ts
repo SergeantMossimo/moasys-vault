@@ -31,7 +31,6 @@ import {
   buildCategoryQualityMap,
   compilePattern,
   isAcceptableCombo,
-  qualitySortKey,
   resolveCategories,
   sortQualities,
 } from '../core/rules/helpers'
@@ -44,8 +43,10 @@ import { deriveQuality } from '../probe/helpers'
 // ─────────────────────────────────────────────
 
 /**
- * The remedy for each warning type, written once per bucket in warnings.json
- * rather than repeated on every row — see `WarningOptions.fix`.
+ * The remedy for each warning type. Not written to warnings.json — the remedy
+ * is identical on every row of a type, so its home is the warning tables in
+ * docs/OUTPUT.md. Kept here so it sits beside the check it belongs to, and so
+ * one wording is shared when a type fires from several call sites.
  *
  * They live in one map because several types fire from more than one call site
  * (`warn_unexpected_entries` from both the category root and a movie folder,
@@ -506,9 +507,6 @@ export function createMoviesModule(
               `Duplicate ${quality} copies in ${cats.length} folders: ${cats.join(', ')}.`,
               {
                 fix: FIX.warn_duplicate_quality,
-                // Group the bucket by quality (UHD, then HD, then SD) rather
-                // than by title, so the worst offenders read together.
-                sortKey: qualitySortKey(quality),
                 // The path here is a display label, not a library path — this
                 // check spans categories by definition, so there's no single
                 // one to anchor to. Spell the scope out or no ignore entry

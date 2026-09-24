@@ -6,7 +6,7 @@
  * everywhere it's used — no silent mismatches between modules.
  */
 
-import { deriveScope, EMPTY_IGNORE_LIST, isWarningIgnored, suggestIgnoreEntry } from './ignored'
+import { canonicalName, deriveScope, EMPTY_IGNORE_LIST, isWarningIgnored } from './ignored'
 import type { IgnoreList, IgnoreMediaType, WarningScope } from './ignored'
 
 // ─────────────────────────────────────────────
@@ -87,28 +87,15 @@ export interface AppConfig {
 // ─────────────────────────────────────────────
 
 /**
- * A single warning entry. `type` is carried internally so the collector can
- * route to the right bucket; the on-disk form (under `by_type[<type>]`)
- * omits it since the bucket key already encodes the type.
+ * A single warning as a check emits it, with the full library-relative `path`.
+ * The on-disk form (`WarningRow`) keeps the type but shortens the path to be
+ * relative to its folder entry — see `WarningCollector.groupedByFolder`.
  */
 export interface Warning {
   type: string // Stable machine-readable identifier (e.g. 'warn_bad_folder_name')
   path: string
   issue: string
   extension?: string // Optional — only present for non-primary file warnings
-  /**
-   * Optional ordering override — see `WarningOptions.sortKey`. Internal only;
-   * never written to disk, since it's a sorting device rather than data a
-   * consumer of warnings.json would act on.
-   */
-  sortKey?: string
-  /** Ready-to-paste ignore-list entry — see `suggestIgnoreEntry`. */
-  ignore?: string
-  /**
-   * The remedy for this check. Internal only — it is hoisted to the bucket's
-   * `fix` key rather than written on the row. See `WarningOptions.fix`.
-   */
-  fix?: string
 }
 
 /** Optional extras on a warning. See `WarningCollector.add`. */
@@ -120,15 +107,6 @@ export interface WarningOptions {
    */
   extension?: string
   /**
-   * Overrides `path` when ordering this row within its `by_type` bucket.
-   * Lets a check group its rows by something more useful than alphabetical
-   * path order — `warn_duplicate_quality` uses `qualitySortKey` so the bucket
-   * reads UHD first, then HD, then SD. Ties fall back to `path`, so output
-   * stays deterministic. Set it on every row a check emits or none of them;
-   * a bucket that mixes the two orders unpredictably.
-   */
-  sortKey?: string
-  /**
    * Where this warning sits in the library hierarchy, for ignore-list
    * matching. Set it only when `path` isn't a real category-anchored library
    * path — the duplicate-copy checks emit a display label with no category
@@ -138,67 +116,156 @@ export interface WarningOptions {
    */
   scope?: WarningScope
   /**
-   * How to fix every row of this warning type. Hoisted to the bucket's `fix`
-   * key so it is written once instead of repeated on all 441 rows — which is
-   * what made warnings.json unreadable in the first place.
+   * How to fix every row of this warning type.
    *
-   * It must be **constant for the type**: the first value a bucket sees wins,
-   * so never interpolate a per-row value into it. Per-row facts belong in
-   * `issue`. `groupedByType()` logs a warning if a bucket sees two different
-   * values, which is how you find out you got this wrong.
-   *
-   * Omit it when the check has no generic remedy.
+   * **Accepted and ignored.** The remedy is no longer written to the warnings
+   * files — it is identical for every row of a type, so its home is the
+   * warning tables in docs/OUTPUT.md and the `FIX` maps beside each check.
+   * The option is still taken so the ~100 call sites that pass it keep
+   * compiling and keep documenting their remedy where the check lives.
    */
   fix?: string
 }
 
 /**
- * One row inside a `by_type` bucket on disk. Same as Warning minus `type`,
- * which is implied by the bucket key.
+ * One row inside a folder entry on disk.
+ *
+ * `path` is relative to the folder's `path` — the folder carries the shared
+ * prefix once, so a row reads `Season 09` rather than repeating
+ * `SD/Good Eats (1999)/Season 09`.
  */
 export interface WarningRow {
-  path: string
+  /**
+   * Stable warning identifier — the key into the file's `by_type`, the toggle
+   * name under `checks` in rules/<type>.yaml, and the row in the
+   * docs/OUTPUT.md warning table that gives the remedy.
+   */
+  type: string
+  /**
+   * Location relative to the folder's `path`, forward-slash-normalized.
+   * **Absent means the warning is about the folder itself.**
+   */
+  path?: string
   issue: string
   extension?: string
-  /**
-   * The narrowest ignore-list entry that would silence this row, e.g.
-   * `shows: Firefly (2002)` — add `- Firefly (2002)` under `shows:` in
-   * ignored/<drive>/<type>.yaml. Absent when no entry can reach the row.
-   */
-  ignore?: string
 }
 
 /**
- * One `by_type` bucket: the remedy once, then the rows it applies to.
+ * Every warning on one top-level library folder — a show, movie, artist, or
+ * author. This is the unit the user actually works in: they sit down to fix
+ * one show, so one show is one entry, however many checks fired on it.
  *
- * The remedy lives here rather than on every row because it is identical for
- * every row of a type — repeating it inflated the files and buried the facts
- * that actually differ. A bucket reads as one instruction followed by a list
- * of places to apply it.
+ * Deliberately flat. A season, album, or book is a relative `path` on a row,
+ * never a nested entry — nesting would give each media type a different shape
+ * and buy nothing the relative path doesn't already say.
+ *
+ * Nothing here restates what another field already carries. The folder's own
+ * name and its category are the last and first segments of `path`, and the
+ * distinct types on it are one pass over `rows` — all three used to be written
+ * out per folder, which cost 13–18% of every warnings file.
  */
-export interface WarningBucket {
+export interface WarningFolder {
   /**
-   * How to fix every row in `items`. Absent when the check has no generic
-   * remedy (some warnings are purely informational).
+   * Full library-relative prefix the rows hang off: `SD/Good Eats (1999)`.
+   *
+   * The last segment is the name an ignore entry uses. A path with no `/` is
+   * either a category folder — silenced under `folders:` — or, in a library
+   * with no `categories`, the top-level name itself.
    */
-  fix?: string
-  items: WarningRow[]
+  path: string
+  /** `rows.length`, so the worst offenders are greppable. */
+  count: number
+  rows: WarningRow[]
 }
 
 /**
- * The on-disk shape of warnings.json / validation-warnings.json. Warnings are
- * grouped by their type so consumers can scan one bucket at a time without
- * filtering an array. `by_type` is sparse — only types with at least one hit
- * appear as keys. Inside each bucket, `items` is sorted alphabetically by path
- * unless the check supplied a `sortKey` (see `WarningOptions`), which lets a
- * bucket group by something more useful — `warn_duplicate_quality` orders by
- * quality, UHD first. Either way the order is deterministic, so output stays
- * stable and diff-friendly across runs.
+ * The on-disk shape of warnings.json / validation-warnings.json /
+ * plex-warnings.json / plex-log-warnings.json.
+ *
+ * Warnings are grouped by the top-level folder they concern, because that is
+ * the unit of work: one show is one entry, not eight rows scattered across
+ * type buckets. The two things that are constant per *type* rather than per
+ * folder — the remedy and the tally — sit at the top of the file so they are
+ * written once each and stay answerable without walking `folders`.
+ *
+ * `folders` is sorted alphabetically by `path`, so a diff between two runs
+ * shows what actually changed in the library.
  */
 export interface WarningsOutput {
   generated: string // ISO 8601 UTC timestamp
+  /** Total rows across every folder. Excludes anything the ignore list silenced. */
   count: number
-  by_type: Record<string, WarningBucket>
+  /** `folders.length`. */
+  folder_count: number
+  /**
+   * How many rows each warning type produced, worst first. Same key set and
+   * order as `countByType()`, so the console breakdown and the file can't
+   * disagree. Sparse — only types with at least one hit appear.
+   */
+  by_type: Record<string, number>
+  folders: WarningFolder[]
+}
+
+// ─────────────────────────────────────────────
+// The merged report (all-warnings.json)
+// ─────────────────────────────────────────────
+
+/** Whether a source file could be folded into the merged report. */
+export type SourceStatus = 'ok' | 'missing' | 'stale' | 'unreadable'
+
+/**
+ * One command's contribution to the merged report.
+ *
+ * Read this block before the folders. A command that has never run reports
+ * `count: null`, **never `0`** — otherwise a report missing half its checks
+ * would look like a clean library.
+ */
+export interface WarningSource {
+  /** The npm command that writes this file — what you re-run to refresh it. */
+  command: string
+  /** File name within output/<drive>/<type>/. */
+  file: string
+  status: SourceStatus
+  /** The source's own timestamp, or null when it wasn't read. */
+  generated: string | null
+  /** Rows folded in from this source, or null when it wasn't read. */
+  count: number | null
+  /** Why, for anything but `ok` — already phrased for printing. */
+  note?: string
+}
+
+/** A merged row, tagged with the command that found it. */
+export interface MergedWarningRow extends WarningRow {
+  /** `scan` | `validate` | `plex:check` | `plex:logs`. */
+  command: string
+}
+
+/** A merged folder entry, tagged with every command that flagged it. */
+export interface MergedWarningFolder extends Omit<WarningFolder, 'rows'> {
+  /** The commands that flagged this folder, in pipeline order. */
+  commands: string[]
+  rows: MergedWarningRow[]
+}
+
+/**
+ * The on-disk shape of all-warnings.json — every command's warnings for one
+ * drive and media type, folded into one entry per folder. Written by
+ * `npm run report`; a superset of `WarningsOutput`.
+ */
+export interface MergedWarningsOutput {
+  generated: string
+  drive: string
+  media_type: string
+  /**
+   * Every command that can contribute for this media type, whether or not each
+   * one was readable — four, or three for music, which has no validate pass.
+   * Read this first.
+   */
+  sources: WarningSource[]
+  count: number
+  folder_count: number
+  by_type: Record<string, number>
+  folders: MergedWarningFolder[]
 }
 
 // ─────────────────────────────────────────────
@@ -410,18 +477,47 @@ export interface MediaModule<TRecord, TOutput, TConfig extends BaseMediaConfig> 
 // ─────────────────────────────────────────────
 
 /**
- * Order two warnings within a single type bucket. Checks that supplied a
- * `sortKey` are grouped by it first (e.g. `warn_duplicate_quality` lists all
- * UHD rows, then HD, then SD); everything else falls back to alphabetical
- * path order, which is also the tiebreak inside a sortKey group. Shared by
- * `all()` and `groupedByType()` so the run summary and the on-disk file never
- * disagree about ordering.
+ * The folder a warning belongs to, reduced to the two things the grouping
+ * needs: `prefix`, which a row's path is made relative to and which is written
+ * to disk as the folder's `path`, and `key`, which decides what merges.
+ *
+ * The category and the top-level name stay local. They are what `key` is built
+ * from, but neither is written out — both are readable off `prefix`.
+ *
+ * `key` folds case so `HD/Firefly (2002)` and `HD/firefly (2002)` can't split
+ * one show into two entries. It uses NUL as the separator because no path
+ * segment can contain one — a `/` would let `a/b` + `c` collide with `a` +
+ * `b/c`.
  */
-function compareRows(a: Warning, b: Warning): number {
-  const ka = a.sortKey ?? a.path
-  const kb = b.sortKey ?? b.path
-  if (ka !== kb) return ka.localeCompare(kb)
-  return a.path.localeCompare(b.path)
+function folderOf(scope: WarningScope): {
+  key: string
+  prefix: string
+} {
+  const category = scope.categories[0]
+  const name = scope.levels[0] ?? category ?? ''
+  const prefix = [category, scope.levels[0]].filter(s => s !== undefined && s !== '').join('/')
+  const fold = (s: string): string => s.trim().toLowerCase()
+  return {
+    key: `${fold(category ?? '')} ${fold(name)}`,
+    prefix,
+  }
+}
+
+/**
+ * A row's path relative to its folder's prefix, or undefined when the row is
+ * about the folder itself.
+ *
+ * Most checks pass a real category-anchored path, which is a plain prefix
+ * strip. The handful that pass a display label instead (`options.scope`) fall
+ * back to rebuilding the tail from the scope's own levels — so
+ * `Firefly (2002) — Season 1` becomes the folder `HD/Firefly (2002)` plus the
+ * row `Season 1`, losing nothing.
+ */
+function relativePath(fullPath: string, prefix: string, scope: WarningScope): string | undefined {
+  if (prefix !== '' && fullPath === prefix) return undefined
+  if (prefix !== '' && fullPath.startsWith(`${prefix}/`)) return fullPath.slice(prefix.length + 1)
+  const tail = scope.levels.slice(1).join('/')
+  return tail === '' ? undefined : tail
 }
 
 /**
@@ -435,11 +531,26 @@ function compareRows(a: Warning, b: Warning): number {
  * fix. Silenced warnings are still counted via `silencedCount()` so the
  * runner can surface "N silenced" in its summary.
  */
+/**
+ * What the collector actually stores: a `Warning` plus the scope `add()`
+ * derived for it. The scope is kept because the folder grouping needs the same
+ * `{categories, levels}` split the ignore matcher uses — re-deriving it later
+ * would let the two drift apart. It never leaves the collector: `all()` strips
+ * it, and nothing on disk carries it.
+ */
+interface CollectedWarning extends Warning {
+  scope: WarningScope
+}
+
 export class WarningCollector {
-  private warnings: Warning[] = []
+  private warnings: CollectedWarning[] = []
   private silenced = 0
   private readonly ignored: IgnoreList
-  /** Media type for ignore suggestions; null when no list was supplied. */
+  /**
+   * Media type for the canonical name folds that order rows within a folder;
+   * null when no list was supplied, in which case ordering falls back to a
+   * plain case-fold.
+   */
   private readonly suggestFor: IgnoreMediaType | null
 
   /**
@@ -469,88 +580,113 @@ export class WarningCollector {
    *            slashes so output is consistent across Windows and macOS/Linux.
    *  - issue:  human-readable description of the problem — the facts that
    *            differ row to row. The remedy goes in `options.fix`, not here.
-   *  - options: `extension`, `sortKey`, `scope` and `fix` — see `WarningOptions`. */
+   *  - options: `extension`, `scope` and `fix` — see `WarningOptions`. */
   add(type: string, path: string, issue: string, options: WarningOptions = {}): void {
     const normalizedPath = path.replace(/\\/g, '/')
-    const needScope = this.ignored.entries.length > 0 || this.suggestFor !== null
-    const scope = needScope
-      ? (options.scope ?? deriveScope(normalizedPath, this.hasCategories))
-      : undefined
-    if (scope && this.ignored.entries.length > 0 && isWarningIgnored(scope, this.ignored)) {
+    // Always derived, even with no ignore list: the folder grouping keys on it,
+    // so it can't be conditional or two collectors would produce two different
+    // on-disk shapes. It's one split per warning — the cost is nil.
+    const scope = options.scope ?? deriveScope(normalizedPath, this.hasCategories)
+    if (this.ignored.entries.length > 0 && isWarningIgnored(scope, this.ignored)) {
       this.silenced++
       return
     }
-    const entry: Warning = { type, path: normalizedPath, issue }
+    const entry: CollectedWarning = { type, path: normalizedPath, issue, scope }
     if (options.extension !== undefined) entry.extension = options.extension
-    if (options.sortKey !== undefined) entry.sortKey = options.sortKey
-    if (options.fix !== undefined) entry.fix = options.fix
-    if (scope && this.suggestFor !== null) {
-      const ignore = suggestIgnoreEntry(scope, this.suggestFor)
-      if (ignore !== null) entry.ignore = ignore
-    }
     this.warnings.push(entry)
   }
 
   /**
    * Return a flat copy of all collected warnings, sorted the same way the
-   * on-disk buckets are (see `compareRows`). Used by tests and by the
-   * per-type summary in the run output; the on-disk shape is built via
-   * `groupedByType()`.
+   * on-disk rows are (see `compareRows`). Used by tests and by the per-type
+   * summary in the run output; the on-disk shape is built via
+   * `groupedByFolder()`.
    */
   all(): Warning[] {
-    return [...this.warnings].sort((a, b) => {
-      if (a.type !== b.type) return a.type.localeCompare(b.type)
-      return compareRows(a, b)
-    })
+    return [...this.warnings]
+      .sort((a, b) => {
+        if (a.type !== b.type) return a.type.localeCompare(b.type)
+        return a.path.localeCompare(b.path)
+      })
+      .map(w => {
+        // Rebuilt field by field rather than spread-and-delete so `scope`,
+        // which is a collector-internal device, can't leak into a caller's
+        // view of a warning.
+        const out: Warning = { type: w.type, path: w.path, issue: w.issue }
+        if (w.extension !== undefined) out.extension = w.extension
+        return out
+      })
   }
 
   /**
-   * Return warnings grouped by their `type` for writing to warnings.json.
-   * Each bucket carries the type's `fix` once, then its rows ordered by
-   * `compareRows` — alphabetically by path unless the check supplied a
-   * `sortKey`; the outer keys are sorted as well so JSON serialization is
-   * stable across runs. Sparse — only types with at least one hit appear as
-   * keys.
+   * Return warnings grouped by the top-level folder they concern — the on-disk
+   * shape of every warnings file.
+   *
+   * Folders are sorted alphabetically by path so a diff between runs shows
+   * what changed. Within a folder, rows sort by their canonical relative path
+   * (folder-level rows first), then type, then issue. Canonical, so a scan's
+   * `Season 03` lands next to a TMDB pass's `Season 3` rather than a screen
+   * apart — see `canonicalName`.
    */
-  groupedByType(): Record<string, WarningBucket> {
-    const buckets = new Map<string, Warning[]>()
+  groupedByFolder(): WarningFolder[] {
+    const groups = new Map<
+      string,
+      { meta: ReturnType<typeof folderOf>; rows: CollectedWarning[] }
+    >()
     for (const w of this.warnings) {
-      let bucket = buckets.get(w.type)
-      if (!bucket) {
-        bucket = []
-        buckets.set(w.type, bucket)
-      }
-      bucket.push(w)
+      const meta = folderOf(w.scope)
+      const group = groups.get(meta.key)
+      if (group) group.rows.push(w)
+      else groups.set(meta.key, { meta, rows: [w] })
     }
 
-    const sortedKeys = [...buckets.keys()].sort()
-    const out: Record<string, WarningBucket> = {}
-    for (const key of sortedKeys) {
-      const rows = buckets.get(key)!.sort(compareRows)
+    const sortPath = (w: CollectedWarning, prefix: string): string => {
+      const rel = relativePath(w.path, prefix, w.scope)
+      if (rel === undefined) return '' // folder-level rows sort first
+      if (this.suggestFor === null) return rel.toLowerCase()
+      // Segment i of the relative path sits at level 2 + i: the folder itself
+      // is level 1. That is what routes a shows season through the season fold.
+      return rel
+        .split('/')
+        .map((seg, i) => canonicalName(this.suggestFor!, 2 + i, seg))
+        .join('/')
+    }
 
-      // `fix` is meant to be constant per type, so the first one wins. If a
-      // check interpolated a per-row value into it, every row but the first
-      // would lose its remedy silently — say so instead.
-      const distinct = new Set(rows.map(w => w.fix).filter(f => f !== undefined))
-      if (distinct.size > 1) {
-        console.warn(
-          `    [WARN] ${key} supplied ${distinct.size} different 'fix' values; using the first. ` +
-            `A fix must be constant per warning type — move per-row detail into 'issue'.`
-        )
-      }
-      const fix = rows.find(w => w.fix !== undefined)?.fix
+    return [...groups.values()]
+      .map(({ meta, rows }) => {
+        const ordered = [...rows].sort((a, b) => {
+          const ka = sortPath(a, meta.prefix)
+          const kb = sortPath(b, meta.prefix)
+          if (ka !== kb) return ka.localeCompare(kb)
+          if (a.type !== b.type) return a.type.localeCompare(b.type)
+          return a.issue.localeCompare(b.issue)
+        })
 
-      // Sort as Warnings (which carry sortKey and fix), then strip to the
-      // on-disk row shape — both are devices, not data worth shipping per row.
-      const items = rows.map(w => {
-        const row: WarningRow = { path: w.path, issue: w.issue }
-        if (w.extension !== undefined) row.extension = w.extension
-        if (w.ignore !== undefined) row.ignore = w.ignore
-        return row
+        const folder: WarningFolder = {
+          path: meta.prefix,
+          count: ordered.length,
+          rows: ordered.map(w => {
+            const rel = relativePath(w.path, meta.prefix, w.scope)
+            // Built in one literal so the JSON key order reads
+            // type → path → issue → extension, rather than by assignment order.
+            const row: WarningRow = {
+              type: w.type,
+              ...(rel !== undefined ? { path: rel } : {}),
+              issue: w.issue,
+              ...(w.extension !== undefined ? { extension: w.extension } : {}),
+            }
+            return row
+          }),
+        }
+        return folder
       })
+      .sort((a, b) => a.path.localeCompare(b.path))
+  }
 
-      out[key] = fix !== undefined ? { fix, items } : { items }
-    }
+  /** `countByType()` as an object, for the file's top-level `by_type` tally. */
+  tallyByType(): Record<string, number> {
+    const out: Record<string, number> = {}
+    for (const { type, count } of this.countByType()) out[type] = count
     return out
   }
 

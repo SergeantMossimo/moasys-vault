@@ -12,6 +12,7 @@ JSON Schema (Draft 2020-12) definitions for everything the scanner writes under 
 | [music.json](music.json)                                 | `output/<drive>/music/music.json` — your music catalog (artists → albums).                                                                                                              |
 | [audiobooks.json](audiobooks.json)                       | `output/<drive>/audiobooks/audiobooks.json` — your audiobooks catalog.                                                                                                                  |
 | [warnings.json](warnings.json)                           | `output/<drive>/<type>/warnings.json`, and `validation-warnings.json`, `plex-warnings.json`, `plex-log-warnings.json` beside it (plus their `unfiltered/` copies) — all the same shape. |
+| [all-warnings.json](all-warnings.json)                   | `output/<drive>/<type>/all-warnings.json` — the merged report from `npm run report`. A superset of `warnings.json`.                                                                     |
 | [validation-movies.json](validation-movies.json)         | `output/<drive>/movies/data/validation.json` — TMDB cross-check results for movies.                                                                                                     |
 | [validation-shows.json](validation-shows.json)           | `output/<drive>/shows/data/validation.json` — TMDB cross-check results for shows.                                                                                                       |
 | [validation-audiobooks.json](validation-audiobooks.json) | `output/<drive>/audiobooks/data/validation.json` — Open Library cross-check results for audiobooks.                                                                                     |
@@ -36,7 +37,9 @@ const validate = ajv.compile(warningsSchema)
 if (!validate(yourWarningsJson)) console.error(validate.errors)
 ```
 
-IDEs (VS Code, JetBrains) can use these directly via the `$schema` reference at the top of each generated file — or you can map files explicitly in your editor settings.
+Note that `ajv` is not a dependency of this repo — the snippet is for your consumer, and Draft 2020-12 needs ajv's `Ajv2020` export (`ajv/dist/2020`) rather than the default one.
+
+Output files don't carry a `$schema` key of their own (every schema sets `additionalProperties: false`, which would reject one), so point your IDE at these by mapping the filenames in your editor settings.
 
 ## Drift
 

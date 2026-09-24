@@ -157,7 +157,7 @@ async function main(): Promise<void> {
       warnings,
     })
     console.log(`    [LOGS] ${landed} line(s) about this drive's ${mediaType}`)
-    writePlexWarnings(warningsPath(root, mediaType, 'plex-log-warnings', unfiltered), warnings)
+    writePlexWarnings(warningsPath(root, mediaType, 'plexLogWarnings', unfiltered), warnings)
   }
 
   console.log()

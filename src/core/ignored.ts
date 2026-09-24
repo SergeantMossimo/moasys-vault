@@ -236,8 +236,13 @@ function episodeCodeOf(name: string): string | null {
 /**
  * Canonical form of one name at one level. Lowercased and trimmed everywhere,
  * plus the shows-specific season fold.
+ *
+ * Exported because the folder grouping and the merged report key on it too —
+ * it is what makes a scan's `Season 03` and a TMDB pass's `Season 3` land
+ * together instead of sorting a screen apart. Ignore matching and grouping
+ * must never disagree about what two names mean, so they share this.
  */
-function canonicalName(mediaType: IgnoreMediaType, level: number, name: string): string {
+export function canonicalName(mediaType: IgnoreMediaType, level: number, name: string): string {
   if (mediaType === 'shows' && level === 2) return canonicalSeasonName(name)
   return name.trim().toLowerCase()
 }

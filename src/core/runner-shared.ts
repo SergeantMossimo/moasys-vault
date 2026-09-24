@@ -253,15 +253,21 @@ export function writeJsonOutput(outputPath: string, data: unknown): void {
 
 /**
  * Write a WarningCollector's contents to a warnings JSON file. Shape:
- * `{ generated, count, by_type }`. Used by every runner that emits warnings.
- * Arg order matches `writeJsonOutput` for consistency.
+ * `{ generated, count, folder_count, by_type, folders }` — grouped by the
+ * top-level folder each warning concerns. Used by every runner that emits
+ * warnings. Arg order matches `writeJsonOutput` for consistency.
  */
 export function writeWarnings(outputPath: string, warnings: WarningCollector): void {
+  const folders = warnings.groupedByFolder()
   const out: WarningsOutput = {
     generated: new Date().toISOString(),
     count: warnings.count(),
-    by_type: warnings.groupedByType(),
+    folder_count: folders.length,
+    by_type: warnings.tallyByType(),
+    folders,
   }
   writeFileAtomic(outputPath, JSON.stringify(out, null, 2))
-  console.log(`    [OUT] ${outputPath}  (${warnings.count()} warnings)`)
+  console.log(
+    `    [OUT] ${outputPath}  (${warnings.count()} warnings across ${folders.length} folders)`
+  )
 }

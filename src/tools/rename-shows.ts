@@ -15,7 +15,7 @@
  * `show-folder` mode) one named show folder → a new name inside the same
  * category folder.
  *
- * Four fix modes:
+ * Seven fix modes:
  *
  *   show-prefix     Rewrite each episode file's "<Title> (<Year>)" prefix to
  *                   match its show folder's name exactly. Fixes the class of
@@ -36,6 +36,38 @@
  *                   `episode_code_case` and the canonical multi-episode
  *                   suffix form (`s01e01-e02`, not `s01e01-02`), padding
  *                   unpadded numbers (`s02e4` → `s02e04`) along the way.
+ *
+ *   season-code     Rewrite each file's season number to match the season
+ *                   folder it sits in (warn_season_mismatch), for files that
+ *                   kept another season's code after being moved.
+ *
+ *   renumber        Give every episode in a season its own number, for the
+ *                   case where a two-parter was split into two files that
+ *                   both carry the same code ('s03e18 - Camdenites Part 1'
+ *                   and '... Part 2'). Each duplicate after the first takes
+ *                   the next number and everything below it shifts up by as
+ *                   many extra parts as appeared above it. Files after a
+ *                   multi-episode file that reuse a number in its range
+ *                   ('s04e01-e02' then 's04e02') shift past it the same way.
+ *
+ *                   GAPS ARE PRESERVED. The shift is an offset applied to the
+ *                   original number, never a re-sequence from 1, because a
+ *                   gap means a missing episode (warn_episode_gaps) and
+ *                   closing it would silently renumber the season around a
+ *                   file the user still intends to add.
+ *
+ *                   Entries are emitted highest-number-first so each target
+ *                   is free by the time it is reached; see `validatePlan` for
+ *                   how a chained rename is told apart from a clobber.
+ *
+ *   trailing-separator
+ *                   Trim separator debris off the end of a name that parses
+ *                   once it is gone ('Hercules (1998) - s01e12 -.mp4'), the
+ *                   shape left when an episode title is deleted but its
+ *                   " - " is not. Such a file matches neither pattern, so no
+ *                   other mode can even see it. Renames only when the trimmed
+ *                   result matches patterns.file, so the new name is always a
+ *                   prefix of the old one and never something inferred.
  *
  *   show-folder     Rename ONE show folder, named explicitly with --show and
  *                   --to, for the case where the folder rather than its files
@@ -66,6 +98,7 @@
  *   npm run fix:shows -- --fix show-prefix external --apply
  *   npm run fix:shows -- --fix episode-titles external --show "Barry (2018)"
  *   npm run fix:shows -- --fix episode-titles external --allow-partial
+ *   npm run fix:shows -- --fix season-code external --show "Icons Unearthed Batman (2024)"
  *   npm run fix:shows -- --fix show-folder external --show "Saved by Bell (1989)" --to "Saved by the Bell (1989)"
  *   npm run fix:shows -- --undo output/external/shows/fixes/rename-undo-<ts>.json
  */
@@ -109,7 +142,15 @@ const MAX_TARGET_PATH = 240
  */
 const MULTI_EPISODE_JOINER = ' + '
 
-const FIX_MODES = ['show-prefix', 'episode-titles', 'episode-code', 'show-folder'] as const
+const FIX_MODES = [
+  'show-prefix',
+  'episode-titles',
+  'episode-code',
+  'season-code',
+  'renumber',
+  'trailing-separator',
+  'show-folder',
+] as const
 type FixMode = (typeof FIX_MODES)[number]
 
 // ─────────────────────────────────────────────
@@ -193,6 +234,12 @@ function usage(): never {
     episode-titles   Append " - <Episode Title>" from the TMDB cache
                      (--allow-partial also names seasons you hold only part of)
     episode-code    Normalize season/episode code casing, padding, and multi-episode suffix
+    season-code      Rewrite each file's season number to match its season folder
+    renumber         Give each file its own episode number when a two-parter
+                     shares one code or a multi-episode file overlaps the next;
+                     keeps gaps, shifts what follows
+    trailing-separator
+                     Trim a dangling " -" off a name that parses without it
     show-folder      Rename one show folder (--show and --to both required)
 
   The drive name is REQUIRED — it must match a "name" in config.json's shows list.
@@ -808,6 +855,433 @@ export function planEpisodeCode(
 }
 
 // ─────────────────────────────────────────────
+// Fix mode: season-code
+// ─────────────────────────────────────────────
+
+/** Read the season number out of a season folder name. Mirrors media/shows.ts. */
+function parseSeasonFolder(name: string, regex: RegExp): number | null {
+  const season = regex.exec(name)?.groups?.season
+  return season === undefined ? null : parseInt(season, 10)
+}
+
+/**
+ * Rewrite the season digits inside an episode code, leaving the letter casing
+ * and the whole episode part byte-for-byte alone: 's06e01' → 's01e01',
+ * 'S06E01-E02' → 'S01E01-E02'.
+ *
+ * The original digit width is preserved when it is wider than two, so a file
+ * written 's006e01' stays over-padded rather than being quietly normalized —
+ * fixing that is `episode-code`'s job, and doing it here would mean this mode
+ * changes two things at once.
+ *
+ * Returns null when the code doesn't open with a season, which `splitStem`
+ * already rules out for anything it accepts.
+ */
+export function replaceSeasonInCode(code: string, season: number): string | null {
+  const m = /^([sS])(\d{1,3})/.exec(code)
+  if (!m) return null
+  const width = Math.max(2, m[2]!.length)
+  return `${m[1]}${String(season).padStart(width, '0')}${code.slice(m[0].length)}`
+}
+
+/**
+ * Align each file's season number to the number its season folder names.
+ *
+ * This is the fix for warn_season_mismatch, and it resolves that warning in
+ * exactly one direction: **the folder is authoritative and the code is
+ * wrong**. The other reading — that the code is right and the file is simply
+ * misfiled — would mean moving the file to a different season folder, which
+ * this tool will not do; a rename never crosses a directory boundary. If the
+ * files are the ones in the right place, move them by hand instead.
+ *
+ * Two kinds of folder are left alone rather than guessed at:
+ *
+ *   - A named season from `ignored_season_names` ('Specials') carries no
+ *     number to align to. Skipped, one entry per folder.
+ *   - A folder whose name doesn't match `patterns.season_folder` ('Season  01'
+ *     with a doubled space) is already warn_bad_season_folder. Sent to review
+ *     rather than skipped, because the folder is the thing to fix first, and
+ *     reading a number out of a name the rules reject is how a typo becomes a
+ *     renumbering.
+ *
+ * Entries get a `note` when their season folder holds files from more than one
+ * distinct season, since a mixed folder means at least one file is misfiled
+ * and renumbering can't be what every one of them needs. Collisions that
+ * follow from renumbering are caught by `validatePlan`, which aborts the whole
+ * run before the first rename.
+ */
+export function planSeasonCode(
+  files: EpisodeFile[],
+  fileRegex: RegExp,
+  seasonFolderRegex: RegExp,
+  ignoredSeasonNames: readonly string[]
+): Omit<Plan, 'generated' | 'fix' | 'drive' | 'root_path'> {
+  const entries: PlanEntry[] = []
+  const skipped: SkipEntry[] = []
+  const review: SkipEntry[] = []
+  const ignoredLower = new Set(ignoredSeasonNames.map(n => n.toLowerCase()))
+  const reportedFolders = new Set<string>()
+
+  // A folder holding more than one season number has at least one misfiled
+  // file in it, whichever way you read it. Counted up front so every entry
+  // from such a folder can carry the note, including the first one seen.
+  const seasonsByFolder = new Map<string, Set<number>>()
+  for (const file of files) {
+    const parts = splitStem(path.basename(file.fileName, path.extname(file.fileName)), fileRegex)
+    if (!parts) continue
+    const seen = seasonsByFolder.get(file.relDir) ?? new Set<number>()
+    seen.add(parts.seasonNumber)
+    seasonsByFolder.set(file.relDir, seen)
+  }
+
+  for (const file of files) {
+    if (ignoredLower.has(file.seasonFolder.toLowerCase())) {
+      if (!reportedFolders.has(file.relDir)) {
+        reportedFolders.add(file.relDir)
+        skipped.push({
+          path: file.relDir,
+          reason: `named season '${file.seasonFolder}' carries no season number to align to`,
+        })
+      }
+      continue
+    }
+
+    const target = parseSeasonFolder(file.seasonFolder, seasonFolderRegex)
+    if (target === null) {
+      if (!reportedFolders.has(file.relDir)) {
+        reportedFolders.add(file.relDir)
+        review.push({
+          path: file.relDir,
+          reason:
+            'season folder does not match patterns.season_folder — fix the folder name first (warn_bad_season_folder)',
+        })
+      }
+      continue
+    }
+
+    const ext = path.extname(file.fileName)
+    const parts = splitStem(path.basename(file.fileName, ext), fileRegex)
+    if (!parts) {
+      skipped.push({
+        path: `${file.relDir}/${file.fileName}`,
+        reason: 'filename does not match the Plex naming convention',
+      })
+      continue
+    }
+
+    if (parts.seasonNumber === target) continue
+
+    const code = replaceSeasonInCode(parts.code, target)
+    if (code === null) {
+      skipped.push({
+        path: `${file.relDir}/${file.fileName}`,
+        reason: `episode code '${parts.code}' does not open with a season number`,
+      })
+      continue
+    }
+
+    const mixed = (seasonsByFolder.get(file.relDir)?.size ?? 0) > 1
+    entries.push({
+      dir: file.relDir,
+      from: file.fileName,
+      to: joinStem({ ...parts, code }) + ext,
+      ...(mixed
+        ? {
+            note: `'${file.seasonFolder}' holds more than one season number — check this file belongs here before renumbering it`,
+          }
+        : {}),
+    })
+  }
+
+  return { entries, skipped, review }
+}
+
+// ─────────────────────────────────────────────
+// Fix mode: renumber
+// ─────────────────────────────────────────────
+
+/**
+ * Give every episode file in a season its own episode number.
+ *
+ * The problem this solves: a two-part episode held as two files that both
+ * carry the same code —
+ *
+ *   My Name Is Earl (2005) - s03e18 - Camdenites Part 1.mp4
+ *   My Name Is Earl (2005) - s03e18 - Camdenites Part 2.mp4
+ *
+ * Plex matches on the episode number, so it reads those as two *versions* of
+ * one episode rather than two episodes, and the second is awkward to reach.
+ *
+ * ── The offset rule ─────────────────────────────────────────────────────────
+ *
+ * Numbers are assigned as `original + offset`, where `offset` is how far this
+ * file must move to clear every number already handed out above it in the same
+ * season. Files at a duplicated number take consecutive numbers in filename
+ * order, so ' Part 1' lands before ' Part 2' and '(1)' before '(2)'.
+ *
+ * It is deliberately NOT a re-sequence from 1. A season with a gap has the gap
+ * because an episode is missing (warn_episode_gaps); closing it would renumber
+ * the whole season around a file the user still means to add, and every title
+ * below the gap would then sit on the wrong number. Gaps are carried through
+ * untouched, and a season whose only oddity is a gap plans nothing at all.
+ *
+ * ── Ordering ────────────────────────────────────────────────────────────────
+ *
+ * A new number is always >= the old one, so entries are emitted highest-first
+ * and each target is vacated before anything moves onto it. That a target
+ * currently exists is therefore expected here rather than a collision, which
+ * is why `validatePlan` distinguishes a target that another, earlier entry
+ * moves away from one that simply sits there.
+ *
+ * ── Multi-episode files ─────────────────────────────────────────────────────
+ *
+ * A multi-episode file (`s04e01-e02`) claims every number in its range, so a
+ * file after it that reuses one of those numbers is shifted past the range the
+ * same way a duplicate is:
+ *
+ *   s04e01-e02, s04e02, s04e03   →   s04e01-e02, s04e03, s04e04
+ *
+ * Those entries carry a note, since the file may instead be a mislabelled
+ * single episode. Two shapes are still skipped whole rather than guessed at: a
+ * multi-episode file sharing its start number with another file (nothing says
+ * which comes first), and one that would itself have to move (its range would
+ * need rewriting, which `replaceEpisodeInCode` deliberately refuses).
+ */
+export function planRenumber(
+  files: EpisodeFile[],
+  fileRegex: RegExp
+): Omit<Plan, 'generated' | 'fix' | 'drive' | 'root_path'> {
+  const entries: PlanEntry[] = []
+  const skipped: SkipEntry[] = []
+  const review: SkipEntry[] = []
+
+  const byFolder = new Map<string, EpisodeFile[]>()
+  for (const file of files) {
+    const list = byFolder.get(file.relDir) ?? []
+    list.push(file)
+    byFolder.set(file.relDir, list)
+  }
+
+  for (const [relDir, folderFiles] of byFolder) {
+    const parsed: { file: EpisodeFile; parts: StemParts; ext: string }[] = []
+    let unparsed = 0
+    let multiEpisode = 0
+
+    for (const file of folderFiles) {
+      const ext = path.extname(file.fileName)
+      const parts = splitStem(path.basename(file.fileName, ext), fileRegex)
+      if (!parts) {
+        unparsed++
+        continue
+      }
+      if (parts.episodeEnd > parts.episodeStart) multiEpisode++
+      parsed.push({ file, parts, ext })
+    }
+
+    if (unparsed > 0) {
+      skipped.push({
+        path: relDir,
+        reason: `${unparsed} file(s) do not match the Plex naming convention (warn_bad_file_name)`,
+      })
+      continue
+    }
+
+    // Ascending by the number each file currently claims; at a shared number,
+    // filename order decides which part goes first.
+    parsed.sort(
+      (a, b) =>
+        a.parts.episodeStart - b.parts.episodeStart ||
+        a.file.fileName.localeCompare(b.file.fileName, 'en')
+    )
+
+    // A multi-episode file sharing its start with another file leaves no way
+    // to tell which of them comes first.
+    const sharedStart =
+      multiEpisode > 0 &&
+      parsed.some(
+        (item, i) =>
+          i > 0 &&
+          item.parts.episodeStart === parsed[i - 1]!.parts.episodeStart &&
+          (item.parts.episodeEnd > item.parts.episodeStart ||
+            parsed[i - 1]!.parts.episodeEnd > parsed[i - 1]!.parts.episodeStart)
+      )
+    if (sharedStart) {
+      skipped.push({
+        path: relDir,
+        reason:
+          `a multi-episode file shares its number with another file, so the ` +
+          `renumbering can't be derived — renumber those by hand first`,
+      })
+      continue
+    }
+
+    // `nextFree` is one past the last number already handed out. A file that
+    // starts below it overlaps what came before — a duplicate, or a number a
+    // multi-episode range already covers — and the shift grows to clear it.
+    // The shift never shrinks, which is what carries a gap through untouched.
+    const planned: {
+      item: (typeof parsed)[number]
+      newNumber: number
+      afterMulti: string | null
+    }[] = []
+    let shift = 0
+    let nextFree = -Infinity
+    let originalNextFree = -Infinity
+    // The code of the multi-episode file whose range caused part of the
+    // current shift, for the note — once it has, every later file inherits it.
+    let multiCause: string | null = null
+    let previousMulti: string | null = null
+    let multiMoves = false
+    let gaps = false
+    for (const item of parsed) {
+      const { episodeStart, episodeEnd } = item.parts
+      if (originalNextFree !== -Infinity && episodeStart > originalNextFree) gaps = true
+      originalNextFree = Math.max(originalNextFree, episodeEnd + 1)
+      if (nextFree - episodeStart > shift) {
+        shift = nextFree - episodeStart
+        if (previousMulti) multiCause = previousMulti
+      }
+      const newNumber = episodeStart + shift
+      const isMulti = episodeEnd > episodeStart
+      if (isMulti && shift > 0) multiMoves = true
+      planned.push({ item, newNumber, afterMulti: shift > 0 ? multiCause : null })
+      previousMulti = isMulti ? item.parts.code : null
+      nextFree = newNumber + (episodeEnd - episodeStart) + 1
+    }
+
+    if (multiMoves) {
+      skipped.push({
+        path: relDir,
+        reason:
+          `a multi-episode file would itself have to move, so the renumbering ` +
+          `can't be derived — renumber those by hand first`,
+      })
+      continue
+    }
+
+    // Highest first: each target is vacated before anything moves onto it.
+    planned.sort((a, b) => b.newNumber - a.newNumber)
+
+    for (const { item, newNumber, afterMulti } of planned) {
+      if (newNumber === item.parts.episodeStart) continue
+      const code = replaceEpisodeInCode(item.parts.code, newNumber)
+      if (code === null) {
+        skipped.push({
+          path: `${relDir}/${item.file.fileName}`,
+          reason: `episode code '${item.parts.code}' does not carry a single episode number`,
+        })
+        continue
+      }
+      const notes = [
+        ...(afterMulti
+          ? [`shifted past multi-episode '${afterMulti}' — check the numbering against TMDB`]
+          : []),
+        ...(gaps
+          ? [
+              `'${relDir.split('/').pop()}' has gaps in its numbering — the shift keeps them, check the missing episode is genuinely missing`,
+            ]
+          : []),
+      ]
+      entries.push({
+        dir: relDir,
+        from: item.file.fileName,
+        to: joinStem({ ...item.parts, code }) + item.ext,
+        ...(notes.length > 0 ? { note: notes.join('; ') } : {}),
+      })
+    }
+  }
+
+  return { entries, skipped, review }
+}
+
+/**
+ * Rewrite the episode number in a code, keeping the season and the original
+ * casing and padding width. Returns null for a code carrying a range, which
+ * `planRenumber` has already excluded but which must not be silently mangled
+ * if this is ever called from elsewhere.
+ */
+export function replaceEpisodeInCode(code: string, episode: number): string | null {
+  const match = /^(S)(\d{1,3})(E)(\d{1,3})$/i.exec(code)
+  if (!match) return null
+  const [, s, seasonDigits, e, episodeDigits] = match
+  const width = Math.max(episodeDigits!.length, 2)
+  return `${s}${seasonDigits}${e}${String(episode).padStart(width, '0')}`
+}
+
+// ─────────────────────────────────────────────
+// Fix mode: trailing-separator
+// ─────────────────────────────────────────────
+
+/**
+ * Repair a filename whose only fault is separator debris on the end —
+ *
+ *   Hercules (1998) - s01e12 -.mp4   →   Hercules (1998) - s01e12.mp4
+ *
+ * the shape left behind when an episode title is deleted but the " - " that
+ * introduced it is not. Such a name matches neither `patterns.file` nor the
+ * lenient fallback, so it is `warn_bad_file_name` and every OTHER mode is
+ * blind to it: `splitStem` returns null, so the file is not merely skipped,
+ * it never enters a plan at all. That is what makes this its own mode rather
+ * than a tolerance bolted onto `episode-code` — a file has to parse before
+ * any of the modes that rewrite one part of a name can touch it.
+ *
+ * The rule is self-verifying, and deliberately so: trim trailing whitespace
+ * and hyphens, then rename ONLY if the result matches `patterns.file`. A name
+ * that still doesn't parse is left alone and reported, because the trailing
+ * characters were not its real problem and guessing further is how a repair
+ * turns into damage. Nothing is inferred and no target is constructed — the
+ * new name is always a prefix of the old one.
+ *
+ * Only whitespace and hyphens are trimmed. Trailing periods are left alone:
+ * a title that legitimately ends in one ('T.R.A.C.K.S.') already parses, so
+ * it never reaches here, and Windows cannot store the trailing period anyway.
+ *
+ * A name that parses WITH its debris is also left alone. `episode_title` is
+ * greedy, so 'Show (2020) - s01e12 - The Apollo Mission -' matches with the
+ * dash inside the title — untidy, but the rules accept it and it is not
+ * warn_bad_file_name. Trimming it would mean rewriting a valid title on a
+ * guess at intent, which is a different and much less safe operation than
+ * repairing a name nothing can read.
+ */
+export function planTrailingSeparator(
+  files: EpisodeFile[],
+  fileRegex: RegExp
+): Omit<Plan, 'generated' | 'fix' | 'drive' | 'root_path'> {
+  const entries: PlanEntry[] = []
+  const skipped: SkipEntry[] = []
+  const review: SkipEntry[] = []
+
+  for (const file of files) {
+    const ext = path.extname(file.fileName)
+    const stem = path.basename(file.fileName, ext)
+
+    // Already a valid name — nothing to repair.
+    if (fileRegex.test(stem)) continue
+
+    const trimmed = stem.replace(/[\s-]+$/, '')
+    if (trimmed === stem || trimmed.length === 0) {
+      skipped.push({
+        path: `${file.relDir}/${file.fileName}`,
+        reason: 'filename does not match the convention and has no trailing separator to trim',
+      })
+      continue
+    }
+
+    if (!fileRegex.test(trimmed)) {
+      skipped.push({
+        path: `${file.relDir}/${file.fileName}`,
+        reason: `trimming the trailing separator gives '${trimmed}${ext}', which still does not match the convention — fix this one by hand`,
+      })
+      continue
+    }
+
+    entries.push({ dir: file.relDir, from: file.fileName, to: trimmed + ext })
+  }
+
+  return { entries, skipped, review }
+}
+
+// ─────────────────────────────────────────────
 // Fix mode: show-folder
 // ─────────────────────────────────────────────
 
@@ -949,7 +1423,15 @@ export function validatePlan(plan: Plan, rootPath: string): string[] {
   const problems: string[] = []
   const claimed = new Map<string, string>()
 
-  for (const entry of plan.entries) {
+  // Where each source sits in the plan. `apply` renames in plan order, so a
+  // target that another entry vacates FIRST is a chain (what `renumber`
+  // builds on purpose), while one vacated later — or never — is a clobber.
+  const sourceOrder = new Map<string, number>()
+  for (const [i, entry] of plan.entries.entries()) {
+    sourceOrder.set(`${entry.dir.toLowerCase()}/${entry.from.toLowerCase()}`, i)
+  }
+
+  for (const [index, entry] of plan.entries.entries()) {
     const source = `${entry.dir}/${entry.from}`
 
     if (/[<>:"|?*\\/]/.test(entry.to)) {
@@ -977,7 +1459,11 @@ export function validatePlan(plan: Plan, rootPath: string): string[] {
 
     const isCaseOnlyRename = entry.to.toLowerCase() === entry.from.toLowerCase()
     if (!isCaseOnlyRename && fs.existsSync(absTarget)) {
-      problems.push(`${source} → target already exists on disk: '${entry.to}'`)
+      // Safe only if an EARLIER entry moves that file out of the way first.
+      const vacatedAt = sourceOrder.get(claimKey)
+      if (vacatedAt === undefined || vacatedAt > index) {
+        problems.push(`${source} → target already exists on disk: '${entry.to}'`)
+      }
     }
   }
 
@@ -1156,6 +1642,16 @@ export function validateUndoManifest(manifest: unknown): string[] {
   const problems: string[] = []
   const restoring = new Map<string, string>()
 
+  // Undo replays in REVERSE, so a later entry is reverted first. If something
+  // sits at this entry's `from`, it is safe exactly when a later entry put it
+  // there and will lift it off again before this one runs — the mirror of the
+  // chain `validatePlan` allows, and what makes a `renumber` run reversible.
+  const restoredLaterBy = new Map<string, number>()
+  for (const [i, rename] of (manifest as UndoManifest).renames.entries()) {
+    if (typeof rename?.to !== 'string' || !path.isAbsolute(rename.to)) continue
+    restoredLaterBy.set(path.resolve(rename.to).toLowerCase(), i)
+  }
+
   for (const [i, rename] of (manifest as UndoManifest).renames.entries()) {
     const where = `renames[${i}]`
     if (typeof rename?.from !== 'string' || typeof rename?.to !== 'string') {
@@ -1187,8 +1683,11 @@ export function validateUndoManifest(manifest: unknown): string[] {
     // would overwrite it.
     const caseOnly = from.toLowerCase() === to.toLowerCase()
     if (!caseOnly && fs.existsSync(from)) {
-      problems.push(`${where}: ${from} already exists — undoing would overwrite it`)
-      continue
+      const liftedAt = restoredLaterBy.get(from.toLowerCase())
+      if (liftedAt === undefined || liftedAt <= i) {
+        problems.push(`${where}: ${from} already exists — undoing would overwrite it`)
+        continue
+      }
     }
     // A folder may only be restored by an entry that says it's a folder, so a
     // plain file entry can never be edited into renaming a directory.
@@ -1323,6 +1822,20 @@ function main(): void {
       break
     case 'episode-code':
       built = planEpisodeCode(files, fileRegex, rules)
+      break
+    case 'season-code':
+      built = planSeasonCode(
+        files,
+        fileRegex,
+        compilePattern(rules.patterns.season_folder),
+        rules.ignored_season_names
+      )
+      break
+    case 'renumber':
+      built = planRenumber(files, fileRegex)
+      break
+    case 'trailing-separator':
+      built = planTrailingSeparator(files, fileRegex)
       break
   }
 

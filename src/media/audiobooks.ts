@@ -38,8 +38,10 @@ import { ProbeData } from '../probe/types'
 import { NamedBook, bookWarningPath, findNameIssues } from './audiobook-names'
 
 /**
- * The remedy for each warning type, written once per bucket in warnings.json
- * rather than repeated on every row — see `WarningOptions.fix`.
+ * The remedy for each warning type. Not written to warnings.json — the remedy
+ * is identical on every row of a type, so its home is the warning tables in
+ * docs/OUTPUT.md. Kept here so it sits beside the check it belongs to, and so
+ * one wording is shared when a type fires from several call sites.
  *
  * They live in one map because several types fire from more than one call site
  * (`warn_loose_files` at both the category root and an author folder, for

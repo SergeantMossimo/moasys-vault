@@ -14,6 +14,7 @@
 
 import { WarningCollector } from '../core/types'
 import { PlexRules } from '../core/rules/plex'
+import { isAcceptableCombo } from '../core/rules/helpers'
 import { comparableTitle } from '../probe/audiobook-tags'
 import { normalizeTitleLoose } from '../validate/helpers'
 
@@ -47,6 +48,15 @@ export interface PlexCheckInput {
    * when validation hasn't been run.
    */
   tmdbMatches?: Map<string, { id: number; title: string | null }>
+  /**
+   * Each category folder's quality tier, as the scan's duplicate checks see it
+   * (`buildCategoryQualityMap`). Empty for music and audiobooks, and for a
+   * library with no categories — `warn_plex_duplicate` then reports every
+   * duplicate, as it always did.
+   */
+  categoryQuality?: Map<string, string>
+  /** `acceptable_quality_combos` from the movies or shows rules. */
+  acceptableCombos?: readonly string[][]
   rules: PlexRules
   warnings: WarningCollector
 }
@@ -503,9 +513,44 @@ export function checkPlex(input: PlexCheckInput): PlexCheckStats {
     }
   }
 
+  /**
+   * Is this merged item the UHD-plus-HD kind of duplicate the scan has already
+   * been told to accept?
+   *
+   * Plex lists any item with several files as a duplicate, including the
+   * deliberate multi-quality copies `acceptable_quality_combos` whitelists —
+   * and that whitelist defaults to `[[UHD, HD]]`, so without this the Plex
+   * check would contradict the scan on the most common case there is.
+   *
+   * Mirrors the split the scan makes between its two quality checks: combos say
+   * which tiers may coexist, never how many copies may sit inside one. So two
+   * copies landing in the same tier (`HD/` plus `Other HD/`) stay reported —
+   * that is `warn_duplicate_quality`'s case, which combos never silence.
+   */
+  const isAcceptableMultiQuality = (files: PlexFileRef[]): boolean => {
+    const map = input.categoryQuality
+    const combos = input.acceptableCombos
+    if (map === undefined || map.size === 0 || combos === undefined || combos.length === 0) {
+      return false
+    }
+
+    const tiers = new Set<string>()
+    for (const f of files) {
+      if (f.library_path === null) return false // not on a drive we resolved
+      const category = f.library_path.split('/')[0]
+      const tier = category === undefined ? undefined : map.get(category)
+      if (tier === undefined) return false // a category the rules don't know
+      // Two copies inside one tier is a redundant copy, whatever the combo says.
+      if (tiers.has(tier)) return false
+      tiers.add(tier)
+    }
+    return tiers.size > 1 && isAcceptableCombo(tiers, combos)
+  }
+
   const reportDuplicate = (item: PlexCatalogItem): void => {
     const onThisDrive = item.files.filter(onDrive)
     if (onThisDrive.length === 0) return
+    if (isAcceptableMultiQuality(item.files)) return
     const locations = item.files.map(f =>
       f.library_path !== null ? `${f.drive}:${f.library_path}` : f.plex_path
     )

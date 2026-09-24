@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://moasys.local/vault/schemas/warnings.json",
   "title": "MOASYS-Vault — warnings.json (and validation-warnings.json, plex-warnings.json, plex-log-warnings.json)",
-  "description": "The on-disk shape for every warnings file the scanner writes. Warnings are grouped by type under by_type — sparse, only types that fired appear as keys. Each bucket carries the check's remedy once as `fix`, then its rows under `items`. Rows are sorted alphabetically by path, except warn_duplicate_quality, which groups by quality (UHD, then HD, then SD) and sorts by path within each group. The validation pass uses the same shape under output/<drive>/<type>/validation-warnings.json, and the Plex commands under plex-warnings.json (`npm run plex:check`) and plex-log-warnings.json (`npm run plex:logs`) — plus copies under unfiltered/ when run with --no-ignore.",
+  "description": "The on-disk shape for every warnings file the scanner writes. Warnings are grouped by the top-level library folder they concern — a show, movie, artist, or author — because that is the unit of work: one show is one entry, however many checks fired on it. Each row's `path` is relative to its folder's `path`, and is absent when the warning is about the folder itself. A row carries only what locates and states the problem: the remedy for a warning type is identical on every row of that type, so its home is the warning tables in docs/OUTPUT.md rather than the file. `folders` is sorted alphabetically by path, so a diff between runs shows what actually changed. The validation pass uses the same shape under output/<drive>/<type>/validation-warnings.json, and the Plex commands under plex-warnings.json (`npm run plex:check`) and plex-log-warnings.json (`npm run plex:logs`) — plus copies under unfiltered/ when run with --no-ignore. The merged view produced by `npm run report` is a superset; see all-warnings.json.",
   "type": "object",
   "properties": {
     "generated": {
@@ -13,62 +13,81 @@
     "count": {
       "type": "integer",
       "minimum": 0,
-      "description": "Total warnings collected. Equals the sum of every bucket's length. Excludes warnings silenced by ignored/<drive>/<type>.yaml."
+      "description": "Total warnings collected. Equals the sum of every folder's `count`. Excludes warnings silenced by ignored/<drive>/<type>.yaml."
+    },
+    "folder_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of entries in `folders`."
     },
     "by_type": {
       "type": "object",
-      "description": "Map of warning-type identifier to a bucket of rows. Keys are 'warn_*' identifiers matching toggles in rules/<type>.yaml under `checks`.",
+      "description": "How many rows each warning type produced, ordered worst first. Keys are 'warn_*' identifiers matching toggles in rules/<type>.yaml under `checks`; the exceptions are filesystem-level failures that aren't user-toggleable, e.g. permission_denied. Sparse — only types that fired appear.",
       "additionalProperties": {
-        "$ref": "#/$defs/WarningBucket"
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "folders": {
+      "type": "array",
+      "description": "One entry per top-level library folder with at least one warning, sorted alphabetically by `path`.",
+      "items": {
+        "$ref": "#/$defs/WarningFolder"
       }
     }
   },
-  "required": ["generated", "count", "by_type"],
+  "required": ["generated", "count", "folder_count", "by_type", "folders"],
   "additionalProperties": false,
   "$defs": {
-    "WarningBucket": {
+    "WarningFolder": {
       "type": "object",
+      "description": "Every warning on one top-level library folder. Deliberately flat: a season, album, or book is a relative `path` on a row, never a nested entry.",
       "properties": {
-        "fix": {
+        "path": {
           "type": "string",
-          "minLength": 1,
-          "description": "How to fix every row in `items` — written once per bucket rather than repeated on each row. Absent when the check has no generic remedy."
+          "description": "Library-relative path of the folder, forward-slash-normalized — the prefix every row hangs off, e.g. `SD/Good Eats (1999)`. Empty only for a warning at the library root of a library with no categories. The last segment is the name an ignore-list entry uses; a path with no `/` is either a category folder (silenced under `folders:`) or, in a library with no `categories`, the top-level name itself."
         },
-        "items": {
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of rows on this folder. Equals `rows.length`."
+        },
+        "rows": {
           "type": "array",
+          "description": "The warnings on this folder, sorted by canonical relative path (folder-level rows first), then type, then issue. Canonical, so a scan's `Season 03` sits next to a TMDB pass's `Season 3`.",
           "items": {
             "$ref": "#/$defs/WarningRow"
           },
-          "description": "The rows this remedy applies to."
+          "minItems": 1
         }
       },
-      "required": ["items"],
+      "required": ["path", "count", "rows"],
       "additionalProperties": false
     },
     "WarningRow": {
       "type": "object",
       "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable warning identifier, e.g. `warn_quality_mismatch` — the key into the file's `by_type`, the toggle name under `checks` in rules/<type>.yaml, and the row in the docs/OUTPUT.md warning table that gives the remedy."
+        },
         "path": {
           "type": "string",
           "minLength": 1,
-          "description": "Library-relative path, forward-slash-normalized. Locations the user opens to fix the issue."
+          "description": "Location relative to the folder's `path`, forward-slash-normalized — e.g. `Season 09` under `SD/Good Eats (1999)`. ABSENT means the warning is about the folder itself."
         },
         "issue": {
           "type": "string",
           "minLength": 1,
-          "description": "Human-readable statement of the problem — the facts that differ row to row. The remedy is the bucket's `fix`."
+          "description": "Human-readable statement of the problem — the facts that differ row to row. The remedy is in the docs/OUTPUT.md warning table under this row's `type`."
         },
         "extension": {
           "type": "string",
           "description": "Optional file extension. Only present for non-primary file warnings (warn_non_primary)."
-        },
-        "ignore": {
-          "type": "string",
-          "minLength": 1,
-          "description": "The narrowest ignore-list entry that would silence this row, as `<key>: <name>` — e.g. `shows: Firefly (2002)` means add `- Firefly (2002)` under `shows:` in ignored/<drive>/<type>.yaml. Absent when no entry can reach the row."
         }
       },
-      "required": ["path", "issue"],
+      "required": ["type", "issue"],
       "additionalProperties": false
     }
   }

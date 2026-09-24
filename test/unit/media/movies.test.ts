@@ -44,9 +44,9 @@ function runMoviesScan(opts: {
   try {
     const records = scan({ root_path: root }, module, warnings, probes)
     const output = module.serialize(records)
-    // `grouped` is the on-disk warnings.json shape — the only view that
-    // exercises per-bucket row ordering.
-    return { output, warnings: warnings.all(), grouped: warnings.groupedByType() }
+    // `folders` is the on-disk warnings.json shape — the only view that
+    // exercises folder grouping and relative row paths.
+    return { output, warnings: warnings.all(), folders: warnings.groupedByFolder() }
   } finally {
     logSpy.mockRestore()
     cleanupLibrary(root)
@@ -499,10 +499,10 @@ describe('movies module — warn_duplicate_quality', () => {
     ])
   })
 
-  it('orders the bucket by quality (UHD, HD, SD), alphabetically within each tier', () => {
-    // Zulu duplicates at UHD and Alpha at SD — path order alone would put
-    // Alpha first. The sortKey groups by quality instead, so the worst
-    // offenders read together at the top.
+  it('files each duplicate on its own movie folder, under the first category', () => {
+    // The check spans categories, so it passes an explicit scope and a display
+    // label rather than a real path. It must still land on the movie's folder
+    // entry — under the first category in rules order — as a folder-level row.
     const result = runMoviesScan({
       spec: {
         UHD: { 'Zulu (2000)': { 'Zulu (2000).mp4': '' } },
@@ -523,8 +523,13 @@ describe('movies module — warn_duplicate_quality', () => {
         ],
       },
     })
-    const bucket = result.grouped['warn_duplicate_quality']?.items ?? []
-    expect(bucket.map(r => r.path)).toEqual(['Zulu (2000)', 'Mike (2001)', 'Alpha (2002)'])
+    const dupes = result.folders.filter(f => f.rows.some(r => r.type === 'warn_duplicate_quality'))
+    expect(dupes.map(f => f.path)).toEqual(['HD/Mike (2001)', 'SD/Alpha (2002)', 'UHD/Zulu (2000)'])
+    // Folder-level rows carry no relative path — the folder already names them.
+    for (const folder of dupes) {
+      const row = folder.rows.find(r => r.type === 'warn_duplicate_quality')
+      expect('path' in (row ?? {})).toBe(false)
+    }
   })
 
   it('does not fire for one copy per tier', () => {

@@ -130,7 +130,18 @@ export const AudiobooksRulesSchema = z.object({
      * Off by default — Open Library capitalizes inconsistently itself.
      */
     warn_openlibrary_title_case: z.boolean(),
-    /** Validation pass: the title matches but none of the folder's authors do. */
+    /**
+     * Validation pass: the title matches but none of the folder's authors do.
+     * Off by default — the author folder is already compared against its
+     * sibling folders (`warn_author_name_mismatch`) and against the embedded
+     * artist tag (`warn_author_tag_mismatch`), so a mistyped author produces
+     * three findings for one rename. Those two need no network and disagree
+     * far less often: Open Library's author lists are its least reliable
+     * field, crediting narrators, translators and editors as authors. Same
+     * reasoning as `warn_short_duration`, which defers to the precise
+     * `warn_tmdb_runtime_mismatch`. `warn_openlibrary_title_mismatch` stays on
+     * — nothing else checks the title against an outside source.
+     */
     warn_openlibrary_author_mismatch: z.boolean(),
   }),
 })
@@ -172,6 +183,6 @@ export const defaultAudiobooksRules: AudiobooksRules = AudiobooksRulesSchema.par
     warn_openlibrary_not_found: false,
     warn_openlibrary_title_mismatch: true,
     warn_openlibrary_title_case: false,
-    warn_openlibrary_author_mismatch: true,
+    warn_openlibrary_author_mismatch: false,
   },
 })

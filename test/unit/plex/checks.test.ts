@@ -67,6 +67,8 @@ function run(opts: {
   lib?: Partial<PlexLibrarySummary>
   ignored?: Record<string, string[]>
   checks?: Partial<typeof defaultPlexRules.checks>
+  categoryQuality?: Map<string, string>
+  acceptableCombos?: readonly string[][]
 }) {
   const catalog: PlexCatalogOutput = {
     generated: '',
@@ -84,6 +86,8 @@ function run(opts: {
     diskFiles: opts.diskFiles ?? [],
     exists: p => existing.has(p),
     folderPattern: opts.folderPattern === undefined ? MOVIE_FOLDER : opts.folderPattern,
+    categoryQuality: opts.categoryQuality,
+    acceptableCombos: opts.acceptableCombos,
     rules: { checks: { ...defaultPlexRules.checks, ...opts.checks } },
     warnings,
   })
@@ -165,7 +169,6 @@ describe('checkPlex — disk vs Plex', () => {
   it('reports trashed files as unavailable, not orphans', () => {
     const warnings = run({ items: [item({ paths: [HEAT], deleted: true })] })
     expect(warnings.map(w => w.type)).toEqual(['warn_plex_unavailable'])
-    expect(warnings[0]!.fix).toMatch(/Empty Trash/)
   })
 
   it('ignores files mapped to another drive', () => {
@@ -375,6 +378,55 @@ describe('checkPlex — items', () => {
     })
     expect(warnings.map(w => w.type)).toEqual(['warn_plex_duplicate'])
     expect(warnings[0]!.issue).toContain(`Server:${uhd}`)
+  })
+
+  // Plex lists any multi-file item as a duplicate, including the deliberate
+  // UHD-plus-HD pairing that ships as the default acceptable_quality_combos
+  // entry. Reporting it here would contradict the scan, which stays silent.
+  describe('acceptable_quality_combos', () => {
+    const QUALITY = new Map([
+      ['UHD', 'UHD'],
+      ['Other UHD', 'UHD'],
+      ['HD', 'HD'],
+      ['Other HD', 'HD'],
+    ])
+    const COMBOS = [['UHD', 'HD']]
+    const uhd = 'UHD/Heat (1995)/Heat (1995).mkv'
+
+    const duplicate = (paths: string[], extra = {}) =>
+      run({
+        items: [item({ paths, duplicate: true })],
+        diskFiles: paths,
+        categoryQuality: QUALITY,
+        acceptableCombos: COMBOS,
+        ...extra,
+      }).filter(w => w.type === 'warn_plex_duplicate')
+
+    it('stays quiet on a whitelisted UHD plus HD pair', () => {
+      expect(duplicate([HEAT, uhd])).toEqual([])
+    })
+
+    // Combos say which tiers may coexist, never how many copies may sit inside
+    // one — the same split the scan makes between its two quality checks.
+    it('still reports two copies inside one tier', () => {
+      const otherHd = 'Other HD/Heat (1995)/Heat (1995).mkv'
+      expect(duplicate([HEAT, otherHd]).map(w => w.type)).toEqual(['warn_plex_duplicate'])
+    })
+
+    it('still reports a tier set no combo whitelists', () => {
+      const sd = 'SD/Heat (1995)/Heat (1995).mkv'
+      expect(duplicate([HEAT, sd]).map(w => w.type)).toEqual(['warn_plex_duplicate'])
+    })
+
+    // Without the rules — music, audiobooks, or a library with no categories —
+    // the check behaves exactly as it did before.
+    it('reports every duplicate when no quality data is supplied', () => {
+      const warnings = run({
+        items: [item({ paths: [HEAT, uhd], duplicate: true })],
+        diskFiles: [HEAT, uhd],
+      })
+      expect(warnings.map(w => w.type)).toEqual(['warn_plex_duplicate'])
+    })
   })
 
   it('checks each folder once when several editions share it', () => {

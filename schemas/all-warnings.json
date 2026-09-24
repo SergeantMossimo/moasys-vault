@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moasys.local/vault/schemas/all-warnings.json",
+  "title": "MOASYS-Vault — all-warnings.json",
+  "description": "The merged warnings report for one drive and media type, written by `npm run report` to output/<drive>/<type>/all-warnings.json. A superset of warnings.json: the same folder-grouped shape, plus a `sources` block and a `command` tag on every row. It folds the four per-command files (warnings.json, validation-warnings.json, plex-warnings.json, plex-log-warnings.json) so a show flagged by two commands is one entry rather than two files to join by hand. Rows are NOT deduplicated — two detectors reporting the same season are two findings, both worth acting on; the row ordering just puts them next to each other. Reads the ignore-filtered files only, never the unfiltered/ copies. Read `sources` first: a command that has not run reports a null count, so a partial report cannot be mistaken for a clean library.",
+  "type": "object",
+  "properties": {
+    "generated": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp of when this report was written — not of the underlying scans, which are in `sources`."
+    },
+    "drive": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The drive slug this report covers, matching the output/<drive>/ folder."
+    },
+    "media_type": {
+      "type": "string",
+      "enum": ["movies", "shows", "music", "audiobooks"],
+      "description": "The media type this report covers."
+    },
+    "sources": {
+      "type": "array",
+      "description": "Every command that can contribute for this media type, whether or not it did, in pipeline order. Four entries, or three for music, which has no validate pass. Read this before the folders.",
+      "items": {
+        "$ref": "#/$defs/WarningSource"
+      }
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total rows folded in, across every folder. Only counts sources that were readable."
+    },
+    "folder_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of entries in `folders`."
+    },
+    "by_type": {
+      "type": "object",
+      "description": "How many rows each warning type contributed, summed across sources and ordered worst first.",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "folders": {
+      "type": "array",
+      "description": "One entry per top-level library folder with at least one warning from any source, sorted alphabetically by `path`.",
+      "items": {
+        "$ref": "#/$defs/MergedWarningFolder"
+      }
+    }
+  },
+  "required": [
+    "generated",
+    "drive",
+    "media_type",
+    "sources",
+    "count",
+    "folder_count",
+    "by_type",
+    "folders"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "WarningSource": {
+      "type": "object",
+      "description": "One command's contribution. `count` is null — never 0 — for anything not folded in, so a command that never ran cannot read as a clean library.",
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The command that writes this file: `scan`, `validate`, `plex:check`, or `plex:logs`. Named by command rather than file because the command is what you re-run."
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "File name within output/<drive>/<type>/."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["ok", "missing", "stale", "unreadable"],
+          "description": "`ok` — folded in, current. `missing` — the file does not exist; that command has never run for this drive and type. `stale` — present but older than warnings.json, so it describes a library state that may have changed; folded in anyway and flagged. `unreadable` — present but unusable (a parse error, or a file written before the folder regrouping); contributes nothing. Staleness is measured against the scan because validate and plex:check both read data/probe.json; when the scan file itself is absent, staleness is undecidable and nothing is flagged."
+        },
+        "generated": {
+          "type": ["string", "null"],
+          "description": "The source file's own ISO 8601 timestamp, or null when it was not read."
+        },
+        "count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Rows folded in from this source, or null when it was not read. Null and 0 mean different things: null is 'never ran', 0 is 'ran and found nothing'."
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why, for any status but `ok` — already phrased for printing, and naming the command line that refreshes the source. Absent when the status is `ok`."
+        }
+      },
+      "required": ["command", "file", "status", "generated", "count"],
+      "additionalProperties": false
+    },
+    "MergedWarningFolder": {
+      "type": "object",
+      "description": "Every warning on one top-level library folder, from every source. Same shape as warnings.json's folder entry plus `commands`. Folders are keyed across sources on the case-folded `path`, so one show cannot split in two over a difference in case, while the same name under two categories stays two entries.",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Library-relative path of the folder, forward-slash-normalized — the prefix every row hangs off, e.g. `SD/Good Eats (1999)`. Empty only for a warning at the library root of a library with no categories. The last segment is the name an ignore-list entry uses; a path with no `/` is either a category folder (silenced under `folders:`) or, in a library with no `categories`, the top-level name itself."
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of rows on this folder, summed across sources. Equals `rows.length`."
+        },
+        "commands": {
+          "type": "array",
+          "description": "The commands that flagged this folder, in pipeline order rather than alphabetically — `[\"scan\", \"validate\"]` reads as the pipeline does.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "rows": {
+          "type": "array",
+          "description": "Every warning on this folder, sorted by canonical relative path (folder-level rows first), then command in pipeline order, then type, then issue. Canonical, so the scan's `Season 03` and the TMDB pass's `Season 3` sit adjacent — which is the point of merging them.",
+          "items": {
+            "$ref": "#/$defs/MergedWarningRow"
+          },
+          "minItems": 1
+        }
+      },
+      "required": ["path", "count", "commands", "rows"],
+      "additionalProperties": false
+    },
+    "MergedWarningRow": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Which command found this: `scan`, `validate`, `plex:check`, or `plex:logs`."
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable warning identifier — the key into this file's `by_type` and the row in the docs/OUTPUT.md warning table that gives the remedy."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Location relative to the folder's `path`, forward-slash-normalized. ABSENT means the warning is about the folder itself."
+        },
+        "issue": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable statement of the problem. The remedy is in the docs/OUTPUT.md warning table under this row's `type`."
+        },
+        "extension": {
+          "type": "string",
+          "description": "Optional file extension. Only present for non-primary file warnings (warn_non_primary)."
+        }
+      },
+      "required": ["command", "type", "issue"],
+      "additionalProperties": false
+    }
+  }
+}

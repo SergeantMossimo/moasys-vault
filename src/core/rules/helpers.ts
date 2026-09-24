@@ -124,22 +124,6 @@ export function sortQualities(qualities: Iterable<string>): string[] {
 }
 
 /**
- * A sortable string that orders qualities the way `sortQualities` does —
- * known qualities in UHD → HD → SD order first, anything outside the
- * vocabulary alphabetically after them.
- *
- * Handed to `WarningCollector.add` as a `sortKey` so a warning bucket groups
- * by quality instead of by path: every UHD row, then every HD row, then every
- * SD row, alphabetical by title within each. The rank is zero-padded so the
- * string comparison stays correct if `KNOWN_QUALITIES` ever grows past ten.
- */
-export function qualitySortKey(quality: string): string {
-  const i = (KNOWN_QUALITIES as readonly string[]).indexOf(quality)
-  const rank = i === -1 ? KNOWN_QUALITIES.length : i
-  return `${String(rank).padStart(2, '0')}|${quality}`
-}
-
-/**
  * Auto-detect a quality keyword from a category name. Uses whole-word,
  * case-insensitive matching so:
  *   - "UHD" / "Other UHD" / "Director's Cut UHD"  → "UHD"

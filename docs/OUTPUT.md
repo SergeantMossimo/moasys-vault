@@ -12,15 +12,18 @@ This page is the complete reference for what the scanner writes and every warnin
 
 Every run writes its files under `output/<drive>/<type>/`, where `<drive>` is the lowercased `name` of the root you scanned (see [Configuration](CONFIG.md#configjson)).
 
-The top of each folder holds only what you open — your catalog and one warnings file per command:
+The top of each folder holds only what you open — your catalog, the merged report, and one warnings file per command:
 
 | File                       | Written by                           | What it is                                                                  |
 | -------------------------- | ------------------------------------ | --------------------------------------------------------------------------- |
+| `all-warnings.json`        | `npm run report`                     | **Open this first** — every command's warnings, one entry per folder        |
 | `<type>.json`              | scan (`npm run <type>`)              | Your catalog — title, year, where each copy lives                           |
 | `warnings.json`            | scan                                 | Every hygiene finding from the scan pass                                    |
 | `validation-warnings.json` | validate (movies, shows, audiobooks) | Confidence warnings and title/year/author mismatches                        |
 | `plex-warnings.json`       | `npm run plex:check`                 | Plex compared with the scan — see [Plex](PLEX.md#warnings)                  |
 | `plex-log-warnings.json`   | `npm run plex:logs`                  | Errors from Plex's logs about files here — see [Plex](PLEX.md#log-warnings) |
+
+The four per-command files are each one command's view. `all-warnings.json` folds them together so a show flagged by two commands is one entry instead of two files to join by hand — see [below](#all-warningsjson-the-merged-report).
 
 Everything else sits in a subfolder:
 
@@ -30,7 +33,7 @@ Everything else sits in a subfolder:
 | `fixes/`      | `rename-plan.json`, `rename-undo-<ts>.json`    | Shows only — the plan and undo manifests from [`npm run fix:shows`](SCANS.md#fixing-filenames--npm-run-fixshows). Keep the undo manifests.                        |
 | `unfiltered/` | `plex-warnings.json`, `plex-log-warnings.json` | Only after a Plex command runs with `--no-ignore` — the same warnings with ignore lists skipped. See [Plex](PLEX.md#reviewing-what-your-ignore-lists-hide).       |
 
-Files only appear once their command has run. Movies and shows validate against TMDB, audiobooks against Open Library; music has no validate pass. Every warnings file shares the `warnings.json` shape.
+Files only appear once their command has run. Movies and shows validate against TMDB, audiobooks against Open Library; music has no validate pass. All four per-command warnings files share the `warnings.json` shape, and `all-warnings.json` is a superset of it.
 
 If you used a version from before these subfolders existed, the old top-level `probe.json`, `validation.json`, `rename-plan.json`, and `*.unfiltered.json` files are no longer read — each command prints a note listing them. Delete them, but keep any `rename-undo-*.json` you might still need (`--undo` accepts any path).
 
@@ -43,6 +46,7 @@ output/
 ├── plex/                         ← plex:pull and plex:logs (not tied to a drive)
 ├── server/
 │   ├── movies/
+│   │   ├── all-warnings.json
 │   │   ├── movies.json
 │   │   ├── warnings.json
 │   │   ├── validation-warnings.json
@@ -52,6 +56,7 @@ output/
 │   │       ├── probe.json
 │   │       └── validation.json
 │   ├── shows/
+│   │   ├── all-warnings.json
 │   │   ├── shows.json
 │   │   ├── warnings.json
 │   │   ├── validation-warnings.json
@@ -64,6 +69,7 @@ output/
 │   │       ├── rename-plan.json
 │   │       └── rename-undo-<timestamp>.json
 │   ├── music/
+│   │   ├── all-warnings.json
 │   │   ├── music.json
 │   │   ├── warnings.json
 │   │   ├── plex-warnings.json
@@ -71,6 +77,7 @@ output/
 │   │   └── data/
 │   │       └── probe.json
 │   └── audiobooks/
+│       ├── all-warnings.json
 │       ├── audiobooks.json
 │       ├── warnings.json
 │       ├── validation-warnings.json
@@ -81,6 +88,7 @@ output/
 │           └── validation.json
 └── external/
     └── shows/
+        ├── all-warnings.json
         ├── shows.json
         ├── warnings.json
         └── data/
@@ -196,57 +204,161 @@ A few things to know if you're building a website (or anything else) on top of t
 - **`title` can be `null` on `episodes[]`.** When an episode filename omits the trailing `- Episode Title`, the `title` field is `null` rather than an empty string. Same applies elsewhere — null means "intentionally absent," never `undefined` or missing key.
 - **`quality` can be `null` on a `version`.** This means the file didn't fit any configured `quality_thresholds` bucket (movies/shows) or the file had no codec data (rare; usually a probe failure). Surface it as "unknown quality" in your UI.
 
-### `warnings.json` (shape shared across scan + validate)
+### `warnings.json` (shape shared across scan + validate + Plex)
 
-Warnings are grouped by their `type` (the same identifier as the matching `checks.warn_*` toggle in `rules/<type>.yaml`) under `by_type`. Each bucket states the remedy once as `fix`, then lists the places it applies under `items`. Each item carries a `path`, an `issue` saying what is wrong there, and an `ignore` entry you can paste into your ignore list to silence it (see [below](#silencing-a-row)); some items also carry an `extension`. A bucket has no `fix` when the check has no general remedy. Buckets are sparse — only types that actually fired appear as keys. Inside each bucket, items are sorted alphabetically by path; the outer keys are sorted alphabetically too, so the file diffs cleanly across runs.
+**Warnings are grouped by the folder they concern, not by warning type.** One show is one entry, however many checks fired on it — because that's the unit you work in. You sit down to fix Stranger Things, not to fix every `warn_quality_mismatch` in the library.
 
-The `fix` sits on the bucket rather than on every item because it is the same for all of them — repeated per row, it once made up over 40% of the text in these files. Keep an `issue` to the facts that differ from row to row.
+Each entry in `folders` carries:
 
-One bucket orders its items differently: `warn_duplicate_quality` groups by quality first — every UHD row, then HD, then SD — with paths sorted alphabetically inside each quality group. Duplicates of your best copies are the ones worth acting on first, so they read together at the top rather than scattered through an alphabetical list. Ordering is still fully deterministic, so the file diffs cleanly across runs either way.
+| Field   | What it is                                                                     |
+| ------- | ------------------------------------------------------------------------------ |
+| `path`  | The folder, library-relative — `SD/Good Eats (1999)`. Every row hangs off this |
+| `count` | How many rows are on it — grep this to find your worst offenders               |
+| `rows`  | The warnings themselves                                                        |
+
+`path` is the only locator you need. The **last segment is the folder's own name** —
+`Good Eats (1999)` — which is what an ignore-list entry names; the segment before it is
+the category. A `path` with no `/` is either a category folder, or the top-level name
+itself in a library with no `categories`.
+
+A row carries a `type`, an `issue` saying what's wrong, and a `path` **relative to the folder** — so it reads `Season 09`, not `SD/Good Eats (1999)/Season 09` for the fifth time. **A row with no `path` is about the folder itself.** `warn_non_primary` rows also carry an `extension`.
+
+Above `folders`, `by_type` tallies how many rows each type produced, worst first — the same numbers the run prints. Both it and `folders` are sparse: only types and folders that actually fired appear.
+
+`folders` is sorted alphabetically by `path`, and rows within a folder by their relative path, so the file diffs cleanly between runs. Season ordering is canonical, which means a scan's `Season 03` sorts next to the validate pass's `Season 3` rather than a screen apart — the two are about the same season.
 
 ```json
 {
   "generated": "2026-04-20T10:30:00+00:00",
   "count": 12,
+  "folder_count": 2,
   "by_type": {
-    "warn_non_primary": {
-      "fix": "Re-encode to your primary format if you want one format throughout.",
-      "items": [
+    "warn_quality_mismatch": 8,
+    "warn_missing_episode_title": 3,
+    "warn_episode_gaps": 1
+  },
+  "folders": [
+    {
+      "path": "SD/Good Eats (1999)",
+      "count": 3,
+      "rows": [
         {
-          "path": "UHD/The Terminator (1984)/The Terminator (1984).mkv",
-          "issue": "Non-.MP4 video file.",
-          "extension": ".mkv",
-          "ignore": "files: The Terminator (1984)/The Terminator (1984).mkv"
+          "type": "warn_quality_mismatch",
+          "path": "Season 09",
+          "issue": "21/21 episodes are 1024x576 (fits HD) ×21, not SD (≤1000px). S09E01, S09E02, S09E03, +18 more."
+        },
+        {
+          "type": "warn_episode_gaps",
+          "path": "Specials",
+          "issue": "Missing episodes (79): E09–E87."
+        },
+        {
+          "type": "warn_missing_episode_title",
+          "path": "Specials",
+          "issue": "9/9 episode files have no \" - Episode Title\"."
         }
       ]
     },
-    "warn_tmdb_no_match": {
-      "fix": "Usually a typo in the title or year, or a missing diacritic. Check the folder against themoviedb.org — some obscure films genuinely aren't listed.",
-      "items": [
+    {
+      "path": "UHD/The Terminator (1984)",
+      "count": 1,
+      "rows": [
         {
-          "path": "UHD/'Twas The Night Before Christmas (1974)",
-          "issue": "TMDB has nothing matching ''Twas The Night Before Christmas' (1974).",
-          "ignore": "movies: \"'Twas The Night Before Christmas (1974)\""
+          "type": "warn_non_primary",
+          "path": "The Terminator (1984).mkv",
+          "issue": "Non-.MP4 video file.",
+          "extension": ".mkv"
         }
       ]
     }
-  }
+  ]
 }
 ```
 
-#### Silencing a row
+#### What's deliberately not in the file
 
-`ignore` is the narrowest entry that silences just that row, written as `<key>: <name>`. To use it, add the name under that key in `ignored/<drive>/<type>.yaml`:
+**The remedy.** It's identical for every row of a warning type, so repeating it buried the facts that differ — it was once over 40% of the text in these files. Look the `type` up in the [warning tables](#warning-tables) below instead.
+
+**Anything a field already says.** The folder's own name and its category are the last and first segments of `path`, and the distinct types on it are one pass over `rows`. All three were written out per folder until they were measured: they cost 13–18% of every warnings file, and the biggest one shrank from 116 KB to 96 KB without losing a single fact.
+
+**Ignore-list entries.** Same reason as the remedy: every row of a type produced near-identical boilerplate. To silence something, take the last segment of the folder's `path` (or a row's relative `path` for something narrower) and put it under the matching level key in `ignored/<drive>/<type>.yaml`:
 
 ```yaml
-# "ignore": "episodes: Firefly (2002)/S01E05"  becomes:
-episodes:
-  - Firefly (2002)/S01E05
+# The whole show:
+shows:
+  - Firefly (2002)
+# Just one season of it:
+seasons:
+  - Firefly (2002)/Season 01
 ```
 
-It's deliberately narrow — an entry silences everything at or below its level, so a suggestion for one episode names that episode rather than the whole show. Widen it by hand (`shows: Firefly (2002)`) if that's what you want. Names that YAML would misread, like one starting with `'`, come already quoted. See [Configuration](CONFIG.md#ignoreddrivetypeyaml--silencing-specific-warnings) for how matching works.
+An entry silences everything at or below its level, so `shows:` covers the whole folder and every row in it. Names YAML would misread — one starting with `'`, say — need quoting. See [Configuration](CONFIG.md#ignoreddrivetypeyaml--silencing-specific-warnings) for how matching works.
 
-The bucket key (a `warn_*` identifier) is the same string you use under `rules/<type>.yaml` `checks`, so it's copy-pasteable between the two. Ignore lists don't reference warning types at all — they list names by level (see [CONFIG.md](CONFIG.md#ignoreddrivetypeyaml--silencing-specific-warnings)), so `checks: false` is the only way to silence a whole warning _type_.
+A row's `type` (a `warn_*` identifier) is the same string you use under `rules/<type>.yaml` `checks`, so it's copy-pasteable between the two. Ignore lists don't reference warning types at all — they list names by level — so `checks: false` is the only way to silence a whole warning _type_.
+
+### `all-warnings.json` (the merged report)
+
+`npm run report` folds all four warnings files above into one file per drive and media type, in the same folder-grouped shape. This is the file to open first: a show flagged by both the scan and the TMDB pass is **one entry** here rather than two files to join by hand.
+
+Two additions to the shape above:
+
+- Every row carries a `command` — `scan`, `validate`, `plex:check`, or `plex:logs` — and each folder lists the `commands` that flagged it, in pipeline order.
+- A `sources` block at the top names every command that can contribute — all four, or three for music, which has no validate pass — with a `status` (`ok`, `stale`, `missing`, or `unreadable`), the source's own timestamp, and how many rows it contributed.
+
+**Read `sources` first.** A command that has never run reports `"count": null`, not `0` — otherwise a report missing half its checks would look like a clean library. `stale` means that file is older than `warnings.json`, so it describes a library state that may have moved on; its rows are still folded in, and flagged. `unreadable` includes a file written before the folder regrouping — re-run that command.
+
+```json
+{
+  "generated": "2026-04-20T11:00:00+00:00",
+  "drive": "external",
+  "media_type": "shows",
+  "sources": [
+    {
+      "command": "scan",
+      "file": "warnings.json",
+      "status": "ok",
+      "generated": "...",
+      "count": 429
+    },
+    {
+      "command": "plex:check",
+      "file": "plex-warnings.json",
+      "status": "missing",
+      "generated": null,
+      "count": null,
+      "note": "Never run — `npm run plex:check external`. Nothing from this command is in this report."
+    }
+  ],
+  "count": 532,
+  "folder_count": 158,
+  "by_type": { "warn_missing_episode_title": 228 },
+  "folders": [
+    {
+      "path": "SD/The Great British Bake Off (2010)",
+      "count": 30,
+      "commands": ["scan", "validate"],
+      "rows": [
+        {
+          "command": "scan",
+          "type": "warn_missing_episode_title",
+          "path": "Season 03",
+          "issue": "10/10 episode files have no \" - Episode Title\"."
+        },
+        {
+          "command": "validate",
+          "type": "warn_tmdb_episode_count",
+          "path": "Season 3",
+          "issue": "10/14 episodes per TMDB — 4 missing."
+        }
+      ]
+    }
+  ]
+}
+```
+
+Rows are **not** deduplicated. Two checks reporting the same season are two findings, both worth acting on — `warn_episode_gaps` tells you _which_ episodes are missing, `warn_tmdb_episode_count` tells you _how many_ TMDB expects. Canonical season ordering just puts them next to each other, as above.
+
+The report reads only files under `output/` — never your media library — so it works with the drive unplugged. It reads the ignore-filtered files only, never the `unfiltered/` copies.
 
 ---
 
@@ -254,7 +366,7 @@ The bucket key (a `warn_*` identifier) is the same string you use under `rules/<
 
 Every warning has a per-type toggle in `rules/<type>.yaml` under `checks.warn_*`. Warnings ship enabled unless their table row says **Off by default**; set any toggle to `false` to silence that check everywhere. To silence specific items instead, list them by level in `ignored/<drive>/<type>.yaml` — see [Configuration](CONFIG.md#ignoreddrivetypeyaml--silencing-specific-warnings). The two are complementary: `checks` is per check, the ignore list is per item and silences every check on it.
 
-The tables below list each warning by its `warn_*` identifier — the bucket key in `warnings.json` and the toggle name under `checks` — alongside what triggered it. The bucket's `fix` in the file says what to do about it. Warnings marked _(validate pass)_ only appear after `npm run validate:<type>`, in `validation-warnings.json`. The Plex warnings in `plex-warnings.json` and `plex-log-warnings.json` are listed in [Plex](PLEX.md#warnings).
+The tables below list each warning by its `warn_*` identifier — a row's `type` in the warnings files and the toggle name under `checks` — alongside what triggered it and what to do about it. **These tables are where the remedy lives**; the files themselves carry only the facts that differ row to row. Warnings marked _(validate pass)_ only appear after `npm run validate:<type>`, in `validation-warnings.json`. The Plex warnings in `plex-warnings.json` and `plex-log-warnings.json` are listed in [Plex](PLEX.md#warnings).
 
 ### Movies
 
@@ -295,7 +407,7 @@ The tables below list each warning by its `warn_*` identifier — the bucket key
 | `warn_bad_file_name`                                | Expected: `Show Title (YEAR) - S01E01 - Episode Title` (episode title optional)                                                                                                                                                                                                           |
 | `warn_show_year_mismatch`                           | The episode file's show name or year doesn't match its parent show folder                                                                                                                                                                                                                 |
 | `warn_show_title_case`                              | The episode file's show title matches its folder except for capitalization                                                                                                                                                                                                                |
-| `warn_season_mismatch`                              | The episode file is in the wrong season folder                                                                                                                                                                                                                                            |
+| `warn_season_mismatch`                              | The episode file is in the wrong season folder. `fix:shows --fix season-code` rewrites the code to match the folder; move the file instead when the code is the right one                                                                                                                 |
 | `warn_episode_gaps`                                 | A gap was detected in episode numbers within a season                                                                                                                                                                                                                                     |
 | `warn_missing_episode_title`                        | Episodes in this season match Plex's naming convention but omit the trailing `- Episode Title` portion. Summarised once per season.                                                                                                                                                       |
 | `warn_episode_code_case`                            | Episode codes in this season don't match the `episode_code_case` house style, or a multi-episode file uses the bare `-02` suffix instead of `-e02`. Summarised once per season; never fires when `episode_code_case` is `any`                                                             |
@@ -338,29 +450,29 @@ The tables below list each warning by its `warn_*` identifier — the bucket key
 
 ### Audiobooks
 
-| Warning                                              | What it means                                                                                                                                                                                                                                                                             |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `warn_non_primary`                                   | The file exists but isn't one of your preferred formats                                                                                                                                                                                                                                   |
-| `warn_no_audio`                                      | A book folder has no audio files                                                                                                                                                                                                                                                          |
-| `warn_bad_chapter_name`                              | Expected: `01 - Chapter Name.ext` (single-disc) or `101 - Chapter Name.ext` (multi-disc)                                                                                                                                                                                                  |
-| `warn_chapter_gaps`                                  | A gap was detected in chapter numbers within a book (checked per-disc)                                                                                                                                                                                                                    |
-| `warn_duplicate_book`                                | The same book title appears in more than one category                                                                                                                                                                                                                                     |
-| `warn_loose_files`                                   | Audio files in a category folder root or in an author folder (no book wrapper) — NOT added to the catalog                                                                                                                                                                                 |
-| `warn_extra_subfolders`                              | Subfolders found inside a book — files inside them are NOT scanned                                                                                                                                                                                                                        |
-| `warn_unexpected_entries`                            | A non-audio file that isn't a recognized sidecar                                                                                                                                                                                                                                          |
-| `warn_series_name_mismatch`                          | The same series is spelled differently across books (`Gaunt's Ghost, Book 1` vs `Gaunt's Ghosts, Book 2`) — a plural slip, a typo one character off, or punctuation drift. The spelling most books use is recommended as the rename                                                       |
-| `warn_series_name_case`                              | A series name or title prefix differs only in capitalization across books (`HALO - Legacy of Onyx` vs `Halo - The Flood`)                                                                                                                                                                 |
-| `warn_author_name_mismatch`                          | The same author is written two ways (`Tobias S. Buckell` vs `Tobias Buckell`, `J.R.R.` vs `J. R. R.`), including inside multi-author folders. Plex treats them as separate people                                                                                                         |
-| `warn_author_name_case`                              | An author name differs only in capitalization across books                                                                                                                                                                                                                                |
-| `warn_encoded_characters`                            | A book or author folder contains HTML entities (`&quot;`, `&amp;`) instead of the actual characters — usually left by a download tool                                                                                                                                                     |
-| `warn_mixed_punctuation`                             | A folder name uses curly quotes where most of the library uses straight ones (or the reverse). Full-width stand-ins for filename-illegal characters (`？`, `꞉`) are not flagged                                                                                                           |
-| `warn_book_tag_mismatch`                             | The album tag names a different book than the folder. Audible conventions are normalized first — `(Unabridged)`, a colon where the folder has a dash, and a folder that adds a subtitle or series all still match                                                                         |
-| `warn_book_tag_case`                                 | The album tag matches the folder except for capitalization (Audible tags often use `HALO:` where folders use `Halo -`)                                                                                                                                                                    |
-| `warn_author_tag_mismatch`                           | The artist tag names different authors than the author folder. Order and role suffixes (`Danusia Stok - translator`) are ignored; different initials or spacing still count, and the message says so                                                                                      |
-| `warn_author_tag_case`                               | The artist tag matches the author folder except for capitalization                                                                                                                                                                                                                        |
-| `warn_missing_book_tags`                             | No chapter in the book carries an album or artist tag                                                                                                                                                                                                                                     |
-| `warn_openlibrary_title_mismatch` _(validate pass)_  | No Open Library title matches, but a book by the same author is a typo's distance away. Verify the spelling; the message gives Open Library's title                                                                                                                                       |
-| `warn_openlibrary_title_case` _(validate pass)_      | Open Library's title differs only in capitalization. **Off by default** — Open Library capitalizes inconsistently itself                                                                                                                                                                  |
-| `warn_openlibrary_author_mismatch` _(validate pass)_ | The title matches an Open Library book, but none of the folder's authors do. Often an author-folder typo; sometimes a different book with the same title                                                                                                                                  |
-| `warn_openlibrary_not_found` _(validate pass)_       | Nothing in Open Library resembles the title. **Off by default** — coverage of tie-in fiction is patchy, and translated books are often listed only under their original title                                                                                                             |
-| `warn_probe_failed`                                  | ffprobe could not read the file. It is excluded from probe output and has no quality data. A file ffprobe rejects is usually unplayable in Plex too — verify it plays and re-copy it if not. Has no toggle (like `permission_denied`); silence per item via `ignored/<drive>/<type>.yaml` |
+| Warning                                              | What it means                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `warn_non_primary`                                   | The file exists but isn't one of your preferred formats                                                                                                                                                                                                                                                                                                                      |
+| `warn_no_audio`                                      | A book folder has no audio files                                                                                                                                                                                                                                                                                                                                             |
+| `warn_bad_chapter_name`                              | Expected: `01 - Chapter Name.ext` (single-disc) or `101 - Chapter Name.ext` (multi-disc)                                                                                                                                                                                                                                                                                     |
+| `warn_chapter_gaps`                                  | A gap was detected in chapter numbers within a book (checked per-disc)                                                                                                                                                                                                                                                                                                       |
+| `warn_duplicate_book`                                | The same book title appears in more than one category                                                                                                                                                                                                                                                                                                                        |
+| `warn_loose_files`                                   | Audio files in a category folder root or in an author folder (no book wrapper) — NOT added to the catalog                                                                                                                                                                                                                                                                    |
+| `warn_extra_subfolders`                              | Subfolders found inside a book — files inside them are NOT scanned                                                                                                                                                                                                                                                                                                           |
+| `warn_unexpected_entries`                            | A non-audio file that isn't a recognized sidecar                                                                                                                                                                                                                                                                                                                             |
+| `warn_series_name_mismatch`                          | The same series is spelled differently across books (`Gaunt's Ghost, Book 1` vs `Gaunt's Ghosts, Book 2`) — a plural slip, a typo one character off, or punctuation drift. The spelling most books use is recommended as the rename                                                                                                                                          |
+| `warn_series_name_case`                              | A series name or title prefix differs only in capitalization across books (`HALO - Legacy of Onyx` vs `Halo - The Flood`)                                                                                                                                                                                                                                                    |
+| `warn_author_name_mismatch`                          | The same author is written two ways (`Tobias S. Buckell` vs `Tobias Buckell`, `J.R.R.` vs `J. R. R.`), including inside multi-author folders. Plex treats them as separate people                                                                                                                                                                                            |
+| `warn_author_name_case`                              | An author name differs only in capitalization across books                                                                                                                                                                                                                                                                                                                   |
+| `warn_encoded_characters`                            | A book or author folder contains HTML entities (`&quot;`, `&amp;`) instead of the actual characters — usually left by a download tool                                                                                                                                                                                                                                        |
+| `warn_mixed_punctuation`                             | A folder name uses curly quotes where most of the library uses straight ones (or the reverse). Full-width stand-ins for filename-illegal characters (`？`, `꞉`) are not flagged                                                                                                                                                                                              |
+| `warn_book_tag_mismatch`                             | The album tag names a different book than the folder. Audible conventions are normalized first — `(Unabridged)`, a colon where the folder has a dash, and a folder that adds a subtitle or series all still match                                                                                                                                                            |
+| `warn_book_tag_case`                                 | The album tag matches the folder except for capitalization (Audible tags often use `HALO:` where folders use `Halo -`)                                                                                                                                                                                                                                                       |
+| `warn_author_tag_mismatch`                           | The artist tag names different authors than the author folder. Order and role suffixes (`Danusia Stok - translator`) are ignored; different initials or spacing still count, and the message says so                                                                                                                                                                         |
+| `warn_author_tag_case`                               | The artist tag matches the author folder except for capitalization                                                                                                                                                                                                                                                                                                           |
+| `warn_missing_book_tags`                             | No chapter in the book carries an album or artist tag                                                                                                                                                                                                                                                                                                                        |
+| `warn_openlibrary_title_mismatch` _(validate pass)_  | No Open Library title matches, but a book by the same author is a typo's distance away. Verify the spelling; the message gives Open Library's title                                                                                                                                                                                                                          |
+| `warn_openlibrary_title_case` _(validate pass)_      | Open Library's title differs only in capitalization. **Off by default** — Open Library capitalizes inconsistently itself                                                                                                                                                                                                                                                     |
+| `warn_openlibrary_author_mismatch` _(validate pass)_ | The title matches an Open Library book, but none of the folder's authors do. **Off by default** — `warn_author_name_mismatch` and `warn_author_tag_mismatch` already compare the author folder against its siblings and its tags, so a typo produced three findings for one rename. Those two need no network, and Open Library credits narrators and translators as authors |
+| `warn_openlibrary_not_found` _(validate pass)_       | Nothing in Open Library resembles the title. **Off by default** — coverage of tie-in fiction is patchy, and translated books are often listed only under their original title                                                                                                                                                                                                |
+| `warn_probe_failed`                                  | ffprobe could not read the file. It is excluded from probe output and has no quality data. A file ffprobe rejects is usually unplayable in Plex too — verify it plays and re-copy it if not. Has no toggle (like `permission_denied`); silence per item via `ignored/<drive>/<type>.yaml`                                                                                    |
