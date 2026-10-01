@@ -75,6 +75,8 @@ describe('shows module — happy paths', () => {
         title: 'Show',
         year: 2020,
         edition: null,
+        tmdb_id: null,
+        tvdb_id: null,
         seasons: [
           {
             season: '1',
@@ -233,6 +235,58 @@ describe('shows module — editions', () => {
       edition: 'True Hue Color',
     })
     expect(result.output[0]?.seasons[0]?.episodes).toHaveLength(1)
+  })
+
+  it('accepts a {tmdb-N} tag on the show folder, after any edition tag', () => {
+    const result = runShowsScan({
+      spec: {
+        HD: {
+          'Icons Unearthed The Simpsons (2022) {tmdb-214176}': {
+            'Season 01': { 'Icons Unearthed The Simpsons (2022) - S01E01 - The Origin.mp4': '' },
+          },
+          'Spider-Noir (2026) {edition-True Hue Color} {tmdb-12345}': {
+            'Season 01': { 'Spider-Noir (2026) - S01E01 - Pilot.mp4': '' },
+          },
+        },
+      },
+    })
+    expect(result.warnings).toEqual([])
+    expect(result.output.map(s => [s.title, s.edition, s.tmdb_id])).toEqual([
+      ['Icons Unearthed The Simpsons', null, 214176],
+      ['Spider-Noir', 'True Hue Color', 12345],
+    ])
+  })
+
+  it('accepts a {tvdb-N} tag for a TVDB-structured anthology', () => {
+    const result = runShowsScan({
+      spec: {
+        HD: {
+          'Monster (2022) {tvdb-389492}': {
+            'Season 01': { 'Monster (2022) - s01e01 - Episode One.mp4': '' },
+            'Season 02': { 'Monster (2022) - s02e01 - Blame It on the Rain.mp4': '' },
+          },
+        },
+      },
+    })
+    expect(result.warnings).toEqual([])
+    expect(result.output[0]).toMatchObject({ title: 'Monster', tmdb_id: null, tvdb_id: 389492 })
+    expect(result.output[0]?.seasons.map(s => s.season)).toEqual(['1', '2'])
+  })
+
+  it('keeps the tmdb tag in the show level of a post-scan warning path', () => {
+    const result = runShowsScan({
+      spec: {
+        HD: {
+          'Show (2020) {tmdb-7}': { 'Season 01': { 'Show (2020) - S01E01.mp4': '' } },
+        },
+        'Other HD': {
+          'Show (2020) {tmdb-7}': { 'Season 01': { 'Show (2020) - S01E01.mp4': '' } },
+        },
+      },
+      rules: { categories: [{ name: 'HD' }, { name: 'Other HD' }] },
+    })
+    const dupe = result.warnings.find(w => w.type === 'warn_duplicate_quality')
+    expect(dupe?.path).toBe('Show (2020) {tmdb-7} — Season 1')
   })
 
   it('keeps two editions of one series as separate entries with their own episodes', () => {
@@ -492,6 +546,75 @@ describe('shows module — warnings', () => {
       },
     })
     expect(result.warnings.some(w => w.issue.match(/Missing episodes \(\d+\): E\d{2}/))).toBe(true)
+  })
+
+  it('warn_duplicate_episode: two files for one episode, once per season', () => {
+    const result = runShowsScan({
+      spec: {
+        HD: {
+          'Show (2020)': {
+            'Season 01': {
+              'Show (2020) - S01E01 - Pilot.mp4': '',
+              'Show (2020) - S01E02 - Lost It....mp4': '',
+              'Show (2020) - S01E02 - Lost It.mp4': '',
+              // A two-parter overlapping a single file of its second half.
+              'Show (2020) - S01E03-E04 - Part 1 + Part 2.mp4': '',
+              'Show (2020) - S01E04 - Part 2.mp4': '',
+            },
+          },
+        },
+      },
+    })
+    const hits = result.warnings.filter(w => w.type === 'warn_duplicate_episode')
+    expect(hits.map(w => [w.path, w.issue])).toEqual([
+      ['HD/Show (2020)/Season 01', 'More than one file for 2 episode(s): E02, E04.'],
+    ])
+  })
+
+  it('warn_duplicate_episode: silent for one file per episode, and when toggled off', () => {
+    const spec: DirSpec = {
+      HD: {
+        'Show (2020)': {
+          'Season 01': {
+            'Show (2020) - S01E01.mp4': '',
+            'Show (2020) - S01E02-E03.mp4': '',
+            'Show (2020) - S01E04.mp4': '',
+          },
+        },
+      },
+    }
+    const clean = runShowsScan({ spec })
+    expect(clean.warnings.filter(w => w.type === 'warn_duplicate_episode')).toEqual([])
+
+    // Plex stacks a split episode's parts into one — not duplicates.
+    const stacked = runShowsScan({
+      spec: {
+        HD: {
+          'Rugrats (1991)': {
+            'Season 07': {
+              'Rugrats (1991) - s07e01 - pt1.mp4': '',
+              'Rugrats (1991) - s07e01 - pt2.mp4': '',
+              'Rugrats (1991) - s07e01 - pt3.mp4': '',
+              'Rugrats (1991) - s07e02.mp4': '',
+            },
+          },
+        },
+      },
+    })
+    expect(stacked.warnings.filter(w => w.type === 'warn_duplicate_episode')).toEqual([])
+
+    const dupeSpec: DirSpec = {
+      HD: {
+        'Show (2020)': {
+          'Season 01': { 'Show (2020) - S01E01.mp4': '', 'Show (2020) - s01e01.mp4': '' },
+        },
+      },
+    }
+    const off = runShowsScan({
+      spec: dupeSpec,
+      rules: { checks: { ...defaultShowsRules.checks, warn_duplicate_episode: false } },
+    })
+    expect(off.warnings.filter(w => w.type === 'warn_duplicate_episode')).toEqual([])
   })
 
   it('warn_no_videos: season folder is empty', () => {

@@ -22,9 +22,10 @@ function show(
   title: string,
   year: number,
   seasons: ShowOutput['seasons'] = [],
-  edition: string | null = null
+  edition: string | null = null,
+  tmdbId: number | null = null
 ): ShowOutput {
-  return { title, year, edition, seasons }
+  return { title, year, edition, tmdb_id: tmdbId, tvdb_id: null, seasons }
 }
 
 function mockClient(opts: {
@@ -99,6 +100,48 @@ describe('validateShows — confidence scoring', () => {
 
     expect(result[0]?.confidence).toBe('high')
     expect(result[0]?.tmdb_first_air_year).toBe(2001)
+  })
+
+  it('uses a {tmdb-N} folder tag directly, skipping the search', async () => {
+    const client = mockClient({
+      // What Plex picked on its own — the search must not be asked.
+      searchResults: [
+        {
+          id: 205955,
+          name: 'Icons Unearthed',
+          original_name: 'Icons Unearthed',
+          first_air_date: '2022-01-01',
+        },
+      ],
+      details: {
+        214176: {
+          id: 214176,
+          name: 'Icons Unearthed: The Simpsons',
+          original_name: 'Icons Unearthed: The Simpsons',
+          first_air_date: '2022-09-01',
+          number_of_seasons: 1,
+          number_of_episodes: 6,
+          seasons: [],
+        },
+      },
+    })
+
+    const result = await validateShows(
+      [show('Icons Unearthed The Simpsons', 2022, [], null, 214176)],
+      defaultShowsRules,
+      client,
+      memoryCache(),
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+
+    expect(client.searchShow).not.toHaveBeenCalled()
+    expect(result[0]).toMatchObject({ confidence: 'high', tmdb_id: 214176, tmdb_tag: 214176 })
+    // The warning path keeps the tag, so it matches the folder on disk.
+    for (const w of warnings.all()) {
+      expect(w.path).toContain('Icons Unearthed The Simpsons (2022) {tmdb-214176}')
+    }
   })
 
   it('resolves "medium" via the loose tier when a colon was rendered as " - "', async () => {

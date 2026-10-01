@@ -189,6 +189,14 @@ export interface ShowValidation {
    * folder name, and two editions share one title+year.
    */
   edition: string | null
+  /**
+   * The show folder's `{tmdb-N}` tag, or null. Carried for the same reason as
+   * `edition` — it's part of the folder name `fix:shows` joins on. Absent in
+   * validation.json files written before the tag was supported.
+   */
+  tmdb_tag?: number | null
+  /** The show folder's `{tvdb-N}` tag, or null — carried for the same join. */
+  tvdb_tag?: number | null
   confidence: 'high' | 'medium' | 'low' | 'none'
   tmdb_id: number | null
   tmdb_title: string | null

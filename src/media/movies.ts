@@ -75,6 +75,9 @@ const FIX = {
     `Match the file's capitalization to the folder, so Plex and your filesystem don't ` +
     `present the same movie two ways.`,
   warn_year_mismatch: `Rename the file to match its folder, or move it to the right folder.`,
+  warn_tmdb_tag_mismatch:
+    `Correct whichever {tmdb-N} tag names the wrong film, or drop the folder's — validation ` +
+    `uses the file's.`,
   warn_duplicate_edition:
     `Two files in one folder claim the same edition, so Plex shows only one. Give each a ` +
     `distinct '{edition-Name}' tag, or delete the redundant file.`,
@@ -93,29 +96,37 @@ const FIX = {
  *
  * The pattern is expected to use named capture groups `title` and `year`.
  */
-function parseFolder(name: string, folderRegex: RegExp): { title: string; year: number } | null {
+function parseFolder(
+  name: string,
+  folderRegex: RegExp
+): { title: string; year: number; tmdbId: number | null } | null {
   const m = folderRegex.exec(name)
   if (!m?.groups) return null
-  const { title, year } = m.groups
+  const { title, year, tmdb } = m.groups
   if (title === undefined || year === undefined) return null
-  return { title: title.trim(), year: parseInt(year, 10) }
+  return { title: title.trim(), year: parseInt(year, 10), tmdbId: parseTmdbId(tmdb) }
+}
+
+/** The optional `tmdb` group of a `{tmdb-N}` tag, as a number. */
+function parseTmdbId(raw: string | undefined): number | null {
+  return raw === undefined ? null : parseInt(raw, 10)
 }
 
 /**
  * Parse a Plex movie file stem using the configured file pattern.
- * Returns { title, year, edition } or null.
+ * Returns { title, year, edition, tmdbId } or null.
  *
  * edition is null (no tag), "" (empty tag like `{edition-}`), or a string.
  * The pattern is expected to use named capture groups `title`, `year`, and
- * optionally `edition`.
+ * optionally `edition` and `tmdb`.
  */
 function parseFileStem(
   stem: string,
   fileRegex: RegExp
-): { title: string; year: number; edition: string | null } | null {
+): { title: string; year: number; edition: string | null; tmdbId: number | null } | null {
   const m = fileRegex.exec(stem)
   if (!m?.groups) return null
-  const { title, year, edition: editionRaw } = m.groups
+  const { title, year, edition: editionRaw, tmdb } = m.groups
   if (title === undefined || year === undefined) return null
 
   let edition: string | null
@@ -126,7 +137,7 @@ function parseFileStem(
   } else {
     edition = editionRaw.trim()
   }
-  return { title: title.trim(), year: parseInt(year, 10), edition }
+  return { title: title.trim(), year: parseInt(year, 10), edition, tmdbId: parseTmdbId(tmdb) }
 }
 
 /**
@@ -406,6 +417,21 @@ export function createMoviesModule(
                 )
               }
             }
+
+            if (
+              parsed.tmdbId !== null &&
+              parsedFolder.tmdbId !== null &&
+              parsed.tmdbId !== parsedFolder.tmdbId
+            ) {
+              if (rules.checks.warn_tmdb_tag_mismatch) {
+                warnings.add(
+                  'warn_tmdb_tag_mismatch',
+                  path.join(folderRel, f.name),
+                  `File says tmdb-${parsed.tmdbId}, folder says tmdb-${parsedFolder.tmdbId}.`,
+                  { fix: FIX.warn_tmdb_tag_mismatch }
+                )
+              }
+            }
           }
 
           // Duplicate-edition check: two files in same folder claiming same edition
@@ -425,13 +451,18 @@ export function createMoviesModule(
           }
 
           const key = makeKey(fileTitle, fileYear, edition)
-          if (!records.has(key)) {
+          const tmdbId = parsed.tmdbId ?? parsedFolder?.tmdbId ?? null
+          const record = records.get(key)
+          if (!record) {
             records.set(key, {
               title: fileTitle,
               year: fileYear,
               edition,
+              tmdb_id: tmdbId,
               versions: [],
             })
+          } else {
+            record.tmdb_id ??= tmdbId
           }
           // Look up the file's probe data and derive a quality bucket from
           // its dimensions. Quality stays null when the file has no probe
@@ -450,8 +481,10 @@ export function createMoviesModule(
 
     merge(existing: Map<string, MovieRecord>, incoming: Map<string, MovieRecord>): void {
       for (const [key, record] of incoming) {
-        if (existing.has(key)) {
-          existing.get(key)!.versions.push(...record.versions)
+        const target = existing.get(key)
+        if (target) {
+          target.versions.push(...record.versions)
+          target.tmdb_id ??= record.tmdb_id
         } else {
           existing.set(key, record)
         }
@@ -464,6 +497,7 @@ export function createMoviesModule(
           title: r.title,
           year: r.year,
           edition: r.edition,
+          tmdb_id: r.tmdb_id,
           versions: finalizeVersions(r.versions, categoryOrder),
         }))
         .sort((a, b) => {

@@ -15,7 +15,7 @@ import { PatternSchema, CategorySchema } from './helpers'
 export const ShowsRulesSchema = z.object({
   /**
    * Regex patterns for show, season, and episode names.
-   * - `show_folder` must capture: title, year, and optionally edition
+   * - `show_folder` must capture: title, year, and optionally edition, tmdb, and tvdb
    * - `season_folder` must capture: season (number string, will be parseInt'd)
    * - `file` must capture: title, year, season, episode, and optionally episode_end
    *
@@ -26,6 +26,15 @@ export const ShowsRulesSchema = z.object({
    * convention — `Show Title (YEAR) {edition-Name}`. Plex defines an edition at
    * the SHOW level only, never per-season or per-episode, so `file` carries no
    * edition group: episodes inside an edition folder are named normally.
+   *
+   * The optional `tmdb` group is Plex's `{tmdb-N}` ID tag, last on the show
+   * folder. It pins the TMDB match for Plex and for `validate:shows` alike.
+   * Like the edition, it lives on the folder only.
+   *
+   * The optional `tvdb` group is `{tvdb-N}`, for shows laid out the way TVDB
+   * structures them — an anthology like `Monster (2022) {tvdb-389492}` is one
+   * series with a season per story on TVDB, but several shows on TMDB. It pins
+   * Plex's match only: validation is TMDB-based and still searches by title.
    */
   patterns: z.object({
     show_folder: PatternSchema,
@@ -134,6 +143,13 @@ export const ShowsRulesSchema = z.object({
     warn_episode_code_case: z.boolean(),
     warn_season_mismatch: z.boolean(),
     warn_episode_gaps: z.boolean(),
+    /**
+     * Two files in one season folder cover the same episode number — an exact
+     * copy under a second name, or a multi-episode file overlapping a single.
+     * Plex merges them into one item, so one of the copies is invisible.
+     * One warning per season, like warn_episode_gaps.
+     */
+    warn_duplicate_episode: z.boolean(),
     warn_quality_mismatch: z.boolean(),
     /**
      * A SINGLE season exists in two or more category folders that resolve to
@@ -221,7 +237,8 @@ export type ShowsRules = z.infer<typeof ShowsRulesSchema>
 
 export const defaultShowsRules: ShowsRules = ShowsRulesSchema.parse({
   patterns: {
-    show_folder: '^(?<title>.+)\\s\\((?<year>\\d{4})\\)(?:\\s\\{edition-(?<edition>[^}]*)\\})?$',
+    show_folder:
+      '^(?<title>.+)\\s\\((?<year>\\d{4})\\)(?:\\s\\{edition-(?<edition>[^}]*)\\})?(?:\\s\\{tmdb-(?<tmdb>\\d+)\\})?(?:\\s\\{tvdb-(?<tvdb>\\d+)\\})?$',
     season_folder: { pattern: '^Season\\s(?<season>\\d{2})$', flags: 'i' },
     file: {
       pattern:
@@ -267,6 +284,7 @@ export const defaultShowsRules: ShowsRules = ShowsRulesSchema.parse({
     warn_episode_code_case: true,
     warn_season_mismatch: true,
     warn_episode_gaps: true,
+    warn_duplicate_episode: true,
     warn_quality_mismatch: true,
     warn_duplicate_quality: true,
     warn_multi_quality: true,

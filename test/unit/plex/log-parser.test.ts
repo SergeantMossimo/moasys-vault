@@ -109,6 +109,15 @@ describe('libraryPathFinder', () => {
     expect(findPath(`Media part analysis: ${ep}`)).toBe(ep)
     expect(findPath('NAT: PMP, got an error: Not Supported by gateway.')).toBeNull()
   })
+
+  it('keeps an apostrophe inside the filename', () => {
+    const ep =
+      "/media/Shows/Other HD/Sex and the City (1998)/Season 02/Sex and the City (1998) - s02e04 - They Shoot Single People, Don't They.mp4"
+    expect(findPath(`Failed to transcode file (234): ${ep}`)).toBe(ep)
+    expect(findPath(`[MI] Opening input file: "${ep}"`)).toBe(ep)
+    expect(findPath(`Could not read '${ep}': bad data`)).toBe(ep)
+    expect(findPath(`Updating part with ID=1 [${ep}]`)).toBe(ep)
+  })
 })
 
 describe('extractEvents', () => {

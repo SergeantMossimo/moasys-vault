@@ -239,6 +239,8 @@ So a problem line is tied to an item when:
 
 Ids are looked up in the catalogs from your last pull. The run prints how many lines named items the pull doesn't have — re-pull and re-run to identify them.
 
+Lines about a file or folder the drive's last scan doesn't have are skipped, and the run prints how many. The logs reach back a day or two, so without this a show you've just moved out of the library would keep its old errors until Plex rotated them away. Re-scan after moving things so the scan matches the disk. With no scan for a type, nothing is skipped.
+
 ### Log warnings
 
 One warning per folder, naming up to three distinct problems with the files involved, the number of log lines, and when they were logged. What each problem means is in the table below, keyed by the name the warning uses; the sample log lines behind it are in [`logs-summary.json`](#logs-summaryjson).

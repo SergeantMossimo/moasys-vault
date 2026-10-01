@@ -18,6 +18,8 @@ import {
   replaceEpisodeInCode,
   replaceSeasonInCode,
   sanitizeEpisodeTitle,
+  splitTmdbEpisode,
+  SplitEpisode,
   splitStem,
   validatePlan,
   validateUndoManifest,
@@ -362,6 +364,140 @@ describe('planEpisodeTitles', () => {
 })
 
 // ─────────────────────────────────────────────
+// planEpisodeTitles — --split-episode
+// ─────────────────────────────────────────────
+
+describe('splitTmdbEpisode', () => {
+  it('fills the empty next number when TMDB left a gap', () => {
+    const result = splitTmdbEpisode(
+      new Map([
+        [1, 'Forty (1) / Forty (2)'],
+        [3, 'Changes'],
+      ]),
+      1
+    )
+    expect(result).toEqual({
+      byNumber: new Map([
+        [1, 'Forty (1)'],
+        [2, 'Forty (2)'],
+        [3, 'Changes'],
+      ]),
+      shifted: false,
+    })
+  })
+
+  it('shifts every later TMDB number up one when TMDB numbered straight on', () => {
+    const result = splitTmdbEpisode(
+      new Map([
+        [1, 'Pilot'],
+        [2, 'A (1) / A (2)'],
+        [3, 'Next'],
+      ]),
+      2
+    )
+    expect(result).toEqual({
+      byNumber: new Map([
+        [1, 'Pilot'],
+        [2, 'A (1)'],
+        [3, 'A (2)'],
+        [4, 'Next'],
+      ]),
+      shifted: true,
+    })
+  })
+
+  it('refuses an entry that is not exactly two titles', () => {
+    expect(splitTmdbEpisode(new Map([[1, 'Pilot']]), 1)).toHaveProperty('problem')
+    expect(splitTmdbEpisode(new Map([[1, 'A / B / C']]), 1)).toHaveProperty('problem')
+    expect(splitTmdbEpisode(new Map([[1, 'A / B']]), 2)).toHaveProperty('problem')
+  })
+})
+
+describe('planEpisodeTitles with splitEpisode', () => {
+  function runSplit(
+    fileNames: string[],
+    tmdbEpisodes: Array<[number, string]>,
+    split: SplitEpisode
+  ) {
+    const files = fileNames.map(fileName => ({
+      absDir: `X:/Shows/SD/Show (2020)/Season 05`,
+      relDir: 'SD/Show (2020)/Season 05',
+      showFolder: 'Show (2020)',
+      seasonFolder: 'Season 05',
+      fileName,
+    }))
+    return planEpisodeTitles(
+      files,
+      fileRegex,
+      new Map([['Show (2020)', 100]]),
+      new Map([['100:5', new Map(tmdbEpisodes)]]),
+      false,
+      split
+    )
+  }
+
+  const files = ['Show (2020) - s05e01.mp4', 'Show (2020) - s05e02.mp4', 'Show (2020) - s05e03.mp4']
+
+  it('names both halves and passes the guard the gap would otherwise fail', () => {
+    const plan = runSplit(
+      files,
+      [
+        [1, 'Forty (1) / Forty (2)'],
+        [3, 'Changes'],
+      ],
+      { season: 5, episode: 1 }
+    )
+    expect(plan.skipped).toEqual([])
+    expect(plan.entries.map(e => e.to)).toEqual([
+      'Show (2020) - s05e01 - Forty (1).mp4',
+      'Show (2020) - s05e02 - Forty (2).mp4',
+      'Show (2020) - s05e03 - Changes.mp4',
+    ])
+    expect(plan.entries.map(e => e.note !== undefined)).toEqual([true, true, false])
+  })
+
+  it('notes every shifted entry when TMDB numbered straight on', () => {
+    const plan = runSplit(
+      files,
+      [
+        [1, 'Forty (1) / Forty (2)'],
+        [2, 'Changes'],
+      ],
+      { season: 5, episode: 1 }
+    )
+    expect(plan.entries.map(e => e.to)[2]).toBe('Show (2020) - s05e03 - Changes.mp4')
+    for (const entry of plan.entries) expect(entry.note).toMatch(/shifted up one/)
+  })
+
+  it('skips the season when the named episode is not a merged two-parter', () => {
+    const plan = runSplit(
+      files,
+      [
+        [1, 'Pilot'],
+        [2, 'Second'],
+        [3, 'Third'],
+      ],
+      { season: 5, episode: 1 }
+    )
+    expect(plan.entries).toEqual([])
+    expect(plan.skipped[0]!.reason).toMatch(/not two titles/)
+  })
+
+  it('leaves other seasons alone', () => {
+    const plan = runSplit(
+      files,
+      [
+        [1, 'Pilot'],
+        [2, 'Second'],
+        [3, 'Third'],
+      ],
+      { season: 4, episode: 1 }
+    )
+    expect(plan.entries.map(e => e.to)[0]).toBe('Show (2020) - s05e01 - Pilot.mp4')
+  })
+})
+
+// ─────────────────────────────────────────────
 // planShowPrefix
 // ─────────────────────────────────────────────
 
@@ -446,6 +582,34 @@ describe('planShowPrefix', () => {
       'Star Trek Voyager (1995) - s07e11 - Lineage.mp4'
     )
     expect(byFrom.get('Talespin (1990) - S01e01.mp4')).toBe('TaleSpin (1990) - S01e01.mp4')
+  })
+
+  it('keeps {tmdb-N} / {tvdb-N} folder tags off the files, like an edition', () => {
+    const plan = planShowPrefix(
+      [
+        {
+          absDir: '/x',
+          relDir: 'HD/Monster (2022) {tvdb-389492}/Season 02',
+          showFolder: 'Monster (2022) {tvdb-389492}',
+          seasonFolder: 'Season 02',
+          fileName:
+            'Monsters The Lyle and Erik Menendez Story (2024) - s01e01 - Blame It on the Rain.mp4',
+        },
+        {
+          absDir: '/y',
+          relDir: 'HD/Icons Unearthed The Simpsons (2022) {tmdb-214176}/Season 01',
+          showFolder: 'Icons Unearthed The Simpsons (2022) {tmdb-214176}',
+          seasonFolder: 'Season 01',
+          fileName: 'Icons Unearthed The Simpsons (2022) - s01e01 - The Origin.mp4',
+        },
+      ],
+      fileRegex,
+      compilePattern(defaultShowsRules.patterns.show_folder)
+    )
+    expect(plan.review).toEqual([])
+    expect(plan.entries.map(e => e.to)).toEqual([
+      'Monster (2022) - s01e01 - Blame It on the Rain.mp4',
+    ])
   })
 
   it('plans nothing for files whose prefix already matches — so a re-run is a no-op', () => {

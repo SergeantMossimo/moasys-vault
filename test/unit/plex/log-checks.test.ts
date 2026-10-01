@@ -4,6 +4,7 @@ import {
   LogItemIndex,
   ResolvedLogEvent,
   checkPlexLogs,
+  scannedPathSet,
   explainProblem,
   summarizeLogs,
 } from '../../../src/plex/log-checks'
@@ -164,18 +165,39 @@ describe('checkPlexLogs', () => {
       ignored?: Record<string, string[]>
       drive?: string
       checks?: Partial<typeof defaultPlexRules.checks>
+      scanned?: string[]
     } = {}
   ) {
     const warnings = new WarningCollector(parseIgnoreList(opts.ignored ?? {}, 'shows', 'test.yaml'))
-    const landed = checkPlexLogs({
+    const { landed, stale } = checkPlexLogs({
       mediaType: 'shows',
       drive: opts.drive ?? 'server',
       events,
       rules: { checks: { ...defaultPlexRules.checks, ...opts.checks } },
       warnings,
+      scanned: opts.scanned && scannedPathSet(opts.scanned),
     })
-    return { landed, warnings: warnings.all() }
+    return { landed, stale, warnings: warnings.all() }
   }
+
+  it('drops events about files the scan no longer has', () => {
+    const events = [resolved({ ratingKey: '77046' }), resolved({ ratingKey: '77047' })]
+    const { landed, stale, warnings } = run(events, { scanned: [EP2.toUpperCase()] })
+    expect([landed, stale]).toEqual([1, 1])
+    const issue = warnings[0]!.issue
+    expect(issue).toContain('Let Yourself Go')
+    expect(issue).not.toContain('All Mixed Up')
+
+    expect(run(events, { scanned: [] })).toMatchObject({ landed: 0, stale: 2, warnings: [] })
+  })
+
+  it('keeps a folder event while the scan still has a file under it', () => {
+    // A show id resolves to the season folders its episodes sit in.
+    const events = [resolved({ ratingKey: 'show' })]
+    expect(events[0]!.targets[0]!.isFile).toBe(false)
+    expect(run(events, { scanned: [EP1] }).landed).toBe(1)
+    expect(run(events, { scanned: ['Other HD/Firefly (2002)/Season 01/x.mkv'] }).stale).toBe(1)
+  })
 
   it('groups one folder’s problems into one warning per level', () => {
     const { landed, warnings } = run([

@@ -27,6 +27,7 @@ If you already follow Plex's conventions, you're good — the defaults in `rules
 - **Movie folder:** `Movie Title (YEAR)` — the year goes in parentheses
 - **File name:** matches the folder name
 - **Optional edition tag:** `{edition-<Name>}` between the year and the extension (e.g. `{edition-Director's Cut}`)
+- **Optional TMDB ID tag:** `{tmdb-<N>}` last, on the folder, the file, or both (e.g. `The Animatrix (2003) {tmdb-55931}`, or `Blade Runner (1982) {edition-Final Cut} {tmdb-78}.mp4`). Plex uses it to pick the right film; `validate:movies` uses it instead of searching by title
 
 **Examples:**
 
@@ -43,6 +44,7 @@ Movies/
 **Gotchas:**
 
 - **Each edition is its own catalog entry.** Two files in one folder claiming the same `{edition-…}` are flagged.
+- **The TMDB tag goes after any edition tag.** `{tmdb-78} {edition-Final Cut}` fires `warn_bad_file_name`. If the folder and file both carry one and the IDs differ, that's `warn_tmdb_tag_mismatch`, and the file's ID wins.
 - **Capitalization counts.** A file titled `The crow (1994)` in `The Crow (1994)/` gets its own lower-severity capitalization warning, separate from a genuinely different title.
 - **No subfolders inside a movie folder.** The scanner only reads a movie folder's direct children — video files in a subfolder are **not** added to the catalog. The subfolder is flagged so you know what was skipped.
 - **Quality folders.** If your categories are organized by quality (`UHD/`, `HD/`, `SD/`), the same movie in two tiers is flagged unless you whitelist the pair, and two copies in the _same_ tier (`HD/` + `Other HD/`) always are. See [Three configuration shapes](CONFIG.md#three-configuration-shapes).
@@ -68,6 +70,8 @@ Movies/
 
 - **Show folder:** `Show Title (YEAR)` — year in parentheses
 - **Optional edition tag:** `{edition-<Name>}` after the year, on the **show folder only** — see _Editions_ below
+- **Optional TMDB ID tag:** `{tmdb-<N>}` last on the **show folder only** (e.g. `Icons Unearthed The Simpsons (2022) {tmdb-214176}`). It pins the match when Plex or `validate:shows` would pick a similarly named series; episode files keep their plain `Show Title (YEAR)` prefix
+- **Optional TVDB ID tag:** `{tvdb-<N>}`, last, for a show laid out the way TVDB structures it. Anthologies are where this matters: TVDB lists `Monster` as one series with a season per story (S1 Dahmer, S2 Menendez, S3 Ed Gein) where TMDB lists separate shows, and Plex's TV agent follows TVDB's grouping, merging separate folders episode by episode. Lay those out as one folder, `Monster (2022) {tvdb-389492}/Season 02/Monster (2022) - S02E01 - ….mp4`. Validation stays TMDB-based, so expect TMDB count warnings on such a show; ignore them
 - **Season folder:** `Season XX` — two-digit zero-padded number (`Season 01`, not `Season 1`)
 - **Episode file:** `Show Title (YEAR) - S01E01 - Episode Title.<ext>`
   - The trailing `- Episode Title` portion is optional, but files without it are summarized as missing titles

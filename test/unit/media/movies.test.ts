@@ -70,6 +70,7 @@ describe('movies module — happy paths', () => {
         title: 'The Crow',
         year: 1994,
         edition: null,
+        tmdb_id: null,
         versions: [{ category: 'UHD', quality: 'UHD' }],
       },
     ])
@@ -114,6 +115,59 @@ describe('movies module — happy paths', () => {
       },
     })
     expect(result.output[0]?.edition).toBe('Final Cut')
+  })
+
+  it('accepts a {tmdb-N} tag on the folder and file without flagging either', () => {
+    const result = runMoviesScan({
+      spec: {
+        HD: {
+          'The Animatrix (2003) {tmdb-55931}': {
+            'The Animatrix (2003) {tmdb-55931}.mp4': '',
+          },
+        },
+      },
+    })
+    expect(result.warnings).toEqual([])
+    expect(result.output[0]).toMatchObject({
+      title: 'The Animatrix',
+      year: 2003,
+      edition: null,
+      tmdb_id: 55931,
+    })
+  })
+
+  it('takes the tmdb ID from the folder when only the folder is tagged', () => {
+    const result = runMoviesScan({
+      spec: {
+        HD: { 'The Animatrix (2003) {tmdb-55931}': { 'The Animatrix (2003).mp4': '' } },
+      },
+    })
+    expect(result.warnings).toEqual([])
+    expect(result.output[0]?.tmdb_id).toBe(55931)
+  })
+
+  it('accepts a file carrying both an edition and a tmdb tag', () => {
+    const result = runMoviesScan({
+      spec: {
+        UHD: {
+          'Blade Runner (1982)': { 'Blade Runner (1982) {edition-Final Cut} {tmdb-78}.mp4': '' },
+        },
+      },
+    })
+    expect(result.warnings).toEqual([])
+    expect(result.output[0]).toMatchObject({ edition: 'Final Cut', tmdb_id: 78 })
+  })
+
+  it('carries a tmdb ID onto the record when only one category copy is tagged', () => {
+    const result = runMoviesScan({
+      spec: {
+        UHD: { 'The Crow (1994)': { 'The Crow (1994).mp4': '' } },
+        HD: { 'The Crow (1994) {tmdb-9495}': { 'The Crow (1994).mp4': '' } },
+      },
+      rules: { acceptable_quality_combos: [['UHD', 'HD']] },
+    })
+    expect(result.output).toHaveLength(1)
+    expect(result.output[0]?.tmdb_id).toBe(9495)
   })
 
   it('serializes movies sorted by title then year then edition', () => {
@@ -215,6 +269,18 @@ describe('movies module — warnings', () => {
     expect(result.warnings.some(w => w.issue.match(/File says \d{4}, folder says \d{4}/))).toBe(
       true
     )
+  })
+
+  it('warn_tmdb_tag_mismatch: folder and file carry different tmdb IDs', () => {
+    const result = runMoviesScan({
+      spec: {
+        UHD: { 'The Crow (1994) {tmdb-9495}': { 'The Crow (1994) {tmdb-1}.mp4': '' } },
+      },
+    })
+    const hits = result.warnings.filter(w => w.type === 'warn_tmdb_tag_mismatch')
+    expect(hits.map(w => w.issue)).toEqual(['File says tmdb-1, folder says tmdb-9495.'])
+    // The file's ID wins.
+    expect(result.output[0]?.tmdb_id).toBe(1)
   })
 
   it('warn_suspicious_year: year before 1888', () => {

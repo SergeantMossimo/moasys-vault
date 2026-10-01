@@ -21,13 +21,17 @@
           "type": ["string", "null"],
           "description": "Edition tag from filename ({edition-Name}), or null when no edition is present."
         },
+        "tmdb_id": {
+          "type": ["integer", "null"],
+          "description": "TMDB ID from a {tmdb-N} tag — the file's, else the folder's — or null when neither carries one. validate:movies uses it instead of searching."
+        },
         "versions": {
           "type": "array",
           "items": { "$ref": "common.json#/$defs/Version" },
           "minItems": 1
         }
       },
-      "required": ["title", "year", "edition", "versions"],
+      "required": ["title", "year", "edition", "tmdb_id", "versions"],
       "additionalProperties": false
     }
   }

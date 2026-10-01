@@ -15,6 +15,14 @@
           "type": ["string", "null"],
           "description": "Plex TV Show Editions tag off the show folder, or null when untagged. Two editions of one series share a TMDB match but are separate rows."
         },
+        "tmdb_tag": {
+          "type": ["integer", "null"],
+          "description": "The show folder's {tmdb-N} tag, or null when untagged. When set, tmdb_id equals it and no search ran. Absent in files written before v0.19."
+        },
+        "tvdb_tag": {
+          "type": ["integer", "null"],
+          "description": "The show folder's {tvdb-N} tag, or null when untagged. Carried so the row joins back to the folder name; it doesn't affect the TMDB match. Absent in files written before v0.19."
+        },
         "confidence": { "type": "string", "enum": ["high", "medium", "low", "none"] },
         "tmdb_id": { "type": ["integer", "null"] },
         "tmdb_title": { "type": ["string", "null"] },

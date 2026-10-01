@@ -224,17 +224,27 @@ function escapeRegExp(s: string): string {
 
 /**
  * Build a finder for library paths inside a message. A path starts at one of
- * the libraries' folder prefixes and runs to a quote, bracket, or the end of
- * the line — paths contain spaces, so whitespace can't end one.
+ * the libraries' folder prefixes — paths contain spaces, so whitespace can't
+ * end one. A path wrapped in quotes runs to its closing quote; an unwrapped
+ * one runs to a double quote, a bracket, or the end of the line.
+ *
+ * An apostrophe ends a path only when the path opened with one, and then only
+ * where it is followed by a boundary. Filenames are full of them
+ * (`Don't They.mp4`), and stopping at the first one cut those paths short.
  */
 export function libraryPathFinder(prefixes: string[]): (message: string) => string | null {
   const usable = [...new Set(prefixes.map(p => p.replace(/\/+$/, '')).filter(p => p.length > 1))]
   if (usable.length === 0) return () => null
   usable.sort((a, b) => b.length - a.length)
-  const pattern = new RegExp(`(?:${usable.map(escapeRegExp).join('|')})/[^"'\\]\\n]+`)
+  const prefix = `(?:${usable.map(escapeRegExp).join('|')})/`
+  const pattern = new RegExp(
+    `"(${prefix}[^"\\n]+)"|'(${prefix}[^\\n]+?)'(?=[\\s,;:)\\]]|$)|(${prefix}[^"\\]\\n]+)`,
+    'm'
+  )
   return message => {
     const m = pattern.exec(message)
-    return m ? m[0].replace(/[\s,;:]+$/, '') : null
+    if (!m) return null
+    return (m[1] ?? m[2] ?? m[3]!).replace(/[\s,;:]+$/, '')
   }
 }
 

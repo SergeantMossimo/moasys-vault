@@ -227,6 +227,33 @@ export interface PlexLogCheckInput {
   events: ResolvedLogEvent[]
   rules: PlexRules
   warnings: WarningCollector
+  /**
+   * The scan's files and every folder above them, case-folded — see
+   * `scannedPathSet`. Events about anything outside it are dropped as stale:
+   * the logs reach back a day or two, so they still name files moved or
+   * deleted since. Omitted when there's no scan to compare against.
+   */
+  scanned?: ReadonlySet<string>
+}
+
+/** The set `PlexLogCheckInput.scanned` expects, from the scan's library-relative file paths. */
+export function scannedPathSet(files: Iterable<string>): Set<string> {
+  const set = new Set<string>()
+  for (const file of files) {
+    let p = file.replace(/\\/g, '/').toLowerCase()
+    while (p.length > 0 && !set.has(p)) {
+      set.add(p)
+      p = dirname(p)
+    }
+  }
+  return set
+}
+
+export interface PlexLogCheckResult {
+  /** Events that landed on this drive and media type and are still in the scan. */
+  landed: number
+  /** Events that landed here but name only files or folders the scan no longer has. */
+  stale: number
 }
 
 const WARNING_TYPE: Record<LogLevel, 'warn_plex_log_error' | 'warn_plex_log_warning'> = {
@@ -262,21 +289,26 @@ function sampleLine(message: string): string {
  * drive and media type, listing each distinct problem with its files, line
  * count and time span. What each problem means lives in docs/PLEX.md and its
  * sample log lines in logs-summary.json, so neither is repeated per folder.
- * @returns how many events landed here
  */
-export function checkPlexLogs(input: PlexLogCheckInput): number {
-  const { mediaType, drive, rules, warnings } = input
+export function checkPlexLogs(input: PlexLogCheckInput): PlexLogCheckResult {
+  const { mediaType, drive, rules, warnings, scanned } = input
   const byFolder = new Map<
     string,
     { folder: string; level: LogLevel; problems: Map<string, ProblemGroup> }
   >()
   let landed = 0
+  let stale = 0
 
   for (const event of input.events) {
-    const targets = event.targets.filter(
+    const here = event.targets.filter(
       t => t.mediaType === mediaType && t.drive.toLowerCase() === drive.toLowerCase()
     )
-    if (targets.length === 0) continue
+    if (here.length === 0) continue
+    const targets = scanned ? here.filter(t => scanned.has(t.libraryPath.toLowerCase())) : here
+    if (targets.length === 0) {
+      stale++
+      continue
+    }
     landed++
 
     const problem = explainProblem(event)
@@ -323,7 +355,7 @@ export function checkPlexLogs(input: PlexLogCheckInput): number {
         `warnings"; sample log lines and full counts are in output/plex/logs-summary.json.`,
     })
   }
-  return landed
+  return { landed, stale }
 }
 
 // ─────────────────────────────────────────────

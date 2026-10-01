@@ -2,13 +2,20 @@
  * plex/run-shared.ts
  * ------------------
  * Pieces shared by the offline `plex:*` runners that write per-drive warnings
- * (`plex:check`, `plex:logs`): the per-type rules they need, the
- * `--no-ignore` review mode, and the warnings write + console summary.
+ * (`plex:check`, `plex:logs`): the per-type rules they need, the scan's file
+ * list, the `--no-ignore` review mode, and the warnings write + console summary.
  */
 
+import fs from 'fs'
 import path from 'path'
 
 import { MediaRootConfig, WarningCollector } from '../core/types'
+import type {
+  ArtistProbeOutput,
+  BookProbeOutput,
+  MovieProbeOutput,
+  ShowProbeOutput,
+} from '../probe/types'
 import { driveSlug } from '../core/config'
 import { loadIgnoreList } from '../core/ignored'
 import { reportLegacyOutputFiles, typeOutputPaths } from '../core/output-paths'
@@ -20,6 +27,32 @@ import { warningBreakdown, writeWarnings } from '../core/runner-shared'
 import { MediaType } from './types'
 
 export { MEDIA_TYPES } from '../core/project'
+
+// ─────────────────────────────────────────────
+// Scan output
+// ─────────────────────────────────────────────
+
+function readJson<T>(p: string): T {
+  return JSON.parse(fs.readFileSync(p, 'utf-8')) as T
+}
+
+/** Every library-relative file path in a probe.json, whatever the media type's shape. */
+export function probeFilePaths(mediaType: MediaType, probePath: string): string[] {
+  switch (mediaType) {
+    case 'movies':
+      return readJson<MovieProbeOutput[]>(probePath).flatMap(m => m.files.map(f => f.path))
+    case 'shows':
+      return readJson<ShowProbeOutput[]>(probePath).flatMap(s =>
+        s.seasons.flatMap(season => season.episodes.map(e => e.path))
+      )
+    case 'music':
+      return readJson<ArtistProbeOutput[]>(probePath).flatMap(a =>
+        a.albums.flatMap(album => album.tracks.map(t => t.path))
+      )
+    case 'audiobooks':
+      return readJson<BookProbeOutput[]>(probePath).flatMap(b => b.chapters.map(c => c.path))
+  }
+}
 
 // ─────────────────────────────────────────────
 // --no-ignore

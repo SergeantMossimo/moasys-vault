@@ -279,9 +279,15 @@ export async function validateShows(
 
     // Cached no-match / low-confidence verdicts are always re-queried — see
     // the matching comment in validate/movies.ts for the rationale.
+    // A `{tmdb-N}` tag on the show folder settles the match outright and skips
+    // the search — see the matching note in validate/movies.ts.
     const cached = searchCache.get(sKey)
     let resolved: ResolvedSearch | undefined =
-      cached && cached.confidence !== 'none' && cached.confidence !== 'low' ? cached : undefined
+      show.tmdb_id !== null
+        ? { best_id: show.tmdb_id, confidence: 'high', candidates: [] }
+        : cached && cached.confidence !== 'none' && cached.confidence !== 'low'
+          ? cached
+          : undefined
     if (resolved) {
       cachedCount++
     } else {
@@ -301,6 +307,8 @@ export async function validateShows(
       title: show.title,
       year: show.year,
       edition: show.edition,
+      tmdb_tag: show.tmdb_id,
+      tvdb_tag: show.tvdb_id,
       confidence: resolved.confidence,
       tmdb_id: resolved.best_id,
       tmdb_title: null,
@@ -356,9 +364,10 @@ export async function validateShows(
     // The label has to be the folder name as it sits on disk — edition tag
     // included — so the path is clickable and an ignore entry for one edition
     // doesn't silence the other.
-    const label = show.edition
-      ? `${show.title} (${show.year}) {edition-${show.edition}}`
-      : `${show.title} (${show.year})`
+    let label = `${show.title} (${show.year})`
+    if (show.edition) label += ` {edition-${show.edition}}`
+    if (show.tmdb_id !== null) label += ` {tmdb-${show.tmdb_id}}`
+    if (show.tvdb_id !== null) label += ` {tvdb-${show.tvdb_id}}`
     const firstCategory = show.seasons[0]?.versions[0]?.category
     const showPath =
       firstCategory && firstCategory !== 'default' ? `${firstCategory}/${label}` : label

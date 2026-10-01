@@ -496,6 +496,12 @@ The guard is all-or-nothing: a skipped season keeps _every_ file untouched, incl
 npm run fix:shows -- --fix episode-titles external --allow-partial
 ```
 
+**`--split-episode S05E01`** handles the other way round from a multi-episode file: TMDB lists a two-parter as one entry (`Forty (1) / Forty (2)`), but you hold it as two files, `s05e01` and `s05e02`. The flag splits that entry at `/` and gives the halves to E01 and E02. If TMDB left E02 empty, which is what it usually does, nothing else changes. If TMDB numbered straight on, every later TMDB episode moves up one to line up with your files. The season guard then runs against the corrected list as usual. The flag requires `--show`, because an episode code means nothing across a whole library. An entry that isn't exactly two titles skips the season rather than guessing, and every entry the split changed carries a note in the dry run:
+
+```bash
+npm run fix:shows -- --fix episode-titles external --show "This Is Us (2016)" --split-episode S05E01
+```
+
 What's counted is the number of **TMDB episodes resolved**, not local files, which makes multi-episode files come out right in both directions: one file spanning `E01-E02` counts as two episodes, and a file spanning a two-parter that TMDB merged into a single entry counts as one.
 
 Seasons with no cached TMDB data (most `Specials` folders) are skipped for the same reason.

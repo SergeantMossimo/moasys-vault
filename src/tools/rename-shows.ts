@@ -31,6 +31,9 @@
  *                   already populated — this mode does no network I/O.
  *                   `--allow-partial` also names seasons that hold fewer
  *                   episodes than TMDB lists; those entries carry a note.
+ *                   `--split-episode S05E01 --show "<Name>"` names e01 and
+ *                   e02 from the two halves of a two-parter TMDB lists as one
+ *                   "A / B" entry (see `splitTmdbEpisode`).
  *
  *   episode-code    Normalize the season/episode code to the configured
  *                   `episode_code_case` and the canonical multi-episode
@@ -98,6 +101,7 @@
  *   npm run fix:shows -- --fix show-prefix external --apply
  *   npm run fix:shows -- --fix episode-titles external --show "Barry (2018)"
  *   npm run fix:shows -- --fix episode-titles external --allow-partial
+ *   npm run fix:shows -- --fix episode-titles external --show "This Is Us (2016)" --split-episode S05E01
  *   npm run fix:shows -- --fix season-code external --show "Icons Unearthed Batman (2024)"
  *   npm run fix:shows -- --fix show-folder external --show "Saved by Bell (1989)" --to "Saved by the Bell (1989)"
  *   npm run fix:shows -- --undo output/external/shows/fixes/rename-undo-<ts>.json
@@ -218,6 +222,8 @@ interface Args {
   to?: string
   /** episode-titles only: name seasons that hold fewer episodes than TMDB lists. */
   allowPartial: boolean
+  /** episode-titles only: spread one merged TMDB two-parter over two files. */
+  splitEpisode?: SplitEpisode
 }
 
 function usage(): never {
@@ -232,7 +238,9 @@ function usage(): never {
   Modes:
     show-prefix      Rewrite each file's "<Title> (<Year>)" prefix to match its show folder
     episode-titles   Append " - <Episode Title>" from the TMDB cache
-                     (--allow-partial also names seasons you hold only part of)
+                     (--allow-partial also names seasons you hold only part of;
+                     --split-episode S05E01 --show "<Name>" names e01 and e02
+                     from a two-parter TMDB lists as one "A / B" entry)
     episode-code    Normalize season/episode code casing, padding, and multi-episode suffix
     season-code      Rewrite each file's season number to match its season folder
     renumber         Give each file its own episode number when a two-parter
@@ -293,13 +301,36 @@ function parseArgs(argv: string[]): Args | { undo: string } {
     usage()
   }
 
+  const splitIndex = argv.indexOf('--split-episode')
+  let splitEpisode: SplitEpisode | undefined
+  if (splitIndex !== -1) {
+    const m = /^s(\d{1,3})e(\d{1,3})$/i.exec(argv[splitIndex + 1] ?? '')
+    if (!m) {
+      console.error('\n  Error: --split-episode requires an episode code, e.g. S05E01')
+      usage()
+    }
+    if (fix !== 'episode-titles') {
+      console.error('\n  Error: --split-episode only applies to --fix episode-titles')
+      usage()
+    }
+    // An episode code means nothing across a whole library, so a split is
+    // always pinned to one named show.
+    if (show === undefined) {
+      console.error('\n  Error: --split-episode requires --show "<Folder Name>"')
+      usage()
+    }
+    splitEpisode = { season: parseInt(m[1]!, 10), episode: parseInt(m[2]!, 10) }
+  }
+
   // The drive is the first bare positional that isn't a flag or a flag's
   // value. Collecting consumed indexes first keeps this robust to flag order.
   const consumed = new Set<number>()
   for (const [index, arg] of argv.entries()) {
     if (arg.startsWith('--')) {
       consumed.add(index)
-      if (arg === '--fix' || arg === '--show' || arg === '--to') consumed.add(index + 1)
+      if (arg === '--fix' || arg === '--show' || arg === '--to' || arg === '--split-episode') {
+        consumed.add(index + 1)
+      }
     }
   }
   const drive = argv.find((arg, index) => !consumed.has(index) && !arg.startsWith('--'))
@@ -309,7 +340,15 @@ function parseArgs(argv: string[]): Args | { undo: string } {
     usage()
   }
 
-  return { fix: fix as FixMode, drive, apply: argv.includes('--apply'), show, to, allowPartial }
+  return {
+    fix: fix as FixMode,
+    drive,
+    apply: argv.includes('--apply'),
+    show,
+    to,
+    allowPartial,
+    ...(splitEpisode !== undefined ? { splitEpisode } : {}),
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -566,12 +605,15 @@ export function planShowPrefix(
  * included. Two editions of one series share a title+year, so a key without
  * the tag would collapse them onto each other.
  *
- * `edition` is absent in validation.json files written before editions were
- * supported; those rows produce the plain form, exactly as they did then.
+ * `edition` and `tmdb_tag` are absent in validation.json files written before
+ * each was supported; those rows produce the plain form, exactly as they did then.
  */
 function showFolderNameOf(show: ShowValidation): string {
-  const base = `${show.title} (${show.year})`
-  return show.edition ? `${base} {edition-${show.edition}}` : base
+  let name = `${show.title} (${show.year})`
+  if (show.edition) name += ` {edition-${show.edition}}`
+  if (show.tmdb_tag != null) name += ` {tmdb-${show.tmdb_tag}}`
+  if (show.tvdb_tag != null) name += ` {tvdb-${show.tvdb_tag}}`
+  return name
 }
 
 /**
@@ -650,6 +692,47 @@ function groupBySeason(files: EpisodeFile[], fileRegex: RegExp): SeasonGroup[] {
   return [...groups.values()]
 }
 
+/** `--split-episode S05E01`: the TMDB entry the user says is two files locally. */
+export interface SplitEpisode {
+  season: number
+  episode: number
+}
+
+/**
+ * Spread one TMDB entry named "A / B" over episode N and N+1, for a season
+ * whose files hold the two halves of a two-parter TMDB lists as one entry
+ * (This Is Us S5: TMDB has "Forty (1) / Forty (2)" at 1 and nothing at 2).
+ *
+ * If TMDB left N+1 empty, N+1 simply takes the second half. If TMDB numbered
+ * straight on (N+1 is the next story), every TMDB number above N moves up one
+ * so it lines up with the files, which run one ahead from there.
+ *
+ * Returns a problem string instead when the entry can't be split exactly in
+ * two, so the season is skipped rather than guessed at.
+ */
+export function splitTmdbEpisode(
+  byNumber: Map<number, string>,
+  episode: number
+): { byNumber: Map<number, string>; shifted: boolean } | { problem: string } {
+  const name = byNumber.get(episode)
+  if (name === undefined) return { problem: `TMDB lists no episode ${episode} to split` }
+
+  const halves = name.split(' / ').map(half => half.trim())
+  if (halves.length !== 2 || halves.some(half => half === '')) {
+    return { problem: `TMDB episode ${episode} is '${name}', not two titles joined by ' / '` }
+  }
+
+  const shifted = byNumber.has(episode + 1)
+  const out = new Map<number, string>()
+  for (const [n, title] of byNumber) {
+    if (n < episode) out.set(n, title)
+    else if (n > episode) out.set(shifted ? n + 1 : n, title)
+  }
+  out.set(episode, halves[0]!)
+  out.set(episode + 1, halves[1]!)
+  return { byNumber: new Map([...out].sort(([a], [b]) => a - b)), shifted }
+}
+
 /**
  * Append " - <Episode Title>" to files that parse cleanly but carry no title.
  *
@@ -687,13 +770,19 @@ function groupBySeason(files: EpisodeFile[], fileRegex: RegExp): SeasonGroup[] {
  *
  * The guard is all-or-nothing per season: a skipped season keeps every one of
  * its files untouched, including the ones that would have resolved fine.
+ *
+ * `splitEpisode` (`--split-episode`, always pinned to one show by `--show`)
+ * rewrites that season's TMDB list with `splitTmdbEpisode` BEFORE the guard,
+ * so the guard then checks the files against the corrected list. Every entry
+ * whose title the split changed carries a note.
  */
 export function planEpisodeTitles(
   files: EpisodeFile[],
   fileRegex: RegExp,
   tmdbIdByShowFolder: Map<string, number>,
   seasonEpisodeNames: Map<string, Map<number, string>>,
-  allowPartial = false
+  allowPartial = false,
+  splitEpisode?: SplitEpisode
 ): Omit<Plan, 'generated' | 'fix' | 'drive' | 'root_path'> {
   const entries: PlanEntry[] = []
   const skipped: SkipEntry[] = []
@@ -712,13 +801,37 @@ export function planEpisodeTitles(
       continue
     }
 
-    const byNumber = seasonEpisodeNames.get(`${tmdbId}:${group.seasonNumber}`)
+    let byNumber = seasonEpisodeNames.get(`${tmdbId}:${group.seasonNumber}`)
     if (byNumber === undefined) {
       skipped.push({
         path: group.relDir,
         reason: `${untitled.length} file(s) — no cached TMDB data for season ${group.seasonNumber}`,
       })
       continue
+    }
+
+    // ── --split-episode ─────────────────────────────────────────────────
+    // Episodes in [first, last] got their title from the split, not TMDB as-is.
+    let split: { first: number; last: number; note: string } | undefined
+    if (splitEpisode !== undefined && splitEpisode.season === group.seasonNumber) {
+      const n = splitEpisode.episode
+      const merged = byNumber.get(n)
+      const result = splitTmdbEpisode(byNumber, n)
+      if ('problem' in result) {
+        skipped.push({
+          path: group.relDir,
+          reason: `${untitled.length} file(s) — season not renamed: ${result.problem}`,
+        })
+        continue
+      }
+      byNumber = result.byNumber
+      split = {
+        first: n,
+        last: result.shifted ? Infinity : n + 1,
+        note:
+          `split TMDB e${n} '${merged!}' over e${n} and e${n + 1}` +
+          (result.shifted ? '; later TMDB episodes shifted up one' : ''),
+      }
     }
 
     // ── Season guard ────────────────────────────────────────────────────
@@ -779,9 +892,12 @@ export function planEpisodeTitles(
       }
 
       const isMulti = parts.episodeEnd > parts.episodeStart
+      const touchedBySplit =
+        split !== undefined && parts.episodeEnd >= split.first && parts.episodeStart <= split.last
       const notes = [
         ...(isMulti ? [`multi-episode — TMDB gave ${names.length} title(s), review this one`] : []),
         ...(partialNote !== undefined ? [partialNote] : []),
+        ...(touchedBySplit ? [split!.note] : []),
       ]
       entries.push({
         dir: file.relDir,
@@ -1314,7 +1430,7 @@ export function planShowFolder(
   if (!compilePattern(rules.patterns.show_folder).test(to)) {
     problems.push(
       `'${to}' does not match patterns.show_folder ` +
-        `(expected "Title (YEAR)", optionally "Title (YEAR) {edition-Name}")`
+        `(expected "Title (YEAR)", optionally followed by {edition-Name}, {tmdb-N} and/or {tvdb-N})`
     )
   }
   if (/[. ]$/.test(to) || to !== to.trim()) {
@@ -1817,7 +1933,8 @@ function main(): void {
         fileRegex,
         buildTmdbIdByShowFolder(out.validation),
         loadSeasonEpisodeNames(path.join(PROJECT_ROOT, 'cache', 'tmdb-show-seasons.json')),
-        args.allowPartial
+        args.allowPartial,
+        args.splitEpisode
       )
       break
     case 'episode-code':

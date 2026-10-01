@@ -10,10 +10,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Folder + file name patterns ─────────────────────────────────────────────
-# Plex's movie naming convention. Patterns use named capture groups.
+# Plex's movie naming convention. Patterns use named capture groups. Both
+# accept Plex's optional {tmdb-N} ID tag last: The Animatrix (2003) {tmdb-55931}
 patterns:
-  folder: '^(?<title>.+)\s\((?<year>\d{4})\)$'                                     # The Crow (1994)
-  file:   '^(?<title>.+)\s\((?<year>\d{4})\)(?:\s\{edition-(?<edition>[^}]*)\})?$' # The Crow (1994) {edition-Director's Cut}
+  folder: '^(?<title>.+)\s\((?<year>\d{4})\)(?:\s\{tmdb-(?<tmdb>\d+)\})?$'                                        # The Crow (1994)
+  file:   '^(?<title>.+)\s\((?<year>\d{4})\)(?:\s\{edition-(?<edition>[^}]*)\})?(?:\s\{tmdb-(?<tmdb>\d+)\})?$' # The Crow (1994) {edition-Director's Cut}
 
 # ── Subfolders under root_path to walk ──────────────────────────────────────
 # Empty (the default) = scan root_path directly and label everything as
@@ -133,6 +134,7 @@ checks:
   warn_title_mismatch: true       # File title vs folder title
   warn_title_case: true           # File title matches folder except for capitalization
   warn_year_mismatch: true        # File year vs folder year
+  warn_tmdb_tag_mismatch: true    # File and folder carry different {tmdb-N} IDs
   warn_duplicate_edition: true    # Two files in same folder claim same edition
   warn_duplicate_quality: true    # Movie in two folders of the SAME quality tier (HD + Other HD) — not whitelistable
   warn_multi_quality: true        # Movie in multiple quality folders (unless in acceptable_quality_combos)
