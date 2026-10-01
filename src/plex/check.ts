@@ -27,12 +27,6 @@ import { loadTypeRules } from '../core/rules/registry'
 import { typeOutputPaths } from '../core/output-paths'
 import { PROJECT_ROOT } from '../core/project'
 import { parseRunnerArgs, printBanner, rootPathAvailable, selectRoot } from '../core/runner-shared'
-import type {
-  ArtistProbeOutput,
-  BookProbeOutput,
-  MovieProbeOutput,
-  ShowProbeOutput,
-} from '../probe/types'
 import type { MovieValidation, ShowValidation } from '../validate/types'
 
 import { checkPlex, tmdbMatchKey } from './checks'
@@ -41,6 +35,7 @@ import {
   NO_IGNORE_FLAG,
   noIgnoreRequested,
   plexWarningCollector,
+  probeFilePaths,
   typeRules,
   warningsPath,
   writePlexWarnings,
@@ -54,24 +49,6 @@ import { MediaType, PlexCatalogOutput, PlexLibrariesOutput } from './types'
 
 function readJson<T>(p: string): T {
   return JSON.parse(fs.readFileSync(p, 'utf-8')) as T
-}
-
-/** Every library-relative file path in a probe.json, whatever the media type's shape. */
-function probeFilePaths(mediaType: MediaType, probePath: string): string[] {
-  switch (mediaType) {
-    case 'movies':
-      return readJson<MovieProbeOutput[]>(probePath).flatMap(m => m.files.map(f => f.path))
-    case 'shows':
-      return readJson<ShowProbeOutput[]>(probePath).flatMap(s =>
-        s.seasons.flatMap(season => season.episodes.map(e => e.path))
-      )
-    case 'music':
-      return readJson<ArtistProbeOutput[]>(probePath).flatMap(a =>
-        a.albums.flatMap(album => album.tracks.map(t => t.path))
-      )
-    case 'audiobooks':
-      return readJson<BookProbeOutput[]>(probePath).flatMap(b => b.chapters.map(c => c.path))
-  }
 }
 
 /**

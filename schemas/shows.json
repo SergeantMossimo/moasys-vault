@@ -15,12 +15,20 @@
           "type": ["string", "null"],
           "description": "Plex TV Show Editions tag off the show folder ('Show (2026) {edition-True Hue Color}'), or null when untagged. Editions of one series are separate entries — Plex tracks their watch state separately."
         },
+        "tmdb_id": {
+          "type": ["integer", "null"],
+          "description": "TMDB ID from the show folder's {tmdb-N} tag, or null when untagged. validate:shows uses it instead of searching."
+        },
+        "tvdb_id": {
+          "type": ["integer", "null"],
+          "description": "TVDB ID from the show folder's {tvdb-N} tag, or null when untagged. Pins Plex's match only; validation is TMDB-based and ignores it."
+        },
         "seasons": {
           "type": "array",
           "items": { "$ref": "#/$defs/SeasonOutput" }
         }
       },
-      "required": ["title", "year", "edition", "seasons"],
+      "required": ["title", "year", "edition", "tmdb_id", "tvdb_id", "seasons"],
       "additionalProperties": false
     },
     "SeasonOutput": {

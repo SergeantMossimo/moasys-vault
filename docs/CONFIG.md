@@ -228,6 +228,8 @@ patterns:
 
 **The `edition` group.** Two patterns carry an optional `edition` capture group for Plex's `{edition-Name}` tag — `movies.patterns.file` and `shows.patterns.show_folder`. The level differs because Plex's does: a movie edition is a file in a shared folder, a show edition is a whole folder. Dropping the group from either pattern makes tagged names unparseable, so they fire `warn_bad_file_name` / `warn_bad_show_folder` instead. See [CONVENTIONS.md](CONVENTIONS.md) for the naming rules and `warn_empty_edition` for a tag with no name.
 
+**The `tmdb` group.** Both movie patterns and `shows.patterns.show_folder` carry an optional `tmdb` capture group for Plex's `{tmdb-N}` ID tag, which lands in `movies.json` / `shows.json` as `tmdb_id` and lets validation skip the title search. Drop it and tagged names fire `warn_bad_folder_name` / `warn_bad_file_name` / `warn_bad_show_folder`. `show_folder` also carries a `tvdb` group for `{tvdb-N}`, which comes after `{tmdb-N}` when both are present and is recorded as `tvdb_id` without affecting validation.
+
 ---
 
 ### `categories`

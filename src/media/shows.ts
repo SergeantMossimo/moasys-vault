@@ -94,6 +94,9 @@ const FIX = {
     `present the same show two ways. Fix with: npm run fix:shows -- --fix show-prefix <drive> --apply`,
   warn_season_mismatch: `Move the file to the season folder its code names, or fix the code.`,
   warn_episode_gaps: `Add the missing episodes, or ignore this if the show really skips them.`,
+  warn_duplicate_episode:
+    `Plex merges files that share an episode number, so only one plays. Delete the ` +
+    `redundant copy, or fix the episode code on a file that's misnumbered.`,
   warn_no_videos: `Add the episodes, or delete the empty folder.`,
   warn_non_primary: `Re-encode to your primary format if you want one format throughout.`,
   warn_quality_mismatch:
@@ -108,25 +111,39 @@ const FIX = {
   permission_denied: `Check the folder's permissions, or whether the drive is still mounted.`,
 } as const
 
+/**
+ * Plex's split-episode suffix (`Show (2020) - S01E01 - pt1`). Plex stacks the
+ * parts into one episode, so `warn_duplicate_episode` treats them as one file.
+ * The markers are the ones Plex stacks on: cd, disc, disk, dvd, part, pt.
+ */
+const STACK_SUFFIX = /[\s._-]+(?:cd|dis[ck]|dvd|part|pt)[\s._-]*\d+$/i
+
 // ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
 
 /**
  * Parse a show folder name using the configured pattern.
- * Returns { title, year, edition } or null.
+ * Returns { title, year, edition, tmdbId, tvdbId } or null.
  *
  * `edition` is Plex's TV Show Editions tag and follows the same three-state
  * convention as the movies file parser: null (no `{edition-...}` tag at all),
- * "" (an empty `{edition-}`), or the trimmed name.
+ * "" (an empty `{edition-}`), or the trimmed name. `tmdbId` / `tvdbId` are the
+ * optional `{tmdb-N}` / `{tvdb-N}` tags, or null.
  */
 function parseShowFolder(
   name: string,
   regex: RegExp
-): { title: string; year: number; edition: string | null } | null {
+): {
+  title: string
+  year: number
+  edition: string | null
+  tmdbId: number | null
+  tvdbId: number | null
+} | null {
   const m = regex.exec(name)
   if (!m?.groups) return null
-  const { title, year, edition: editionRaw } = m.groups
+  const { title, year, edition: editionRaw, tmdb, tvdb } = m.groups
   if (title === undefined || year === undefined) return null
 
   let edition: string | null
@@ -137,7 +154,9 @@ function parseShowFolder(
   } else {
     edition = editionRaw.trim()
   }
-  return { title: title.trim(), year: parseInt(year, 10), edition }
+  const tmdbId = tmdb === undefined ? null : parseInt(tmdb, 10)
+  const tvdbId = tvdb === undefined ? null : parseInt(tvdb, 10)
+  return { title: title.trim(), year: parseInt(year, 10), edition, tmdbId, tvdbId }
 }
 
 function parseSeasonFolder(name: string, regex: RegExp): number | null {
@@ -205,10 +224,22 @@ function makeSeasonKey(
   return `${makeShowKey(title, year, edition)}|${seasonLabel.toLowerCase()}`
 }
 
-/** Build the Plex-style show folder name used as the warning path */
-function showDisplayName(record: { title: string; year: number; edition: string | null }): string {
-  const base = `${record.title} (${record.year})`
-  return record.edition ? `${base} {edition-${record.edition}}` : base
+/**
+ * Build the Plex-style show folder name used as the warning path — both tags
+ * included, so it matches the folder on disk and the paths Plex reports.
+ */
+function showDisplayName(record: {
+  title: string
+  year: number
+  edition: string | null
+  tmdb_id: number | null
+  tvdb_id: number | null
+}): string {
+  let name = `${record.title} (${record.year})`
+  if (record.edition) name += ` {edition-${record.edition}}`
+  if (record.tmdb_id !== null) name += ` {tmdb-${record.tmdb_id}}`
+  if (record.tvdb_id !== null) name += ` {tvdb-${record.tvdb_id}}`
+  return name
 }
 
 /**
@@ -483,6 +514,9 @@ export function createShowsModule(
           }
 
           const episodeNumbers: number[] = []
+          // Episode number → the distinct files covering it. Parts of one
+          // split episode (`- pt1`, `- pt2`) share an identity, so they count once.
+          const filesPerEpisode = new Map<number, Set<string>>()
           const episodes: EpisodeOutput[] = []
           let seasonEpCount = 0
           let parsedFilesInSeason = 0
@@ -583,8 +617,11 @@ export function createShowsModule(
             })
 
             // Add each individual episode number for gap detection
+            const identity = stem.replace(STACK_SUFFIX, '').toLowerCase()
             for (let ep = firstEpisode; ep <= lastEpisode; ep++) {
               episodeNumbers.push(ep)
+              const files = filesPerEpisode.get(ep) ?? new Set<string>()
+              filesPerEpisode.set(ep, files.add(identity))
             }
             seasonEpCount += lastEpisode - firstEpisode + 1
           }
@@ -598,6 +635,22 @@ export function createShowsModule(
                 seasonRel,
                 `Missing episodes (${gaps.length}): ${gapStr}.`,
                 { fix: FIX.warn_episode_gaps }
+              )
+            }
+          }
+
+          // Per-season summary, same shape as warn_episode_gaps. Plex merges
+          // the files into one item, so this is the only place they surface
+          // before a Plex check.
+          if (rules.checks.warn_duplicate_episode) {
+            const dupes = [...filesPerEpisode].filter(([, f]) => f.size > 1).map(([ep]) => ep)
+            if (dupes.length > 0) {
+              const dupeStr = formatGaps(dupes, g => `E${String(g).padStart(2, '0')}`)
+              warnings.add(
+                'warn_duplicate_episode',
+                seasonRel,
+                `More than one file for ${dupes.length} episode(s): ${dupeStr}.`,
+                { fix: FIX.warn_duplicate_episode }
               )
             }
           }
@@ -636,11 +689,15 @@ export function createShowsModule(
               title: showTitle,
               year: showYear,
               edition: showEdition,
+              tmdb_id: parsedShow.tmdbId,
+              tvdb_id: parsedShow.tvdbId,
               seasons: new Map(),
             })
           }
 
           const show = records.get(showKey)!
+          show.tmdb_id ??= parsedShow.tmdbId
+          show.tvdb_id ??= parsedShow.tvdbId
           if (!show.seasons.has(seasonKey)) {
             show.seasons.set(seasonKey, {
               season_label: seasonLabel,
@@ -684,6 +741,8 @@ export function createShowsModule(
           continue
         }
         const existingShow = existing.get(showKey)!
+        existingShow.tmdb_id ??= newShow.tmdb_id
+        existingShow.tvdb_id ??= newShow.tvdb_id
         for (const [seasonKey, newSeason] of newShow.seasons) {
           if (!existingShow.seasons.has(seasonKey)) {
             existingShow.seasons.set(seasonKey, newSeason)
@@ -721,6 +780,8 @@ export function createShowsModule(
           title: show.title,
           year: show.year,
           edition: show.edition,
+          tmdb_id: show.tmdb_id,
+          tvdb_id: show.tvdb_id,
           seasons: [...show.seasons.values()]
             .sort((a, b) => {
               const [ag0, ag1, as2] = seasonSortKey(a.season_label)

@@ -19,9 +19,9 @@ import { PatternSchema, CategorySchema } from './helpers'
 export const MoviesRulesSchema = z.object({
   /** Regex patterns for folder and file names. Must use named capture groups. */
   patterns: z.object({
-    /** Captures: title, year */
+    /** Captures: title, year, tmdb (optional) */
     folder: PatternSchema,
-    /** Captures: title, year, edition (optional) */
+    /** Captures: title, year, edition (optional), tmdb (optional) */
     file: PatternSchema,
   }),
 
@@ -146,6 +146,12 @@ export const MoviesRulesSchema = z.object({
      */
     warn_title_case: z.boolean(),
     warn_year_mismatch: z.boolean(),
+    /**
+     * The folder and the file both carry a `{tmdb-N}` tag and the IDs
+     * differ. Validation trusts the file's ID, so one of them is pinning the
+     * wrong film.
+     */
+    warn_tmdb_tag_mismatch: z.boolean(),
     warn_duplicate_edition: z.boolean(),
     /**
      * The same movie exists in two or more category folders that resolve to
@@ -224,8 +230,9 @@ export type MoviesRules = z.infer<typeof MoviesRulesSchema>
 // preprocess normalizes them to { pattern, flags: '' } at validation time.
 export const defaultMoviesRules: MoviesRules = MoviesRulesSchema.parse({
   patterns: {
-    folder: '^(?<title>.+)\\s\\((?<year>\\d{4})\\)$',
-    file: '^(?<title>.+)\\s\\((?<year>\\d{4})\\)(?:\\s\\{edition-(?<edition>[^}]*)\\})?$',
+    // Both accept Plex's optional `{tmdb-N}` ID tag, last in the name.
+    folder: '^(?<title>.+)\\s\\((?<year>\\d{4})\\)(?:\\s\\{tmdb-(?<tmdb>\\d+)\\})?$',
+    file: '^(?<title>.+)\\s\\((?<year>\\d{4})\\)(?:\\s\\{edition-(?<edition>[^}]*)\\})?(?:\\s\\{tmdb-(?<tmdb>\\d+)\\})?$',
   },
   categories: [],
   primary_extension: ['.mp4'],
@@ -268,6 +275,7 @@ export const defaultMoviesRules: MoviesRules = MoviesRulesSchema.parse({
     warn_title_mismatch: true,
     warn_title_case: true,
     warn_year_mismatch: true,
+    warn_tmdb_tag_mismatch: true,
     warn_duplicate_edition: true,
     warn_duplicate_quality: true,
     warn_multi_quality: true,

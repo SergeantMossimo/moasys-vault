@@ -16,7 +16,9 @@
  * network. That endpoint needs the server owner's token.
  *
  * Items are identified through the catalogs from `plex:pull`, so run a pull
- * first; a pull older than the logs leaves new items unidentified.
+ * first; a pull older than the logs leaves new items unidentified. Lines about
+ * files the drive's last scan doesn't have are dropped — the logs reach back
+ * a day or two, past any file moved or deleted since.
  *
  * Read-only: one GET for the archive, nothing else sent to the server.
  */
@@ -25,17 +27,26 @@ import fs from 'fs'
 import path from 'path'
 
 import { writeFileAtomic } from '../core/atomic-write'
+import { driveSlug } from '../core/config'
+import { typeOutputPaths } from '../core/output-paths'
 import { PROJECT_ROOT } from '../core/project'
 import { parseRunnerArgs, printBanner, selectRoot, writeJsonOutput } from '../core/runner-shared'
 import { loadTypeRules } from '../core/rules/registry'
 
-import { LogItemIndex, PlexLogSummaryOutput, checkPlexLogs, summarizeLogs } from './log-checks'
+import {
+  LogItemIndex,
+  PlexLogSummaryOutput,
+  checkPlexLogs,
+  scannedPathSet,
+  summarizeLogs,
+} from './log-checks'
 import { extractEvents, libraryPathFinder, readLogArchive } from './log-parser'
 import {
   MEDIA_TYPES,
   NO_IGNORE_FLAG,
   noIgnoreRequested,
   plexWarningCollector,
+  probeFilePaths,
   warningsPath,
   writePlexWarnings,
 } from './run-shared'
@@ -149,14 +160,26 @@ async function main(): Promise<void> {
 
     console.log(`\n  ${mediaType} — ${root.name} (${root.root_path})`)
     const warnings = plexWarningCollector(root, mediaType, unfiltered)
-    const landed = checkPlexLogs({
+    const out = typeOutputPaths(PROJECT_ROOT, driveSlug(root.name), mediaType)
+    let scanned: Set<string> | undefined
+    if (fs.existsSync(out.probe)) {
+      scanned = scannedPathSet(probeFilePaths(mediaType, out.probe))
+    } else {
+      console.log(
+        `    [INPUT] ${out.displayDir}/data/probe.json not found — can't drop lines about files moved or deleted since; run \`npm run ${mediaType} ${driveSlug(root.name)}\` first.`
+      )
+    }
+    const { landed, stale } = checkPlexLogs({
       mediaType,
       drive: root.name,
       events,
       rules: plexRules,
       warnings,
+      scanned,
     })
-    console.log(`    [LOGS] ${landed} line(s) about this drive's ${mediaType}`)
+    const staleNote =
+      stale > 0 ? ` (${stale} more about files the scan no longer has — skipped)` : ''
+    console.log(`    [LOGS] ${landed} line(s) about this drive's ${mediaType}${staleNote}`)
     writePlexWarnings(warningsPath(root, mediaType, 'plexLogWarnings', unfiltered), warnings)
   }
 

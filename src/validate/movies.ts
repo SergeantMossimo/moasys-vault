@@ -207,9 +207,17 @@ export async function validateMovies(
     // "FaceOff" when this library was first validated, and stayed a permanent
     // false no-match because nothing ever re-asked. Confident matches stay
     // cached, so warm runs are still fast; only the warning set is re-queried.
+    //
+    // A `{tmdb-N}` tag on the folder or file settles the match outright — it is
+    // how a user disambiguates a title the search keeps getting wrong — so it
+    // skips the search and its cache entirely.
     const cached = searchCache.get(sKey)
     let resolved: ResolvedSearch | undefined =
-      cached && cached.confidence !== 'none' && cached.confidence !== 'low' ? cached : undefined
+      movie.tmdb_id !== null
+        ? { best_id: movie.tmdb_id, confidence: 'high', candidates: [] }
+        : cached && cached.confidence !== 'none' && cached.confidence !== 'low'
+          ? cached
+          : undefined
     if (resolved) {
       cachedCount++
     } else {

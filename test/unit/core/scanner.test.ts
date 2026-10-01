@@ -45,6 +45,7 @@ describe('writeJson', () => {
           title: 'X',
           year: 2000,
           edition: null,
+          tmdb_id: null,
           versions: [{ category: 'UHD', quality: null }],
         },
       ],

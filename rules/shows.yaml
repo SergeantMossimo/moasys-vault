@@ -17,8 +17,11 @@
 # of the same series (colorized vs black-and-white, a remaster) kept as its own
 # library item. Plex defines editions at the SHOW level only, so the episode
 # files inside an edition folder are named normally, with no tag.
+#
+# `tmdb` / `tvdb` are Plex's optional ID tags, last on the show folder, which pin
+# the match: Icons Unearthed The Simpsons (2022) {tmdb-214176}, Monster (2022) {tvdb-389492}
 patterns:
-  show_folder: '^(?<title>.+)\s\((?<year>\d{4})\)(?:\s\{edition-(?<edition>[^}]*)\})?$' # Star Trek Enterprise (2001), Spider-Noir (2026) {edition-True Hue Color}
+  show_folder: '^(?<title>.+)\s\((?<year>\d{4})\)(?:\s\{edition-(?<edition>[^}]*)\})?(?:\s\{tmdb-(?<tmdb>\d+)\})?(?:\s\{tvdb-(?<tvdb>\d+)\})?$' # Star Trek Enterprise (2001), Spider-Noir (2026) {edition-True Hue Color}
   season_folder:
     pattern: '^Season\s(?<season>\d{2})$'                                          # Season 01 (case-insensitive)
     flags: 'i'
@@ -135,6 +138,7 @@ checks:
   warn_episode_code_case: true                  # Episode code isn't the episode_code_case style (summary per season)
   warn_season_mismatch: true                    # File's season number vs parent season folder
   warn_episode_gaps: true                       # Gap detected in episode numbers
+  warn_duplicate_episode: true                  # Two files in one season cover the same episode
   warn_quality_mismatch: true                   # Episode dimensions don't fit the category's quality bucket (summary per season)
   warn_duplicate_quality: true                  # A season in two folders of the SAME quality tier (HD + Other HD) — not whitelistable
   warn_multi_quality: true                      # A single season exists in multiple distinct qualities

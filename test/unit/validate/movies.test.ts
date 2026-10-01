@@ -22,8 +22,13 @@ function memoryCache<T>(seed: Record<string, T> = {}): JsonCache<T> {
 }
 
 /** Minimal MovieOutput for validate input — versions is unused here. */
-function movie(title: string, year: number, edition: string | null = null): MovieOutput {
-  return { title, year, edition, versions: [] }
+function movie(
+  title: string,
+  year: number,
+  edition: string | null = null,
+  tmdbId: number | null = null
+): MovieOutput {
+  return { title, year, edition, tmdb_id: tmdbId, versions: [] }
 }
 
 /**
@@ -89,6 +94,45 @@ describe('validateMovies — confidence scoring', () => {
     expect(result[0]?.tmdb_id).toBe(100)
     expect(result[0]?.tmdb_title).toBe('The Crow')
     expect(result[0]?.tmdb_year).toBe(1994)
+  })
+
+  it('uses a {tmdb-N} ID directly, skipping the search and its cache', async () => {
+    const client = mockClient({
+      // The search would pick the show-adjacent wrong film; it must not be asked.
+      searchResults: [
+        {
+          id: 1,
+          title: 'The Animatrix',
+          original_title: 'The Animatrix',
+          release_date: '2003-06-03',
+        },
+      ],
+      details: {
+        55931: {
+          id: 55931,
+          title: 'The Animatrix',
+          original_title: 'The Animatrix',
+          release_date: '2003-05-09',
+        },
+      },
+    })
+    const searchCache = memoryCache<ResolvedSearch>()
+
+    const result = await validateMovies(
+      [movie('The Animatrix', 2003, null, 55931)],
+      defaultMoviesRules,
+      client,
+      searchCache,
+      memoryCache(),
+      warnings
+    )
+
+    expect(client.searchMovie).not.toHaveBeenCalled()
+    expect(searchCache.size()).toBe(0)
+    expect(result[0]?.confidence).toBe('high')
+    expect(result[0]?.tmdb_id).toBe(55931)
+    expect(result[0]?.tmdb_title).toBe('The Animatrix')
+    expect(warnings.all()).toEqual([])
   })
 
   it('resolves "medium" confidence when year is off by 1', async () => {

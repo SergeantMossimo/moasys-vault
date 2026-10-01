@@ -297,6 +297,7 @@ export interface MovieRecord {
   title: string
   year: number
   edition: string | null // null = no edition tag, string = edition name
+  tmdb_id: number | null // from a {tmdb-N} tag — the file's, else the folder's
   versions: Version[] // may contain duplicates; deduped on serialize
 }
 
@@ -305,6 +306,7 @@ export interface MovieOutput {
   title: string
   year: number
   edition: string | null
+  tmdb_id: number | null
   versions: Version[] // sorted by category order, then by quality
 }
 
@@ -347,6 +349,8 @@ export interface ShowRecord {
   title: string
   year: number
   edition: string | null // null = no edition tag, string = edition name
+  tmdb_id: number | null // from the show folder's {tmdb-N} tag
+  tvdb_id: number | null // from the show folder's {tvdb-N} tag
   seasons: Map<string, SeasonRecord> // Key = season_key string
 }
 
@@ -363,6 +367,8 @@ export interface ShowOutput {
   title: string
   year: number
   edition: string | null
+  tmdb_id: number | null
+  tvdb_id: number | null
   seasons: SeasonOutput[]
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "moasys-vault",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "MOASYS-Vault — Plex Media Library Scanner",
   "scripts": {
     "movies": "tsx src/scan.ts --type movies",
