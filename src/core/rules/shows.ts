@@ -34,7 +34,8 @@ export const ShowsRulesSchema = z.object({
    * The optional `tvdb` group is `{tvdb-N}`, for shows laid out the way TVDB
    * structures them — an anthology like `Monster (2022) {tvdb-389492}` is one
    * series with a season per story on TVDB, but several shows on TMDB. It pins
-   * Plex's match only: validation is TMDB-based and still searches by title.
+   * Plex's match, and tells `validate:shows` not to compare the folder against
+   * TMDB's episodes — or, without a `{tmdb-N}` beside it, to search TMDB at all.
    */
   patterns: z.object({
     show_folder: PatternSchema,

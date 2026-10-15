@@ -166,7 +166,7 @@ Every catalog uses the same per-record `versions: [{category, quality}]` shape. 
 
 **Reading `edition`:** Plex's [TV Show Editions](CONVENTIONS.md#shows) tag, taken off the show folder (`Spider-Noir (2026) {edition-True Hue Color}`), or `null` when the folder carries none. Two editions of one series are two entries with the same title and year, each with its own seasons and episodes — Plex tracks them as separate items.
 
-**Reading `tmdb_id`:** the ID from the show folder's `{tmdb-N}` tag, or `null` when untagged. As with movies, `validate:shows` then looks that ID up directly instead of searching. `tvdb_id` is the same for a `{tvdb-N}` tag, but it only pins Plex's match — validation is TMDB-based and still searches by title.
+**Reading `tmdb_id`:** the ID from the show folder's `{tmdb-N}` tag, or `null` when untagged. As with movies, `validate:shows` then looks that ID up directly instead of searching. `tvdb_id` is the same for a `{tvdb-N}` tag; it pins Plex's match and makes validation skip TMDB's episode checks — see [ID tags on show folders](SCANS.md#id-tags-on-show-folders).
 
 **Reading a season's versions:** if a season has the same `category` listed twice with different `quality` values, it means episodes inside that one folder don't all share the same quality. This is only meaningful if your library is organized by quality. Seasons where every episode has the same quality collapse to a single version.
 

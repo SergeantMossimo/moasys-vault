@@ -2,6 +2,11 @@
 
 What's landed, newest first. Not formal release notes — pointers to what's new if you're returning after time away. Entries marked _(breaking)_ change a file format or setting you may need to update.
 
+## v0.20
+
+- **`validate:shows` no longer compares a `{tvdb-N}` folder against TMDB's episodes.** The tag means the folder follows TVDB's season layout, but validation searched TMDB by title anyway: `Monster (2022) {tvdb-389492}` matched _Monster High_ and The Muppet Show's guests were checked against TMDB's order. On the Server drive, 154 of 155 validation warnings were this noise. Worse, `validation.json` recorded the wrong TMDB ID, which `fix:shows --fix episode-titles` would have used to name Monster's files after _Monster High_ episodes. A folder tagged `{tvdb-N}` alone is no longer searched, gets `tmdb_id: null`, and fires no `warn_tmdb_no_match`. With `{tmdb-N}` as well, the title check still runs but the episode count and title checks don't, and `episode-titles` skips the show. See [ID tags on show folders](docs/SCANS.md#id-tags-on-show-folders).
+- **`episodes:` ignore entries work again on the checks that summarize a season.** Shows `warn_quality_mismatch` became one row per season in v0.14, and an entry naming an episode can't match a row about the season above it — so every entry written for the old per-episode rows silently stopped working. Those checks, along with `warn_missing_episode_title`, `warn_episode_code_case`, `warn_duplicate_episode`, `warn_episode_gaps` and the `plex:logs` warnings, now leave an ignored episode out of the summary, and drop the row once none are left. A gap has no file, so name its code: `Lost (2004)/S02E21`. See [Scope](docs/CONFIG.md#scope).
+
 ## v0.19
 
 - **Movie names accept Plex's `{tmdb-N}` ID tag** on the folder, the file, or both — `The Animatrix (2003) {tmdb-55931}` no longer fires `warn_bad_folder_name`. With an edition, the tag goes last: `Blade Runner (1982) {edition-Final Cut} {tmdb-78}`. `movies.json` gains a `tmdb_id` field, `validate:movies` looks a tagged movie up by that ID instead of searching by title, and the new `warn_tmdb_tag_mismatch` flags a folder and file that pin different IDs. See [CONVENTIONS.md](docs/CONVENTIONS.md#movies).

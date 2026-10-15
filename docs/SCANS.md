@@ -269,6 +269,15 @@ Confidence is scored from title-match strength plus year-match closeness (exact 
 
 A **medium** from the loose tier means "this is the right film, but your folder name isn't byte-identical to TMDB's" — no confidence warning fires, and `warn_tmdb_title_canonical` carries the rename target.
 
+#### ID tags on show folders
+
+A `{tmdb-N}` tag settles the match outright: the search is skipped and the show is looked up by that ID, at `high` confidence.
+
+A `{tvdb-N}` tag says the folder follows TVDB's season and episode layout, which TMDB often doesn't share. TMDB lists the `Monster` anthology as separate shows, and orders The Muppet Show's guests differently. So `validate:shows` doesn't compare a TVDB-ordered folder against TMDB's episodes:
+
+- **`{tvdb-N}` alone:** the show isn't searched for at all, since a title search lands on the wrong series (`Monster` → _Monster High_). The row records `tmdb_id: null` and `confidence: "none"`, and no `warn_tmdb_no_match` fires — the tag already identifies the show. With no TMDB ID, `fix:shows` and `plex:check` leave it alone too.
+- **`{tmdb-N}` and `{tvdb-N}`:** the TMDB ID still pins the series, so `warn_tmdb_title_canonical` runs. `warn_tmdb_episode_count` and `warn_tmdb_episode_name_mismatch` don't, `tmdb_episode_count` stays `null`, and `fix:shows --fix episode-titles` skips the show.
+
 ### Caching
 
 Four caches keep TMDB calls minimal:

@@ -630,6 +630,9 @@ function buildTmdbIdByShowFolder(validationPath: string): Map<string, number> {
 
   for (const show of parsed as ShowValidation[]) {
     if (show.tmdb_id === null) continue
+    // A `{tvdb-N}` folder follows TVDB's episode order, so TMDB's titles would
+    // land on the wrong files even when the series id is right.
+    if (show.tvdb_tag != null) continue
     out.set(showFolderNameOf(show), show.tmdb_id)
   }
   return out

@@ -341,6 +341,8 @@ function reportQualityMismatches(
       rules.quality_thresholds
     )
     if (bucket === null || fits) continue
+    // An `episodes:` entry can't reach the season row below, so honor it here.
+    if (warnings.isIgnored(task.relativePath)) continue
     tally.bucket = bucket
     tally.misses.push({
       episodeId:

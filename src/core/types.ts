@@ -603,6 +603,20 @@ export class WarningCollector {
   }
 
   /**
+   * True when a warning at `path` would be silenced. For checks that summarize
+   * many files in one row per season or folder: an `episodes:` entry names a
+   * file, which a season-level row sits above and so can never match. Such a
+   * check asks this per file and leaves the ignored ones out of its summary,
+   * dropping the row once none are left. Not counted in `silencedCount()` —
+   * no warning was added.
+   */
+  isIgnored(path: string, scope?: WarningScope): boolean {
+    if (this.ignored.entries.length === 0) return false
+    const normalizedPath = path.replace(/\\/g, '/')
+    return isWarningIgnored(scope ?? deriveScope(normalizedPath, this.hasCategories), this.ignored)
+  }
+
+  /**
    * Return a flat copy of all collected warnings, sorted the same way the
    * on-disk rows are (see `compareRows`). Used by tests and by the per-type
    * summary in the run output; the on-disk shape is built via

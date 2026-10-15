@@ -589,8 +589,13 @@ export function createShowsModule(
               }
             }
 
+            // The checks below summarize the season in one row, which an
+            // `episodes:` entry sits beneath and so can't silence. Leave an
+            // ignored file out of their tallies instead.
+            const fileIgnored = warnings.isIgnored(path.join(seasonRel, f.name))
+
             parsedFilesInSeason++
-            if (episodeTitle === null) filesMissingTitleInSeason++
+            if (episodeTitle === null && !fileIgnored) filesMissingTitleInSeason++
 
             // Episode-code house style. Compares the RAW code text, since the
             // parsed values above have already lost the casing the user wrote.
@@ -604,7 +609,7 @@ export function createShowsModule(
                 },
                 rules.episode_code_case
               )
-              if (rawCode !== null && rawCode !== wantCode) {
+              if (rawCode !== null && rawCode !== wantCode && !fileIgnored) {
                 filesOffStyleCodeInSeason++
                 offStyleCodeSample ??= `'${rawCode}' should be '${wantCode}'`
               }
@@ -619,7 +624,10 @@ export function createShowsModule(
             // Add each individual episode number for gap detection
             const identity = stem.replace(STACK_SUFFIX, '').toLowerCase()
             for (let ep = firstEpisode; ep <= lastEpisode; ep++) {
+              // Gap detection still needs an ignored file's numbers, or
+              // ignoring it would invent a gap where it sits.
               episodeNumbers.push(ep)
+              if (fileIgnored) continue
               const files = filesPerEpisode.get(ep) ?? new Set<string>()
               filesPerEpisode.set(ep, files.add(identity))
             }
@@ -627,7 +635,21 @@ export function createShowsModule(
           }
 
           if (rules.checks.warn_episode_gaps) {
-            const gaps = findNumericGaps(episodeNumbers)
+            // A missing episode has no file to name, so an entry can only
+            // name its code: `Lost (2004)/S02E21`.
+            const codeSeason = isNamed ? 0 : Number(seasonLabel)
+            const gaps = findNumericGaps(episodeNumbers).filter(
+              g =>
+                !warnings.isIgnored(
+                  path.join(
+                    seasonRel,
+                    canonicalEpisodeCode(
+                      { seasonNumber: codeSeason, episodeStart: g, episodeEnd: g },
+                      'upper'
+                    )
+                  )
+                )
+            )
             if (gaps.length > 0) {
               const gapStr = formatGaps(gaps, g => `E${String(g).padStart(2, '0')}`)
               warnings.add(

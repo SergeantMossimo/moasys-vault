@@ -754,6 +754,40 @@ describe('shows module — ignore list reaches the cross-category checks', () =>
     })
     expect(result.warnings.filter(w => w.path.includes('S01E01'))).toHaveLength(0)
   })
+
+  it('`episodes:` entries reach the per-season summaries', () => {
+    // Each of these writes one row for the season folder, which an entry
+    // naming a file or code sits beneath. The ignored episodes are left out
+    // of the tally instead, and the row goes once nothing is left.
+    const spec: DirSpec = {
+      HD: {
+        'Show (2020)': {
+          'Season 01': {
+            'Show (2020) - s01e01.mp4': '', // no title, and off-style code
+            'Show (2020) - S01E02 - Two.mp4': '',
+            'Show (2020) - S01E02 - Two Again.mp4': '', // duplicate E02
+            'Show (2020) - S01E04 - Four.mp4': '', // E03 missing
+          },
+        },
+      },
+    }
+    const summaries = [
+      'warn_missing_episode_title',
+      'warn_episode_code_case',
+      'warn_duplicate_episode',
+      'warn_episode_gaps',
+    ]
+    const fired = (ignored?: Record<string, string[]>) =>
+      runShowsScan({ spec, rules: { episode_code_case: 'upper' }, ignored })
+        .warnings.map(w => w.type)
+        .filter(t => summaries.includes(t))
+        .sort()
+
+    expect(fired()).toEqual([...summaries].sort())
+    expect(
+      fired({ episodes: ['Show (2020)/S01E01', 'Show (2020)/S01E02', 'Show (2020)/S01E03'] })
+    ).toEqual([])
+  })
 })
 
 describe('shows module — warn_multi_quality (per-season)', () => {
