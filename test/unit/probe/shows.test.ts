@@ -7,6 +7,7 @@ import { probeShows } from '../../../src/probe/shows'
 import { defaultShowsRules, type ShowsRules } from '../../../src/core/rules/shows'
 import { ProbeCache } from '../../../src/probe/cache'
 import { WarningCollector } from '../../../src/core/types'
+import { parseIgnoreList } from '../../../src/core/ignored'
 import type { ProbeData } from '../../../src/probe/types'
 import { buildLibrary, fakeProbe, type DirSpec } from '../../fixtures/library'
 
@@ -37,6 +38,8 @@ describe('probeShows', () => {
     spec: DirSpec
     rules?: Partial<ShowsRules>
     probes: Record<string, ProbeData>
+    /** Level-keyed ignore file contents, as `ignored/<drive>/shows.yaml` parses. */
+    ignored?: Record<string, string[]>
   }) {
     const rules: ShowsRules = {
       ...defaultShowsRules,
@@ -50,7 +53,9 @@ describe('probeShows', () => {
     }
     const root = buildLibrary(opts.spec, 'moasys-probeshows-')
     const cache = primeCache(path.join(tmpDir, 'probe.json'), root, opts.probes)
-    const warnings = new WarningCollector()
+    const warnings = new WarningCollector(
+      opts.ignored && parseIgnoreList(opts.ignored, 'shows', 'test.yaml')
+    )
     return { rules, root, cache, warnings }
   }
 
@@ -177,6 +182,34 @@ describe('probeShows', () => {
     expect(rows[0]!.issue).toContain('720x404 (fits SD) ×1')
     expect(rows[0]!.issue).toContain('not HD (1000–2000px).')
     expect(rows[0]!.issue).toContain('S01E01, S01E02.')
+  })
+
+  it('leaves an `episodes:` entry out of the season summary, dropping the row once none remain', async () => {
+    // The row is written for the season folder, which an entry naming one
+    // file sits beneath — so the file has to be left out before summarizing.
+    const ep = (e: string) => `Show (2020) - S01E${e}.mp4`
+    const sd = () =>
+      fakeProbe({ video: { codec: 'h264', width: 720, height: 480, frame_rate: 24 } })
+    const run = async (ignored: Record<string, string[]>) => {
+      const { rules, root, cache, warnings } = setup({
+        spec: { HD: { 'Show (2020)': { 'Season 01': { [ep('01')]: '', [ep('02')]: '' } } } },
+        probes: {
+          [`HD/Show (2020)/Season 01/${ep('01')}`]: sd(),
+          [`HD/Show (2020)/Season 01/${ep('02')}`]: sd(),
+        },
+        ignored,
+      })
+      await probeShows({ root_path: root }, rules, cache, warnings)
+      return warnings.all().filter(w => w.type === 'warn_quality_mismatch')
+    }
+
+    const one = await run({ episodes: ['Show (2020)/S01E01'] })
+    expect(one).toHaveLength(1)
+    expect(one[0]!.issue).toMatch(/^1\/2 episodes are /)
+    expect(one[0]!.issue).toContain('S01E02.')
+    expect(one[0]!.issue).not.toContain('S01E01')
+
+    expect(await run({ episodes: ['Show (2020)/S01E01', 'Show (2020)/S01E02'] })).toEqual([])
   })
 
   it('groups repeated resolutions and caps the samples it lists', async () => {

@@ -23,9 +23,10 @@ function show(
   year: number,
   seasons: ShowOutput['seasons'] = [],
   edition: string | null = null,
-  tmdbId: number | null = null
+  tmdbId: number | null = null,
+  tvdbId: number | null = null
 ): ShowOutput {
-  return { title, year, edition, tmdb_id: tmdbId, tvdb_id: null, seasons }
+  return { title, year, edition, tmdb_id: tmdbId, tvdb_id: tvdbId, seasons }
 }
 
 function mockClient(opts: {
@@ -142,6 +143,100 @@ describe('validateShows — confidence scoring', () => {
     for (const w of warnings.all()) {
       expect(w.path).toContain('Icons Unearthed The Simpsons (2022) {tmdb-214176}')
     }
+  })
+
+  it('does not search TMDB for a {tvdb-N} folder with no {tmdb-N} tag', async () => {
+    const client = mockClient({
+      // The wrong series a title search lands on — it must not be asked.
+      searchResults: [
+        {
+          id: 1,
+          name: 'Monster High',
+          original_name: 'Monster High',
+          first_air_date: '2022-10-06',
+        },
+      ],
+    })
+    const searchCache = memoryCache<ResolvedSearch>()
+
+    const result = await validateShows(
+      [
+        show(
+          'Monster',
+          2022,
+          [{ season: '1', episode_count: 10, versions: [], episodes: [] }],
+          null,
+          null,
+          389492
+        ),
+      ],
+      defaultShowsRules,
+      client,
+      searchCache,
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+
+    expect(client.searchShow).not.toHaveBeenCalled()
+    expect(result[0]).toMatchObject({ confidence: 'none', tmdb_id: null, tvdb_tag: 389492 })
+    expect(searchCache.get('show|monster|2022')).toBeUndefined()
+    // No warn_tmdb_no_match: the tag already identifies the show.
+    expect(warnings.all()).toEqual([])
+  })
+
+  it('runs only title checks for a folder with both {tmdb-N} and {tvdb-N}', async () => {
+    const client = mockClient({
+      details: {
+        500: {
+          id: 500,
+          name: 'The Muppet Show!',
+          original_name: 'The Muppet Show!',
+          first_air_date: '1976-09-05',
+          number_of_seasons: 1,
+          number_of_episodes: 24,
+          seasons: [{ season_number: 1, episode_count: 24, name: 'Season 1' }],
+        },
+      },
+      seasons: {
+        '500:1': {
+          season_number: 1,
+          episodes: [{ episode_number: 1, name: 'Joel Grey' }],
+        },
+      },
+    })
+
+    const result = await validateShows(
+      [
+        show(
+          'The Muppet Show',
+          1976,
+          [
+            {
+              season: '1',
+              episode_count: 1,
+              versions: [{ category: 'default', quality: null }],
+              episodes: [{ episode_start: 1, episode_end: 1, title: 'Sandy Duncan' }],
+            },
+          ],
+          null,
+          500,
+          72476
+        ),
+      ],
+      defaultShowsRules,
+      client,
+      memoryCache(),
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+
+    // Season 1 is short (1 of 24) and its title differs, but both compare
+    // against TMDB's episode order, which a {tvdb-N} folder doesn't follow.
+    expect(client.getShowSeason).not.toHaveBeenCalled()
+    expect(result[0]?.seasons[0]?.tmdb_episode_count).toBeNull()
+    expect(warnings.all().map(w => w.type)).toEqual(['warn_tmdb_title_canonical'])
   })
 
   it('resolves "medium" via the loose tier when a colon was rendered as " - "', async () => {

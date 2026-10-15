@@ -313,6 +313,9 @@ export function checkPlexLogs(input: PlexLogCheckInput): PlexLogCheckResult {
 
     const problem = explainProblem(event)
     for (const target of targets) {
+      // The row below is written for the file's folder, which an entry naming
+      // the file sits beneath and so can't silence. Drop the file here instead.
+      if (target.isFile && warnings.isIgnored(target.libraryPath)) continue
       const folder = target.isFile ? dirname(target.libraryPath) : target.libraryPath
       const groupKey = `${event.level}|${folder.toLowerCase()}`
       const group = byFolder.get(groupKey) ?? { folder, level: event.level, problems: new Map() }

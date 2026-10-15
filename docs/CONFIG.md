@@ -228,7 +228,7 @@ patterns:
 
 **The `edition` group.** Two patterns carry an optional `edition` capture group for Plex's `{edition-Name}` tag — `movies.patterns.file` and `shows.patterns.show_folder`. The level differs because Plex's does: a movie edition is a file in a shared folder, a show edition is a whole folder. Dropping the group from either pattern makes tagged names unparseable, so they fire `warn_bad_file_name` / `warn_bad_show_folder` instead. See [CONVENTIONS.md](CONVENTIONS.md) for the naming rules and `warn_empty_edition` for a tag with no name.
 
-**The `tmdb` group.** Both movie patterns and `shows.patterns.show_folder` carry an optional `tmdb` capture group for Plex's `{tmdb-N}` ID tag, which lands in `movies.json` / `shows.json` as `tmdb_id` and lets validation skip the title search. Drop it and tagged names fire `warn_bad_folder_name` / `warn_bad_file_name` / `warn_bad_show_folder`. `show_folder` also carries a `tvdb` group for `{tvdb-N}`, which comes after `{tmdb-N}` when both are present and is recorded as `tvdb_id` without affecting validation.
+**The `tmdb` group.** Both movie patterns and `shows.patterns.show_folder` carry an optional `tmdb` capture group for Plex's `{tmdb-N}` ID tag, which lands in `movies.json` / `shows.json` as `tmdb_id` and lets validation skip the title search. Drop it and tagged names fire `warn_bad_folder_name` / `warn_bad_file_name` / `warn_bad_show_folder`. `show_folder` also carries a `tvdb` group for `{tvdb-N}`, which comes after `{tmdb-N}` when both are present and is recorded as `tvdb_id`; validation then skips TMDB's episode checks for that show (see [ID tags on show folders](SCANS.md#id-tags-on-show-folders)).
 
 ---
 
@@ -630,6 +630,8 @@ songs:
 An entry silences **every** warning at or below its level — there is no per-warning-type scoping. To silence a whole warning type instead, set `checks.warn_*: false` in `rules/<type>.yaml`. The two are complementary: the ignore list is per item, `checks` is per check.
 
 An entry never reaches a warning shallower than itself — a `seasons:` entry can't silence a show-level warning like `warn_bad_show_folder`.
+
+The exception is a check that **summarizes many files in one row** per season or folder. An `episodes:` entry still reaches it: the episode is left out of the summary, and the row disappears once every file it named is ignored. That covers shows `warn_quality_mismatch`, `warn_missing_episode_title`, `warn_episode_code_case`, `warn_duplicate_episode` and `warn_episode_gaps` — a missing episode has no file, so name its code: `Lost (2004)/S02E21` — and the `plex:logs` warnings, whose row lists each file Plex logged a problem for.
 
 ### Matching rules
 

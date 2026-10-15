@@ -253,6 +253,18 @@ describe('checkPlexLogs', () => {
     expect(run(events, { checks: { warn_plex_log_error: false } }).warnings).toEqual([])
     expect(run(events, { ignored: { shows: ['Cougar Town (2009)'] } }).warnings).toEqual([])
   })
+
+  it('an `episodes:` entry drops that file from its season’s row', () => {
+    // The row is written for the season folder, which an entry naming one
+    // file sits beneath — so the file is left out before grouping.
+    const events = [resolved({ ratingKey: '77046' }), resolved({ ratingKey: '77047' })]
+    const [first] = run(events, { ignored: { episodes: ['Cougar Town (2009)/S02E01'] } }).warnings
+    expect(first!.issue).toContain('Let Yourself Go')
+    expect(first!.issue).not.toContain('All Mixed Up')
+
+    const both = { episodes: ['Cougar Town (2009)/S02E01', 'Cougar Town (2009)/S02E02'] }
+    expect(run(events, { ignored: both }).warnings).toEqual([])
+  })
 })
 
 describe('summarizeLogs', () => {

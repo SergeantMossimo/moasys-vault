@@ -21,7 +21,7 @@
         },
         "tvdb_tag": {
           "type": ["integer", "null"],
-          "description": "The show folder's {tvdb-N} tag, or null when untagged. Carried so the row joins back to the folder name; it doesn't affect the TMDB match. Absent in files written before v0.19."
+          "description": "The show folder's {tvdb-N} tag, or null when untagged. Carried so the row joins back to the folder name. When set, TMDB's episode checks are skipped, and without a tmdb_tag the show isn't searched (tmdb_id null, confidence none). Absent in files written before v0.19."
         },
         "confidence": { "type": "string", "enum": ["high", "medium", "low", "none"] },
         "tmdb_id": { "type": ["integer", "null"] },

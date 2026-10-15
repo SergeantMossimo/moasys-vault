@@ -281,13 +281,23 @@ export async function validateShows(
     // the matching comment in validate/movies.ts for the rationale.
     // A `{tmdb-N}` tag on the show folder settles the match outright and skips
     // the search — see the matching note in validate/movies.ts.
+    // A `{tvdb-N}` tag means the folder follows TVDB's season and episode
+    // layout, which TMDB often splits or orders differently (an anthology is
+    // several TMDB shows; The Muppet Show's guests air in another order). With
+    // no `{tmdb-N}` beside it, a title search lands on the wrong series —
+    // `Monster` → `Monster High` — and that id would feed fix:shows and
+    // plex:check. So it isn't searched at all, and with both tags only the
+    // title checks run: the episode comparisons would be against TMDB's order.
+    const tvdbOrdered = show.tvdb_id !== null
     const cached = searchCache.get(sKey)
     let resolved: ResolvedSearch | undefined =
       show.tmdb_id !== null
         ? { best_id: show.tmdb_id, confidence: 'high', candidates: [] }
-        : cached && cached.confidence !== 'none' && cached.confidence !== 'low'
-          ? cached
-          : undefined
+        : tvdbOrdered
+          ? { best_id: null, confidence: 'none', candidates: [] }
+          : cached && cached.confidence !== 'none' && cached.confidence !== 'low'
+            ? cached
+            : undefined
     if (resolved) {
       cachedCount++
     } else {
@@ -340,7 +350,7 @@ export async function validateShows(
         entry.tmdb_title = details.name
         entry.tmdb_title_filename_safe = stripFilenameIllegalChars(details.name)
         entry.tmdb_first_air_year = parseYear(details.first_air_date)
-        entry.seasons = compareSeasons(show.seasons, details)
+        if (!tvdbOrdered) entry.seasons = compareSeasons(show.seasons, details)
       }
     }
 
@@ -380,7 +390,7 @@ export async function validateShows(
       levels: [label],
     }
 
-    if (resolved.confidence === 'none' && rules.checks.warn_tmdb_no_match) {
+    if (resolved.confidence === 'none' && !tvdbOrdered && rules.checks.warn_tmdb_no_match) {
       warnings.add(
         'warn_tmdb_no_match',
         showPath,
@@ -433,7 +443,7 @@ export async function validateShows(
     // Per-season episode count check (skip season 0 / "Specials" — see header).
     // Per-season warnings use that season's own first category, because a
     // show can legitimately span categories per season (S1 in HD, S2 in UHD).
-    if (rules.checks.warn_tmdb_episode_count && details !== undefined) {
+    if (rules.checks.warn_tmdb_episode_count && details !== undefined && !tvdbOrdered) {
       for (let s = 0; s < entry.seasons.length; s++) {
         const season = entry.seasons[s]!
         if (season.tmdb_episode_count === null) continue
@@ -470,7 +480,8 @@ export async function validateShows(
     if (
       rules.checks.warn_tmdb_episode_name_mismatch &&
       resolved.best_id !== null &&
-      details !== undefined
+      details !== undefined &&
+      !tvdbOrdered
     ) {
       for (let s = 0; s < entry.seasons.length; s++) {
         const season = entry.seasons[s]!
