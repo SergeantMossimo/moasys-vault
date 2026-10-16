@@ -190,6 +190,8 @@ export interface QualityBucket {
   name: string
   min_width?: number
   max_width?: number
+  /** Bitrate ceiling for files of this quality — drives warn_large_file. */
+  max_mbps?: number
 }
 
 /**
@@ -265,6 +267,40 @@ export function deriveQuality(
     if (overMin && underMax) return bucket.name
   }
   return null
+}
+
+/** A file over its quality's bitrate ceiling — see `findOversizedFile`. */
+export interface OversizedFile {
+  bucket: QualityBucket & { max_mbps: number }
+  mbps: number
+}
+
+/**
+ * Is this file over the `max_mbps` ceiling of the quality it actually is?
+ * Bitrate is size over runtime rather than ffprobe's container bitrate, so it
+ * reads straight off the two numbers the user cares about — a long film isn't
+ * large for being long. The quality comes from the file's dimensions
+ * (`deriveQuality`), not its category folder, so a misfiled SD episode is
+ * judged as SD.
+ *
+ * Null when the file is under its ceiling, its quality has no `max_mbps`, or
+ * it has no video or no measured runtime.
+ */
+export function findOversizedFile(data: ProbeData, buckets: QualityBucket[]): OversizedFile | null {
+  if (!data.video || !data.duration_seconds || data.duration_seconds <= 0) return null
+  const quality = deriveQuality(data.video.width, data.video.height, buckets)
+  const bucket = buckets.find(b => b.name === quality)
+  if (bucket?.max_mbps === undefined) return null
+  const mbps = (data.size_bytes * 8) / data.duration_seconds / 1e6
+  if (mbps <= bucket.max_mbps) return null
+  return { bucket: { ...bucket, max_mbps: bucket.max_mbps }, mbps }
+}
+
+/** `18.4 Mbps (15.4 GB)` — the two numbers a large-file row leads with. */
+export function formatBitrateAndSize(mbps: number, sizeBytes: number): string {
+  const gb = sizeBytes / 1e9
+  const size = gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(sizeBytes / 1e6)} MB`
+  return `${mbps.toFixed(1)} Mbps (${size})`
 }
 
 /**

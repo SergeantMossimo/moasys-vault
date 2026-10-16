@@ -155,7 +155,11 @@ npm run fix:shows -- --undo output/external/shows/fixes/rename-undo-<ts>.json
 npm run typecheck     # tsc --noEmit
 npm run lint          # eslint
 npm run lint:fix
+npm run prettier:fix  # format .ts and .md in place
+npm run check         # everything CI runs: typecheck, lint, test, prettier, lint:md
 ```
+
+**Before calling work done:** run `npm run prettier:fix`, then `npm run check`. `check` runs the same steps, in the same order, as `.github/workflows/ci.yml`, so if it passes locally CI should too. If you change the CI workflow, keep `check` in step with it.
 
 npm forwards bare positionals, so the drive name needs no `--` separator.
 

@@ -85,6 +85,10 @@ year_range:
 # Only used when categories are organized by quality (shape A above).
 # Defines what UHD / HD / SD mean dimensionally. Empty default = no
 # dimension checks fire. Configure in movies.local.yaml.
+#
+# A bucket's optional `max_mbps` is a bitrate ceiling (size ÷ runtime) for
+# files of that quality; anything over it fires warn_large_file:
+#   - { name: HD, min_width: 1270, max_width: 3840, max_mbps: 12 }
 quality_thresholds: []
 
 # ── Minimum movie duration ──────────────────────────────────────────────────
@@ -140,6 +144,7 @@ checks:
   warn_multi_quality: true        # Movie in multiple quality folders (unless in acceptable_quality_combos)
   warn_quality_mismatch: true     # File dimensions don't fit its category's quality bucket
   warn_short_duration: false      # Runtime at or below min_duration_minutes
+  warn_large_file: true           # Bitrate over its quality's max_mbps
   warn_loose_files: true          # Video files at unexpected nesting
   warn_extra_subfolders: true     # Unexpected subfolders inside a movie folder
   warn_unexpected_entries: true   # Non-video, non-sidecar files

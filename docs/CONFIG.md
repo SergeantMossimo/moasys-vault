@@ -379,6 +379,24 @@ episode_code_case: lower
 
 ---
 
+### `specials_folder`
+
+**Applies to:** shows only.
+
+**What it is:** The house style for a show's season-0 folder. Plex reads `Specials` and `Season 00` the same way, so this is purely about consistency. One of `specials`, `season00`, or `any` (the default, which never warns). `Specials` still has to be listed in [`ignored_season_names`](#ignored_season_names) to be scanned at all.
+
+**Why you'd change it:** Your library uses both names and you want one.
+
+**Related warnings:** `warn_specials_folder_style` — the season-0 folder isn't the house style. Whatever the setting, `warn_duplicate_season_folder` fires when one show has both folders, since Plex merges them.
+
+**Example:**
+
+```yaml
+specials_folder: specials
+```
+
+---
+
 ### `quality_thresholds`
 
 **Applies to:** movies + shows. **Only useful if your `categories` are organized by quality** (see [shape A above](#a-quality-organized-categories-eg-movies--shows-by-uhdhdsd)). If you're using general-purpose tag categories or a flat library, leave this empty.
@@ -387,15 +405,17 @@ episode_code_case: lower
 
 **Why you'd change it:** Your library's idea of HD or UHD differs from the defaults, or you want to opt in to or out of the dimension check entirely.
 
-**Related warnings:** `warn_quality_mismatch` — fires when a file's actual dimensions don't fit the bucket its category's auto-detected quality implies.
+**`max_mbps` (optional):** a bitrate ceiling for files of that quality, in megabits per second, worked out as size ÷ runtime. That way a long film isn't flagged just for being long. A file over it fires `warn_large_file`. The quality is the one the file's dimensions fit, not its folder's, so a 720p file misfiled under `HD/` is judged against the `SD` ceiling. Leave it off a bucket to never check that quality. Nothing ships with a ceiling; pick yours from what your library looks like. For reference, h264 HD movies typically run 3–8 Mbps and SD 1–2, while HEVC gets the same picture at roughly half the bitrate.
+
+**Related warnings:** `warn_quality_mismatch` — fires when a file's actual dimensions don't fit the bucket its category's auto-detected quality implies. `warn_large_file` — fires when a file is over its quality's `max_mbps` (summarized once per season for shows).
 
 **Example:**
 
 ```yaml
 quality_thresholds:
-  - { name: UHD, min_width: 2000 }
-  - { name: HD, min_width: 1000, max_width: 2000 }
-  - { name: SD, max_width: 1000 }
+  - { name: UHD, min_width: 2000, max_mbps: 25 }
+  - { name: HD, min_width: 1000, max_width: 2000, max_mbps: 8 }
+  - { name: SD, max_width: 1000, max_mbps: 4 }
 ```
 
 ---

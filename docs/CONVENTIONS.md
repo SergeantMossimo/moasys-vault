@@ -89,6 +89,11 @@ ignored_season_names:
   - Champion of Champions
 ```
 
+Gotchas:
+
+- **`Specials` and `Season 00` are the same season to Plex.** Pick one name — [`specials_folder`](CONFIG.md#specials_folder) enforces it. Never keep both in one show folder: Plex silently merges them into one season.
+- **Files in `Specials` still take `s00` codes** (`Show (2020) - s00e01 - Title.mp4`). A file there coded `s03e01` is flagged as a season mismatch, just as it would be in `Season 00`. Other named seasons accept any code.
+
 **Editions:**
 
 A second cut of the same series — a colorized version alongside the black-and-white original, a Bluray remaster — is an **edition**. Tag the show folder and Plex keeps each one as its own library item, with its own watch status and ratings:

@@ -97,6 +97,12 @@ export const MoviesRulesSchema = z.object({
       name: z.string(), // Must match a category name to take effect
       min_width: z.number().int().positive().optional(),
       max_width: z.number().int().positive().optional(),
+      /**
+       * Bitrate ceiling (size ÷ runtime) for a file of this quality. A file
+       * over it fires `warn_large_file`. Judged against the quality the file's
+       * dimensions fit, not its folder's. Omit to never flag this quality.
+       */
+      max_mbps: z.number().positive().optional(),
     })
   ),
 
@@ -171,6 +177,11 @@ export const MoviesRulesSchema = z.object({
      * version, since it knows how long each film is supposed to be.
      */
     warn_short_duration: z.boolean(),
+    /**
+     * The file's bitrate (size ÷ runtime) is over the `max_mbps` ceiling of
+     * the quality its dimensions fit. Never fires for a quality without one.
+     */
+    warn_large_file: z.boolean(),
     /**
      * Video files found at a level where the scanner expects a subfolder.
      * Specifically: video files placed directly in a media folder rather
@@ -281,6 +292,7 @@ export const defaultMoviesRules: MoviesRules = MoviesRulesSchema.parse({
     warn_multi_quality: true,
     warn_quality_mismatch: true,
     warn_short_duration: false,
+    warn_large_file: true,
     warn_loose_files: true,
     warn_extra_subfolders: true,
     warn_unexpected_entries: true,

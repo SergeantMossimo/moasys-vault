@@ -180,6 +180,45 @@ describe('extractEvents', () => {
     ])
   })
 
+  it('ends the context when the thread completes that item', () => {
+    const events = extractEvents(
+      logFile([
+        at(1, '9', 'DEBUG', '[CreditsDetectionManager] Running credits detection for item 102583'),
+        at(
+          2,
+          '9',
+          'DEBUG',
+          '[CreditsDetectionManager] Completed credits detection for item 102583 (success: 1, failures: 0)'
+        ),
+        at(
+          3,
+          '9',
+          'ERROR',
+          '[CreditsDetectionManager] Detection is unsupported with multi-part media items'
+        ),
+      ]),
+      findPath
+    )
+    expect(events.map(e => [e.ratingKey, e.via])).toEqual([[null, null]])
+  })
+
+  it('keeps the context when a different item completes', () => {
+    const [event] = extractEvents(
+      logFile([
+        at(1, '9', 'DEBUG', '[CreditsDetectionManager] Running credits detection for item 2'),
+        at(
+          2,
+          '9',
+          'DEBUG',
+          '[CreditsDetectionManager] Completed credits detection for item 1 (success: 1, failures: 0)'
+        ),
+        at(3, '9', 'ERROR', '[CreditsDetectionManager] incomplete marker attributes'),
+      ]),
+      findPath
+    )
+    expect(event!.ratingKey).toBe('2')
+  })
+
   it('pairs the announced item with the file a scanner then opens', () => {
     const file = '/media/Movies/Other HD/Friday After Next (2002)/Friday After Next (2002).mp4'
     const [event] = extractEvents(

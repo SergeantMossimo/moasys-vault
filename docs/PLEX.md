@@ -235,7 +235,7 @@ Plex rarely writes a file path on the line that reports a problem. It names the 
 So a problem line is tied to an item when:
 
 1. **The line itself** names an item id or a library path, or
-2. **The same thread announced an item** within the previous five minutes — only on specific "starting work on this item" lines (credits detection, media analysis). A thread that merely mentioned some file earlier doesn't count, because Plex reuses threads for unrelated work. Errors from request handlers (`[Req#…]`) never take an item this way.
+2. **The same thread announced an item** within the previous five minutes — only on specific "starting work on this item" lines (credits detection, media analysis). A thread that merely mentioned some file earlier doesn't count, because Plex reuses threads for unrelated work. Errors from request handlers (`[Req#…]`) never take an item this way, and a thread's announcement ends once it logs `Completed credits detection` for that item. Errors that follow with no announcement of their own, such as `Detection is unsupported with multi-part media items`, therefore stay untied instead of landing on the episode that had just finished.
 
 Ids are looked up in the catalogs from your last pull. The run prints how many lines named items the pull doesn't have — re-pull and re-run to identify them.
 

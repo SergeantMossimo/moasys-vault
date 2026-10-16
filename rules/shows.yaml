@@ -89,6 +89,16 @@ ignored_season_names:
 # shows.local.yaml.
 episode_code_case: any
 
+# ── Specials folder house style ─────────────────────────────────────────────
+# Plex reads `Specials` and `Season 00` the same way: both are season 0.
+#
+#   specials  ->  `Season 00` folders fire warn_specials_folder_style
+#   season00  ->  `Specials` folders fire it
+#   any       ->  no house style, never warn (the default)
+#
+# A show with both folders fires warn_duplicate_season_folder either way.
+specials_folder: any
+
 # Sidecar = silently allowed alongside episodes (poster art, subtitles, NFOs).
 sidecar_extensions:
   - .nfo
@@ -108,6 +118,10 @@ sidecar_extensions:
 # Only used when categories are organized by quality (shape A above).
 # Defines what UHD / HD / SD mean dimensionally. Empty default = no
 # dimension checks fire. Configure in shows.local.yaml.
+#
+# A bucket's optional `max_mbps` is a bitrate ceiling (size ÷ runtime) for
+# episodes of that quality; anything over it fires warn_large_file:
+#   - { name: HD, min_width: 1000, max_width: 2000, max_mbps: 8 }
 quality_thresholds: []
 
 # ── Acceptable per-season multi-quality combos ──────────────────────────────
@@ -132,6 +146,8 @@ checks:
   warn_bad_show_folder: true                    # Show folder doesn't match patterns.show_folder
   warn_empty_edition: true                      # Show folder has {edition-} with no name after the dash
   warn_bad_season_folder: true                  # Season folder doesn't match (and isn't in ignored_season_names)
+  warn_specials_folder_style: true              # Season-0 folder isn't the specials_folder style
+  warn_duplicate_season_folder: true            # Two season folders Plex reads as one season (Season 00 + Specials)
   warn_bad_file_name: true                      # File doesn't match patterns.file
   warn_show_year_mismatch: true                 # File's show/year vs parent show folder
   warn_show_title_case: true                    # File show title matches folder except for capitalization
@@ -140,6 +156,7 @@ checks:
   warn_episode_gaps: true                       # Gap detected in episode numbers
   warn_duplicate_episode: true                  # Two files in one season cover the same episode
   warn_quality_mismatch: true                   # Episode dimensions don't fit the category's quality bucket (summary per season)
+  warn_large_file: true                         # Episode bitrate over its quality's max_mbps (summary per season)
   warn_duplicate_quality: true                  # A season in two folders of the SAME quality tier (HD + Other HD) — not whitelistable
   warn_multi_quality: true                      # A single season exists in multiple distinct qualities
   warn_loose_files: true                        # Video files at unexpected nesting
@@ -148,6 +165,7 @@ checks:
   warn_tmdb_no_match: true                      # TMDB found no plausible match
   warn_tmdb_low_confidence: true                # TMDB match score below threshold
   warn_tmdb_episode_count: true                 # Local season has fewer episodes than TMDB lists
+  warn_tmdb_missing_seasons: true               # TMDB lists an aired season you have no folder for (summary per show)
   warn_tmdb_title_canonical: true               # Folder title differs from TMDB filename-safe canonical
   warn_missing_episode_title: true              # Episode files omit trailing " - Episode Title" (summary per season)
   warn_tmdb_episode_name_mismatch: true         # Local episode title doesn't match TMDB's title for that S/E
