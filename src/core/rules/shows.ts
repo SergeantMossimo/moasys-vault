@@ -79,6 +79,19 @@ export const ShowsRulesSchema = z.object({
   episode_code_case: z.enum(['lower', 'upper', 'any']),
 
   /**
+   * House style for the season-0 folder. Plex reads `Specials` and
+   * `Season 00` identically, so this is purely about consistency:
+   *
+   *   'specials'  — `Season 00` folders fire warn_specials_folder_style
+   *   'season00'  — `Specials` folders fire it
+   *   'any'       — no house style; never warn (the neutral default)
+   *
+   * Whatever the style, a show with both folders fires
+   * warn_duplicate_season_folder, since Plex merges them.
+   */
+  specials_folder: z.enum(['specials', 'season00', 'any']),
+
+  /**
    * File extensions for Plex sidecar files (NFO metadata, posters,
    * subtitles, etc.). Silently allowed anywhere in the shows hierarchy
    * and never flagged as "unexpected".
@@ -94,6 +107,8 @@ export const ShowsRulesSchema = z.object({
       name: z.string(),
       min_width: z.number().int().positive().optional(),
       max_width: z.number().int().positive().optional(),
+      /** Bitrate ceiling for an episode of this quality — see movies. */
+      max_mbps: z.number().positive().optional(),
     })
   ),
 
@@ -125,6 +140,17 @@ export const ShowsRulesSchema = z.object({
      */
     warn_empty_edition: z.boolean(),
     warn_bad_season_folder: z.boolean(),
+    /**
+     * The season-0 folder isn't the `specials_folder` house style. Never
+     * fires when `specials_folder` is 'any'.
+     */
+    warn_specials_folder_style: z.boolean(),
+    /**
+     * Two season folders in one show folder that Plex reads as the same
+     * season — `Season 00` beside `Specials`, or `Season 1` beside
+     * `Season 01`. Plex merges them into one season.
+     */
+    warn_duplicate_season_folder: z.boolean(),
     warn_bad_file_name: z.boolean(),
     warn_show_year_mismatch: z.boolean(),
     /**
@@ -152,6 +178,11 @@ export const ShowsRulesSchema = z.object({
      */
     warn_duplicate_episode: z.boolean(),
     warn_quality_mismatch: z.boolean(),
+    /**
+     * Episodes over the `max_mbps` ceiling of the quality their dimensions
+     * fit. Never fires for a quality without one. Summarised once per season.
+     */
+    warn_large_file: z.boolean(),
     /**
      * A SINGLE season exists in two or more category folders that resolve to
      * the SAME quality tier (e.g. S01 is in both `HD/` and `Other HD/`) —
@@ -200,6 +231,13 @@ export const ShowsRulesSchema = z.object({
      * you have 1-10 but TMDB says the season has 13). Per-season warning.
      */
     warn_tmdb_episode_count: z.boolean(),
+    /**
+     * TMDB lists an aired season (season 0 excluded) that has no season folder
+     * at all — which `warn_tmdb_episode_count` can't see, since it only
+     * compares the seasons you have. One warning per show. Seasons are pooled
+     * across folders matched to the same TMDB id.
+     */
+    warn_tmdb_missing_seasons: z.boolean(),
     /**
      * TMDB matched but the folder title isn't byte-for-byte equal to TMDB's
      * filename-safe canonical title (case-sensitive). Same idea as the
@@ -254,6 +292,7 @@ export const defaultShowsRules: ShowsRules = ShowsRulesSchema.parse({
   // Neutral: no house style, so no warnings. Libraries pick one in
   // shows.local.yaml.
   episode_code_case: 'any',
+  specials_folder: 'any',
   sidecar_extensions: [
     '.nfo',
     '.jpg',
@@ -279,6 +318,8 @@ export const defaultShowsRules: ShowsRules = ShowsRulesSchema.parse({
     warn_bad_show_folder: true,
     warn_empty_edition: true,
     warn_bad_season_folder: true,
+    warn_specials_folder_style: true,
+    warn_duplicate_season_folder: true,
     warn_bad_file_name: true,
     warn_show_year_mismatch: true,
     warn_show_title_case: true,
@@ -287,6 +328,7 @@ export const defaultShowsRules: ShowsRules = ShowsRulesSchema.parse({
     warn_episode_gaps: true,
     warn_duplicate_episode: true,
     warn_quality_mismatch: true,
+    warn_large_file: true,
     warn_duplicate_quality: true,
     warn_multi_quality: true,
     warn_loose_files: true,
@@ -295,6 +337,7 @@ export const defaultShowsRules: ShowsRules = ShowsRulesSchema.parse({
     warn_tmdb_no_match: true,
     warn_tmdb_low_confidence: true,
     warn_tmdb_episode_count: true,
+    warn_tmdb_missing_seasons: true,
     warn_tmdb_title_canonical: true,
     warn_missing_episode_title: true,
     warn_tmdb_episode_name_mismatch: true,

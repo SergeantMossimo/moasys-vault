@@ -23,6 +23,8 @@ import {
   QualityBucket,
   classifyQuality,
   deriveQuality,
+  findOversizedFile,
+  formatBitrateAndSize,
   formatBucketRange,
   probeBatch,
 } from './helpers'
@@ -391,6 +393,73 @@ function reportQualityMismatches(
   }
 }
 
+/**
+ * `warn_large_file`, summarized once per season folder like
+ * `warn_quality_mismatch`: a season ripped or downloaded at a high bitrate
+ * usually is wholesale. Leads with how many episodes are over, then the
+ * largest few by bitrate — the ones worth replacing first.
+ */
+function reportLargeFiles(
+  probed: ProbedFile[],
+  identities: Map<string, EpisodeIdentity>,
+  rules: ShowsRules,
+  warnings: WarningCollector
+): void {
+  interface SeasonTally {
+    total: number
+    over: Array<{ episodeId: string; mbps: number; size: number; quality: string; limit: number }>
+  }
+  const seasons = new Map<string, SeasonTally>()
+
+  for (const { task, data } of probed) {
+    if (!data.video) continue
+    const seasonFolder = path.posix.dirname(task.relativePath)
+    const tally = seasons.get(seasonFolder) ?? { total: 0, over: [] }
+    seasons.set(seasonFolder, tally)
+    tally.total++
+
+    const over = findOversizedFile(data, rules.quality_thresholds)
+    if (over === null) continue
+    // An `episodes:` entry can't reach the season row below, so honor it here.
+    if (warnings.isIgnored(task.relativePath)) continue
+    tally.over.push({
+      episodeId:
+        identities.get(task.relativePath)?.episodeId ?? path.posix.basename(task.relativePath),
+      mbps: over.mbps,
+      size: data.size_bytes,
+      quality: over.bucket.name,
+      limit: over.bucket.max_mbps,
+    })
+  }
+
+  for (const [seasonFolder, tally] of seasons) {
+    if (tally.over.length === 0) continue
+    const largest = [...tally.over].sort((a, b) => b.mbps - a.mbps)
+    const shown = largest
+      .slice(0, QUALITY_SAMPLE_LIMIT)
+      .map(o => `${o.episodeId} ${formatBitrateAndSize(o.mbps, o.size)}`)
+      .join(', ')
+    const more =
+      largest.length > QUALITY_SAMPLE_LIMIT
+        ? `, +${largest.length - QUALITY_SAMPLE_LIMIT} more`
+        : ''
+    // A season is almost always one quality; name each limit when it isn't.
+    const limits = [...new Set(tally.over.map(o => `${o.quality} limit of ${o.limit} Mbps`))]
+
+    warnings.add(
+      'warn_large_file',
+      seasonFolder,
+      `${tally.over.length}/${tally.total} episodes over the ${limits.join(' / ')}: ` +
+        `${shown}${more}.`,
+      {
+        fix:
+          `Re-encode, or replace the season with a smaller copy. Raise max_mbps in ` +
+          `rules/shows.local.yaml if this is a bitrate you're happy to keep.`,
+      }
+    )
+  }
+}
+
 // ─────────────────────────────────────────────
 // Entry point
 // ─────────────────────────────────────────────
@@ -423,6 +492,9 @@ export async function probeShows(
 
   if (rules.checks.warn_quality_mismatch) {
     reportQualityMismatches(probed, identities, rules, warnings)
+  }
+  if (rules.checks.warn_large_file) {
+    reportLargeFiles(probed, identities, rules, warnings)
   }
 
   const qualityOrder = resolveCategories(rules.categories).map(c => c.name)

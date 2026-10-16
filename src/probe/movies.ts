@@ -18,7 +18,15 @@ import { MoviesRules } from '../core/rules/movies'
 import { compilePattern, resolveCategories } from '../core/rules/helpers'
 
 import { ProbeCache } from './cache'
-import { ProbeTask, ProbedFile, classifyQuality, formatBucketRange, probeBatch } from './helpers'
+import {
+  ProbeTask,
+  ProbedFile,
+  classifyQuality,
+  findOversizedFile,
+  formatBitrateAndSize,
+  formatBucketRange,
+  probeBatch,
+} from './helpers'
 import { MovieProbeOutput, FileProbe, ProbeData, ProbeResult } from './types'
 
 // ─────────────────────────────────────────────
@@ -299,6 +307,26 @@ export async function probeMovies(
           fix:
             `Usually a truncated or failed encode — play it to the end and re-encode from ` +
             `source if it is cut short. Expected on short films, TV specials and stand-up sets.`,
+        }
+      )
+    }
+  }
+
+  // Large file check — bitrate against the ceiling of the quality the file
+  // actually is. Silent for any quality without a max_mbps.
+  if (rules.checks.warn_large_file) {
+    for (const { task, data } of probed) {
+      const over = findOversizedFile(data, rules.quality_thresholds)
+      if (over === null) continue
+      warnings.add(
+        'warn_large_file',
+        task.relativePath,
+        `${formatBitrateAndSize(over.mbps, data.size_bytes)}, over the ${over.bucket.name} ` +
+          `limit of ${over.bucket.max_mbps} Mbps.`,
+        {
+          fix:
+            `Re-encode, or replace it with a smaller copy. Raise max_mbps in ` +
+            `rules/movies.local.yaml if this is a bitrate you're happy to keep.`,
         }
       )
     }

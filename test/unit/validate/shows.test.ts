@@ -11,6 +11,7 @@ import type {
   TmdbSeasonDetails,
 } from '../../../src/validate/types'
 import { TmdbClient } from '../../../src/validate/tmdb'
+import { parseIgnoreList } from '../../../src/core/ignored'
 
 function memoryCache<T>(seed: Record<string, T> = {}): JsonCache<T> {
   const cache = new JsonCache<T>('/dev/null-' + Math.random().toString(36))
@@ -1495,6 +1496,211 @@ describe('validateShows — TMDB episode-name validation', () => {
     )
 
     expect(seasonsCall).not.toHaveBeenCalled()
+    expect(warnings.all().filter(w => w.type === 'warn_tmdb_episode_name_mismatch')).toEqual([])
+  })
+})
+
+describe('validateShows — missing seasons', () => {
+  let warnings: WarningCollector
+
+  beforeEach(() => {
+    warnings = new WarningCollector()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  const details = (id: number, seasons: TmdbShowDetails['seasons']): TmdbShowDetails => ({
+    id,
+    name: 'Show',
+    original_name: 'Show',
+    first_air_date: '2020-01-01',
+    number_of_seasons: seasons.length,
+    number_of_episodes: 0,
+    seasons,
+  })
+
+  const season = (label: string): ShowOutput['seasons'][number] => ({
+    season: label,
+    episode_count: 1,
+    versions: [{ category: 'HD', quality: null }],
+    episodes: [],
+  })
+
+  const aired = (n: number) => ({
+    season_number: n,
+    episode_count: 10,
+    name: `Season ${n}`,
+    air_date: `${2019 + n}-01-01`,
+  })
+
+  it('reports aired seasons with no folder, one row per show', async () => {
+    const client = mockClient({
+      details: { 100: details(100, [aired(1), aired(2), aired(3), aired(4), aired(5)]) },
+    })
+    const result = await validateShows(
+      [show('Show', 2020, [season('1'), season('3')], null, 100)],
+      defaultShowsRules,
+      client,
+      memoryCache(),
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+    const rows = warnings.all().filter(w => w.type === 'warn_tmdb_missing_seasons')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.path).toBe('HD/Show (2020) {tmdb-100}')
+    expect(rows[0]?.issue).toBe('Missing 3 of 5 aired seasons per TMDB: S02, S04–S05.')
+    expect(result[0]?.missing_seasons).toEqual([2, 4, 5])
+  })
+
+  it('ignores specials, empty, undated and unaired seasons', async () => {
+    const client = mockClient({
+      details: {
+        100: details(100, [
+          { season_number: 0, episode_count: 4, name: 'Specials', air_date: '2020-01-01' },
+          aired(1),
+          { season_number: 2, episode_count: 0, name: 'Season 2', air_date: '2021-01-01' },
+          { season_number: 3, episode_count: 8, name: 'Season 3' },
+          { season_number: 4, episode_count: 8, name: 'Season 4', air_date: '2999-01-01' },
+        ]),
+      },
+    })
+    const result = await validateShows(
+      [show('Show', 2020, [season('1')], null, 100)],
+      defaultShowsRules,
+      client,
+      memoryCache(),
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+    expect(warnings.all().filter(w => w.type === 'warn_tmdb_missing_seasons')).toEqual([])
+    expect(result[0]?.missing_seasons).toEqual([])
+  })
+
+  it('pools seasons across folders matched to the same TMDB id', async () => {
+    const client = mockClient({ details: { 100: details(100, [aired(1), aired(2)]) } })
+    await validateShows(
+      [
+        show('Show', 2020, [season('1')], null, 100),
+        show('Show', 2020, [season('2')], 'Remastered', 100),
+      ],
+      defaultShowsRules,
+      client,
+      memoryCache(),
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+    expect(warnings.all().filter(w => w.type === 'warn_tmdb_missing_seasons')).toEqual([])
+  })
+
+  it('skips a {tvdb-N} folder, whose seasons follow TVDB', async () => {
+    const client = mockClient({ details: { 100: details(100, [aired(1), aired(2)]) } })
+    await validateShows(
+      [show('Show', 2020, [season('1')], null, 100, 999)],
+      defaultShowsRules,
+      client,
+      memoryCache(),
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+    expect(warnings.all().filter(w => w.type === 'warn_tmdb_missing_seasons')).toEqual([])
+  })
+
+  it('is silenced by its toggle', async () => {
+    const client = mockClient({ details: { 100: details(100, [aired(1), aired(2)]) } })
+    const rules: ShowsRules = {
+      ...defaultShowsRules,
+      checks: { ...defaultShowsRules.checks, warn_tmdb_missing_seasons: false },
+    }
+    await validateShows(
+      [show('Show', 2020, [season('1')], null, 100)],
+      rules,
+      client,
+      memoryCache(),
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+    expect(warnings.all().filter(w => w.type === 'warn_tmdb_missing_seasons')).toEqual([])
+  })
+})
+
+describe('validateShows — Specials episode titles', () => {
+  const specialsClient = () =>
+    mockClient({
+      details: {
+        100: {
+          id: 100,
+          name: 'Show',
+          original_name: 'Show',
+          first_air_date: '2020-01-01',
+          number_of_seasons: 1,
+          number_of_episodes: 1,
+          seasons: [{ season_number: 0, episode_count: 2, name: 'Specials' }],
+        },
+      },
+      seasons: {
+        '100:0': {
+          season_number: 0,
+          episodes: [
+            { episode_number: 1, name: 'Christmas Special' },
+            { episode_number: 2, name: 'Reunion' },
+          ],
+        },
+      },
+    })
+
+  const specialsShow = () =>
+    show(
+      'Show',
+      2020,
+      [
+        {
+          season: 'Specials',
+          episode_count: 2,
+          versions: [{ category: 'HD', quality: null }],
+          episodes: [
+            { episode_start: 1, episode_end: 1, title: 'Christmas Special' },
+            { episode_start: 2, episode_end: 2, title: 'Wrong' },
+          ],
+        },
+      ],
+      null,
+      100
+    )
+
+  it('checks a Specials folder against TMDB season 0', async () => {
+    const warnings = new WarningCollector()
+    await validateShows(
+      [specialsShow()],
+      defaultShowsRules,
+      specialsClient(),
+      memoryCache(),
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+    const rows = warnings.all().filter(w => w.type === 'warn_tmdb_episode_name_mismatch')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.path).toBe('HD/Show (2020) {tmdb-100}/S00E02')
+    expect(rows[0]?.issue).toContain("'Reunion'")
+  })
+
+  it('is silenced by a seasons: entry naming the Specials folder', async () => {
+    const warnings = new WarningCollector(
+      parseIgnoreList({ seasons: ['Show (2020) {tmdb-100}/Specials'] }, 'shows', 'test.yaml')
+    )
+    await validateShows(
+      [specialsShow()],
+      defaultShowsRules,
+      specialsClient(),
+      memoryCache(),
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
     expect(warnings.all().filter(w => w.type === 'warn_tmdb_episode_name_mismatch')).toEqual([])
   })
 })

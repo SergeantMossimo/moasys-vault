@@ -335,3 +335,69 @@ describe('probeShows', () => {
     expect(episodeIds).toContain('S01E02-E03')
   })
 })
+
+describe('probeShows — warn_large_file', () => {
+  let tmpDir: string
+  let logSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'moasys-probe-shows-large-'))
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    logSpy.mockRestore()
+  })
+
+  const HD_VIDEO = { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 }
+  const bytesAt = (mbps: number, seconds: number) => (mbps * 1e6 * seconds) / 8
+  const file = (n: number) => `Show (2020) - S01E${String(n).padStart(2, '0')}.mp4`
+  const rel = (n: number) => `HD/Show (2020)/Season 01/${file(n)}`
+
+  /** One HD season, an episode per entry of `mbps`, each 30 minutes long. */
+  async function run(mbps: number[], ignored?: Record<string, string[]>) {
+    const rules: ShowsRules = {
+      ...defaultShowsRules,
+      categories: [{ name: 'HD' }],
+      quality_thresholds: [{ name: 'HD', min_width: 1000, max_width: 2000, max_mbps: 8 }],
+    }
+    const season: Record<string, string> = {}
+    const probes: Record<string, ProbeData> = {}
+    mbps.forEach((m, i) => {
+      season[file(i + 1)] = ''
+      probes[rel(i + 1)] = fakeProbe({
+        video: HD_VIDEO,
+        duration_seconds: 1800,
+        size_bytes: bytesAt(m, 1800),
+      })
+    })
+    const root = buildLibrary(
+      { HD: { 'Show (2020)': { 'Season 01': season } } },
+      'moasys-shows-large-'
+    )
+    const cache = primeCache(path.join(tmpDir, 'probe.json'), root, probes)
+    const warnings = new WarningCollector(ignored && parseIgnoreList(ignored, 'shows', 'test.yaml'))
+    await probeShows({ root_path: root }, rules, cache, warnings)
+    return warnings.all().filter(w => w.type === 'warn_large_file')
+  }
+
+  it('summarizes a season once, largest episodes first', async () => {
+    const rows = await run([4, 10, 20, 9, 12, 3])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.path).toBe('HD/Show (2020)/Season 01')
+    expect(rows[0]?.issue).toBe(
+      '4/6 episodes over the HD limit of 8 Mbps: S01E03 20.0 Mbps (4.5 GB), ' +
+        'S01E05 12.0 Mbps (2.7 GB), S01E02 10.0 Mbps (2.3 GB), +1 more.'
+    )
+  })
+
+  it('stays silent when every episode is under the ceiling', async () => {
+    expect(await run([4, 7.9])).toEqual([])
+  })
+
+  it('leaves an `episodes:` entry out of the summary', async () => {
+    const rows = await run([20, 3], { episodes: [`Show (2020)/${file(1)}`] })
+    expect(rows).toEqual([])
+  })
+})

@@ -93,6 +93,12 @@ const FIX = {
     `Match the file's capitalization to the folder, so Plex and your filesystem don't ` +
     `present the same show two ways. Fix with: npm run fix:shows -- --fix show-prefix <drive> --apply`,
   warn_season_mismatch: `Move the file to the season folder its code names, or fix the code.`,
+  warn_specials_folder_style:
+    `Rename the folder to the specials_folder house style in rules/shows.yaml. Plex reads ` +
+    `either name as season 0, so nothing changes in Plex.`,
+  warn_duplicate_season_folder:
+    `Plex merges these into one season. Move the files into one folder and delete the ` +
+    `other, keeping the name your house style uses.`,
   warn_episode_gaps: `Add the missing episodes, or ignore this if the show really skips them.`,
   warn_duplicate_episode:
     `Plex merges files that share an episode number, so only one plays. Delete the ` +
@@ -405,12 +411,18 @@ export function createShowsModule(
           }
         }
 
+        // Season number → the folders Plex reads as that season, for
+        // warn_duplicate_season_folder once every folder has been seen.
+        const foldersPerSeason = new Map<number, string[]>()
+
         for (const seasonEntry of seasonEntries) {
           if (!seasonEntry.isDirectory()) continue
 
           const seasonPath = path.join(showPath, seasonEntry.name)
           const seasonRel = path.join(showRel, seasonEntry.name)
           const nameLower = seasonEntry.name.toLowerCase()
+          // `Specials` is season 0 to Plex — the same season as `Season 00`.
+          const isSpecials = nameLower === 'specials'
 
           // ── Determine season label ───────────────────────────────────────
           let seasonLabel: string
@@ -420,6 +432,17 @@ export function createShowsModule(
             // Named season from rules (e.g. "Specials") — use as-is
             seasonLabel = seasonEntry.name
             isNamed = true
+            if (isSpecials) {
+              foldersPerSeason.set(0, [...(foldersPerSeason.get(0) ?? []), seasonEntry.name])
+              if (rules.specials_folder === 'season00' && rules.checks.warn_specials_folder_style) {
+                warnings.add(
+                  'warn_specials_folder_style',
+                  seasonRel,
+                  `House style is 'Season 00', not 'Specials'.`,
+                  { fix: FIX.warn_specials_folder_style }
+                )
+              }
+            }
           } else {
             const seasonNumber = parseSeasonFolder(seasonEntry.name, seasonFolderRegex)
             if (seasonNumber === null) {
@@ -435,7 +458,26 @@ export function createShowsModule(
             }
             seasonLabel = String(seasonNumber) // "01" -> "1"
             isNamed = false
+            foldersPerSeason.set(seasonNumber, [
+              ...(foldersPerSeason.get(seasonNumber) ?? []),
+              seasonEntry.name,
+            ])
+            if (
+              seasonNumber === 0 &&
+              rules.specials_folder === 'specials' &&
+              rules.checks.warn_specials_folder_style
+            ) {
+              warnings.add(
+                'warn_specials_folder_style',
+                seasonRel,
+                `House style is 'Specials', not '${seasonEntry.name}'.`,
+                { fix: FIX.warn_specials_folder_style }
+              )
+            }
           }
+          // The season a file's code should name: a `Specials` folder holds
+          // season 0, like `Season 00`. Other named seasons can hold any.
+          const expectedSeason = isNamed ? (isSpecials ? 0 : null) : parseInt(seasonLabel, 10)
 
           // ── Read episode files ───────────────────────────────────────────
           let allFiles: fs.Dirent[]
@@ -518,6 +560,9 @@ export function createShowsModule(
           // split episode (`- pt1`, `- pt2`) share an identity, so they count once.
           const filesPerEpisode = new Map<number, Set<string>>()
           const episodes: EpisodeOutput[] = []
+          // Episode code → its files' identities and file count. Several files
+          // sharing a code with one identity are the parts of one split episode.
+          const partsPerCode = new Map<string, { files: number; identities: Set<string> }>()
           let seasonEpCount = 0
           let parsedFilesInSeason = 0
           let filesMissingTitleInSeason = 0
@@ -578,7 +623,7 @@ export function createShowsModule(
               }
             }
 
-            if (!isNamed && fileSeason !== parseInt(seasonLabel, 10)) {
+            if (expectedSeason !== null && fileSeason !== expectedSeason) {
               if (rules.checks.warn_season_mismatch) {
                 warnings.add(
                   'warn_season_mismatch',
@@ -621,8 +666,14 @@ export function createShowsModule(
               title: episodeTitle,
             })
 
-            // Add each individual episode number for gap detection
             const identity = stem.replace(STACK_SUFFIX, '').toLowerCase()
+            const codeKey = `${firstEpisode}-${lastEpisode}`
+            const parts = partsPerCode.get(codeKey) ?? { files: 0, identities: new Set<string>() }
+            parts.files++
+            parts.identities.add(identity)
+            partsPerCode.set(codeKey, parts)
+
+            // Add each individual episode number for gap detection
             for (let ep = firstEpisode; ep <= lastEpisode; ep++) {
               // Gap detection still needs an ignored file's numbers, or
               // ignoring it would invent a gap where it sits.
@@ -632,6 +683,22 @@ export function createShowsModule(
               filesPerEpisode.set(ep, files.add(identity))
             }
             seasonEpCount += lastEpisode - firstEpisode + 1
+          }
+
+          // A split episode (`S02E05 - The Rise of Scar Part 1` and `Part 2`)
+          // is one episode to Plex and TMDB: count it once, and catalog it
+          // under its title without the part marker. The catalog keeps one
+          // entry per episode number, so the TMDB title check only ever sees
+          // the first part — with its marker, it could never match.
+          for (const ep of episodes) {
+            const parts = partsPerCode.get(`${ep.episode_start}-${ep.episode_end}`)
+            if (!parts || parts.files < 2 || parts.identities.size !== 1) continue
+            if (ep.title !== null) ep.title = ep.title.replace(STACK_SUFFIX, '')
+          }
+          for (const [codeKey, parts] of partsPerCode) {
+            if (parts.files < 2 || parts.identities.size !== 1) continue
+            const [start, end] = codeKey.split('-').map(Number) as [number, number]
+            seasonEpCount -= (parts.files - 1) * (end - start + 1)
           }
 
           if (rules.checks.warn_episode_gaps) {
@@ -749,6 +816,19 @@ export function createShowsModule(
               ? deriveQuality(probe.video.width, probe.video.height, rules.quality_thresholds)
               : null
             season.versions.push({ category, quality })
+          }
+        }
+
+        if (rules.checks.warn_duplicate_season_folder) {
+          for (const [seasonNumber, folders] of foldersPerSeason) {
+            if (folders.length < 2) continue
+            const names = [...folders].sort().map(f => `'${f}'`)
+            warnings.add(
+              'warn_duplicate_season_folder',
+              showRel,
+              `${names.join(' and ')} are both season ${seasonNumber} to Plex.`,
+              { fix: FIX.warn_duplicate_season_folder }
+            )
           }
         }
       }

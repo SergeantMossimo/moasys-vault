@@ -212,6 +212,15 @@ const ANNOUNCERS: Array<{ pattern: RegExp; kind: 'key' | 'path' }> = [
 ]
 
 /**
+ * Lines that say a thread has finished with an item, ending its context.
+ * Plex logs some errors with no announcement of their own — "Detection is
+ * unsupported with multi-part media items" follows straight on from the
+ * previous item's "Completed" line — and without this they were tied to the
+ * item that had just succeeded.
+ */
+const CLOSERS = [/^\[CreditsDetectionManager\] Completed credits detection for item (\d+)/]
+
+/**
  * How long an announcement stays the thread's context. Credits detection
  * runs FFmpeg over the whole file before reporting, which takes seconds to
  * a minute or two on a NAS.
@@ -288,6 +297,11 @@ export function extractEvents(
         })
       }
       break
+    }
+
+    for (const pattern of CLOSERS) {
+      const m = pattern.exec(firstLine)
+      if (m && contexts.get(line.thread)?.ratingKey === m[1]) contexts.delete(line.thread)
     }
 
     if (line.level !== 'ERROR' && line.level !== 'WARN') continue

@@ -422,3 +422,69 @@ describe('probeMovies', () => {
     expect(result.output).toHaveLength(1)
   })
 })
+
+describe('probeMovies — warn_large_file', () => {
+  let tmpDir: string
+  let logSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'moasys-probe-movies-large-'))
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    logSpy.mockRestore()
+  })
+
+  const HD_VIDEO = { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 }
+  /** Bytes for `mbps` sustained over `seconds`. */
+  const bytesAt = (mbps: number, seconds: number) => (mbps * 1e6 * seconds) / 8
+
+  async function run(probe: ProbeData, maxMbps: number | undefined) {
+    const rules: MoviesRules = {
+      ...defaultMoviesRules,
+      categories: [{ name: 'HD' }, { name: 'SD' }],
+      quality_thresholds: [
+        { name: 'HD', min_width: 1000, max_width: 2000, max_mbps: maxMbps },
+        { name: 'SD', max_width: 1000 },
+      ],
+    }
+    const rel = 'HD/X (2000)/X (2000).mp4'
+    const root = buildLibrary({ HD: { 'X (2000)': { 'X (2000).mp4': '' } } }, 'moasys-large-')
+    const cache = primeCache(path.join(tmpDir, 'probe.json'), root, { [rel]: probe })
+    const warnings = new WarningCollector()
+    await probeMovies({ root_path: root }, rules, cache, warnings)
+    return warnings.all().filter(w => w.type === 'warn_large_file')
+  }
+
+  it('flags a file over its quality ceiling with its bitrate and size', async () => {
+    const rows = await run(
+      fakeProbe({ video: HD_VIDEO, duration_seconds: 3600, size_bytes: bytesAt(20, 3600) }),
+      12
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.issue).toBe('20.0 Mbps (9.0 GB), over the HD limit of 12 Mbps.')
+  })
+
+  it('stays silent under the ceiling', async () => {
+    const rows = await run(
+      fakeProbe({ video: HD_VIDEO, duration_seconds: 3600, size_bytes: bytesAt(10, 3600) }),
+      12
+    )
+    expect(rows).toEqual([])
+  })
+
+  it('stays silent for a quality with no max_mbps', async () => {
+    const rows = await run(
+      fakeProbe({ video: HD_VIDEO, duration_seconds: 3600, size_bytes: bytesAt(50, 3600) }),
+      undefined
+    )
+    expect(rows).toEqual([])
+  })
+
+  it('stays silent when the runtime was never measured', async () => {
+    const rows = await run(fakeProbe({ video: HD_VIDEO, size_bytes: bytesAt(50, 3600) }), 12)
+    expect(rows).toEqual([])
+  })
+})

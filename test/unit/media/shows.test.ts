@@ -617,6 +617,36 @@ describe('shows module — warnings', () => {
     expect(off.warnings.filter(w => w.type === 'warn_duplicate_episode')).toEqual([])
   })
 
+  it('catalogs a split episode once, under its title without the part marker', () => {
+    // TMDB lists `The Rise of Scar` once; with the marker left on, the TMDB
+    // title check could never match it. A `Part 1` that has a code of its
+    // own is a real title and is kept whole.
+    const result = runShowsScan({
+      spec: {
+        HD: {
+          'The Lion Guard (2016)': {
+            'Season 02': {
+              'The Lion Guard (2016) - s02e05 - The Rise of Scar Part 1.mp4': '',
+              'The Lion Guard (2016) - s02e05 - The Rise of Scar Part 2.mp4': '',
+              'The Lion Guard (2016) - s02e06 - Let Sleeping Crocs Lie - pt1.mp4': '',
+              'The Lion Guard (2016) - s02e06 - Let Sleeping Crocs Lie - pt2.mp4': '',
+              'The Lion Guard (2016) - s02e07 - The Finale Part 1.mp4': '',
+            },
+          },
+        },
+      },
+    })
+
+    const season = result.output[0]?.seasons[0]
+    expect(season?.episodes.map(e => e.title)).toEqual([
+      'The Rise of Scar',
+      'Let Sleeping Crocs Lie',
+      'The Finale Part 1',
+    ])
+    expect(season?.episode_count).toBe(3)
+    expect(result.warnings.filter(w => w.type === 'warn_duplicate_episode')).toEqual([])
+  })
+
   it('warn_no_videos: season folder is empty', () => {
     const result = runShowsScan({
       spec: {
@@ -1003,5 +1033,88 @@ describe('shows module — categories integration', () => {
       rules: { categories: [] },
     })
     expect(result.output[0]?.seasons[0]?.versions[0]?.category).toBe('default')
+  })
+})
+
+describe('shows module — season 0 folders', () => {
+  const types = <W extends { type: string }>(warnings: W[], type: string): W[] =>
+    warnings.filter(w => w.type === type)
+
+  it('flags Season 00 when the house style is Specials', () => {
+    const result = runShowsScan({
+      spec: { HD: { 'Show (2020)': { 'Season 00': { 'Show (2020) - s00e01.mp4': '' } } } },
+      rules: { specials_folder: 'specials' },
+    })
+    const rows = types(result.warnings, 'warn_specials_folder_style')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.path).toBe('HD/Show (2020)/Season 00')
+    expect(rows[0]?.issue).toBe(`House style is 'Specials', not 'Season 00'.`)
+  })
+
+  it('flags Specials when the house style is Season 00', () => {
+    const result = runShowsScan({
+      spec: { HD: { 'Show (2020)': { Specials: { 'Show (2020) - s00e01.mp4': '' } } } },
+      rules: { specials_folder: 'season00' },
+    })
+    expect(types(result.warnings, 'warn_specials_folder_style')[0]?.path).toBe(
+      'HD/Show (2020)/Specials'
+    )
+  })
+
+  it('never flags the folder name when the style is any', () => {
+    const result = runShowsScan({
+      spec: {
+        HD: {
+          'A (2020)': { 'Season 00': { 'A (2020) - s00e01.mp4': '' } },
+          'B (2020)': { Specials: { 'B (2020) - s00e01.mp4': '' } },
+        },
+      },
+    })
+    expect(types(result.warnings, 'warn_specials_folder_style')).toEqual([])
+  })
+
+  it('flags a show with both Season 00 and Specials, whatever the style', () => {
+    const result = runShowsScan({
+      spec: {
+        HD: {
+          'Show (2020)': {
+            'Season 00': { 'Show (2020) - s00e01.mp4': '' },
+            Specials: { 'Show (2020) - s00e02.mp4': '' },
+          },
+        },
+      },
+    })
+    const rows = types(result.warnings, 'warn_duplicate_season_folder')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.path).toBe('HD/Show (2020)')
+    expect(rows[0]?.issue).toBe(`'Season 00' and 'Specials' are both season 0 to Plex.`)
+  })
+
+  it('expects season 0 codes inside a Specials folder', () => {
+    const result = runShowsScan({
+      spec: {
+        HD: {
+          'Show (2020)': {
+            Specials: {
+              'Show (2020) - s00e01.mp4': '',
+              'Show (2020) - s03e01.mp4': '',
+            },
+          },
+        },
+      },
+    })
+    const rows = types(result.warnings, 'warn_season_mismatch')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.path).toBe('HD/Show (2020)/Specials/Show (2020) - s03e01.mp4')
+  })
+
+  it('still lets other named seasons hold any season code', () => {
+    const result = runShowsScan({
+      spec: {
+        HD: { 'Show (2020)': { 'Champion of Champions': { 'Show (2020) - s05e01.mp4': '' } } },
+      },
+      rules: { ignored_season_names: ['Specials', 'Champion of Champions'] },
+    })
+    expect(types(result.warnings, 'warn_season_mismatch')).toEqual([])
   })
 })

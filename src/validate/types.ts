@@ -205,6 +205,13 @@ export interface ShowValidation {
   tmdb_first_air_year: number | null
   alternatives: Array<{ id: number; title: string; year: number | null }>
   seasons: SeasonValidation[]
+  /**
+   * Aired TMDB seasons (season 0 excluded) with no season folder in any
+   * folder matched to the same TMDB id. Empty when none are missing, or when
+   * the check didn't run — no TMDB match, a `{tvdb-N}` folder, or
+   * `warn_tmdb_missing_seasons` off. Absent in files written before it existed.
+   */
+  missing_seasons?: number[]
 }
 
 // ─────────────────────────────────────────────

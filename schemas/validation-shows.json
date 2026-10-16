@@ -47,6 +47,11 @@
         "seasons": {
           "type": "array",
           "items": { "$ref": "#/$defs/SeasonValidation" }
+        },
+        "missing_seasons": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "description": "Aired TMDB seasons (season 0 excluded) with no season folder in any folder matched to the same TMDB id. Empty when the check didn't run."
         }
       },
       "required": [

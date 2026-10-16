@@ -13,6 +13,7 @@
  */
 
 import { toComparableFolderName } from '../core/files'
+import { formatGaps } from '../core/gaps'
 import { EpisodeOutput, ShowOutput, WarningCollector } from '../core/types'
 import { ShowsRules } from '../core/rules/shows'
 
@@ -272,6 +273,9 @@ export async function validateShows(
 ): Promise<ShowValidation[]> {
   const out: ShowValidation[] = []
   let cachedCount = 0
+  // Shows whose missing seasons are reported after the loop, once every
+  // folder's TMDB id is known — see reportMissingSeasons.
+  const seasonChecks: SeasonCoverageCheck[] = []
 
   for (let i = 0; i < shows.length; i++) {
     const show = shows[i]!
@@ -331,6 +335,7 @@ export async function validateShows(
         tmdb_episode_count: null,
         missing: null,
       })),
+      missing_seasons: [],
     }
 
     let details: TmdbShowDetails | undefined
@@ -488,8 +493,10 @@ export async function validateShows(
         const localSeason = show.seasons[s]
         if (!localSeason || localSeason.episodes.length === 0) continue
 
-        const seasonNumber = parseInt(season.season, 10)
-        if (isNaN(seasonNumber)) continue // named seasons like "Specials"
+        // `Specials` is checked against TMDB's season 0, like `Season 00`.
+        // Other named seasons (`Champion of Champions`) have no TMDB season.
+        const seasonNumber = tmdbSeasonNumber(season.season)
+        if (seasonNumber === null) continue
 
         // Skip if TMDB doesn't claim a season at this number — keeps us from
         // wasting a call on a numbering mismatch already reported elsewhere.
@@ -520,6 +527,11 @@ export async function validateShows(
         const seasonCategory = localSeason.versions[0]?.category
         const seasonShowPath =
           seasonCategory && seasonCategory !== 'default' ? `${seasonCategory}/${label}` : label
+        // The season level is the folder as it sits on disk, so a `Specials`
+        // folder stays `Specials` rather than becoming `Season 0`.
+        const seasonLevel = isNaN(parseInt(season.season, 10))
+          ? season.season
+          : `Season ${seasonNumber}`
 
         for (const m of mismatches) {
           const epLabel =
@@ -543,7 +555,7 @@ export async function validateShows(
                 `translated titles, and an episode out of order will mismatch every title after it.`,
               scope: {
                 categories: categoriesOf(localSeason.versions),
-                levels: [label, `Season ${seasonNumber}`, epLabel],
+                levels: [label, seasonLevel, epLabel],
               },
             }
           )
@@ -551,9 +563,95 @@ export async function validateShows(
       }
     }
 
+    if (rules.checks.warn_tmdb_missing_seasons && details !== undefined && !tvdbOrdered) {
+      seasonChecks.push({ entry, details, showPath, showScope })
+    }
+
     out.push(entry)
     onProgress?.(i + 1, shows.length, cachedCount)
   }
 
+  reportMissingSeasons(out, seasonChecks, warnings)
   return out
+}
+
+interface SeasonCoverageCheck {
+  entry: ShowValidation
+  details: TmdbShowDetails
+  showPath: string
+  showScope: { categories: string[]; levels: string[] }
+}
+
+/**
+ * TMDB's numbered seasons that have aired with at least one episode listed.
+ * Season 0 is left out for the same reason the episode count skips it, and a
+ * season with no air date, or one still to come, isn't missing yet.
+ */
+export function airedSeasonNumbers(details: TmdbShowDetails, today: string): number[] {
+  return details.seasons
+    .filter(
+      s =>
+        s.season_number > 0 &&
+        s.episode_count > 0 &&
+        s.air_date !== undefined &&
+        s.air_date !== '' &&
+        s.air_date <= today
+    )
+    .map(s => s.season_number)
+}
+
+/**
+ * `warn_tmdb_missing_seasons`: aired TMDB seasons with no season folder at
+ * all, which `warn_tmdb_episode_count` can never see — it only compares the
+ * seasons you have. Seasons are pooled across every folder matched to the
+ * same TMDB id, so two editions of one series, or a series split over two
+ * folders, don't each report the other's seasons as missing.
+ */
+function reportMissingSeasons(
+  out: ShowValidation[],
+  checks: SeasonCoverageCheck[],
+  warnings: WarningCollector
+): void {
+  const owned = new Map<number, Set<number>>()
+  for (const e of out) {
+    if (e.tmdb_id === null) continue
+    const set = owned.get(e.tmdb_id) ?? new Set<number>()
+    for (const s of e.seasons) {
+      const n = tmdbSeasonNumber(s.season)
+      if (n !== null) set.add(n)
+    }
+    owned.set(e.tmdb_id, set)
+  }
+
+  const today = new Date().toISOString().slice(0, 10)
+  for (const { entry, details, showPath, showScope } of checks) {
+    const have = owned.get(details.id) ?? new Set<number>()
+    const aired = airedSeasonNumbers(details, today)
+    const missing = aired.filter(n => !have.has(n))
+    entry.missing_seasons = missing
+    if (missing.length === 0) continue
+    warnings.add(
+      'warn_tmdb_missing_seasons',
+      showPath,
+      `Missing ${missing.length} of ${aired.length} aired seasons per TMDB: ` +
+        `${formatGaps(missing, n => `S${String(n).padStart(2, '0')}`)}.`,
+      {
+        fix:
+          `Find the seasons, or ignore this if you only keep some. TMDB may count a season ` +
+          `still airing, or split a series differently than your folders do.`,
+        scope: showScope,
+      }
+    )
+  }
+}
+
+/**
+ * The TMDB season number a scanned season label stands for: `Specials` is
+ * season 0 to Plex and TMDB alike, a number is itself, and any other named
+ * season (`Champion of Champions`) has none.
+ */
+export function tmdbSeasonNumber(label: string): number | null {
+  if (label.toLowerCase() === 'specials') return 0
+  const n = parseInt(label, 10)
+  return isNaN(n) ? null : n
 }
