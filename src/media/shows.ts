@@ -928,7 +928,12 @@ export function createShowsModule(
           // edition tag included — or an ignore entry for one edition would
           // silence the other too.
           const showFolderName = showDisplayName(show)
-          const warningPath = `${showFolderName} — Season ${season.season_label}`
+          // A named season (`Specials`) is already its folder name; only a
+          // parsed number needs the `Season ` prefix.
+          const seasonName = /^\d+$/.test(season.season_label)
+            ? `Season ${season.season_label}`
+            : season.season_label
+          const warningPath = `${showFolderName} — ${seasonName}`
           const byQuality = groupCategoriesByQuality(season.versions, categoryToQuality)
 
           // `warningPath` is a display label — em-dash separated, with no
@@ -936,7 +941,7 @@ export function createShowsModule(
           // them out, or no ignore entry could ever reach these two checks.
           // `Season 1` folds onto the on-disk `Season 01` in core/ignored.ts,
           // so one `seasons:` entry covers this and the scan pass alike.
-          const seasonLevels = [showFolderName, `Season ${season.season_label}`]
+          const seasonLevels = [showFolderName, seasonName]
 
           if (duplicateOn) {
             for (const quality of sortQualities(byQuality.keys())) {

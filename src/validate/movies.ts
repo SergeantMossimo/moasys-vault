@@ -69,7 +69,14 @@ import { MovieValidation, ResolvedSearch, TmdbMovieDetails, TmdbMovieSearchResul
  * The popularity sort below means: when two candidates tie on score (very
  * common with generic titles like "Heat" or "It"), we pick the more famous
  * one — which is almost always what the user has.
+ *
+ * One override: an exact-year winner loses to a same-title candidate one year
+ * off that has at least FAMOUS_MIN_VOTES votes and FAMOUS_VOTE_RATIO times the
+ * winner's. That candidate keeps its own (medium) score.
  */
+const FAMOUS_MIN_VOTES = 1000
+const FAMOUS_VOTE_RATIO = 100
+
 function pickBestMovieMatch(
   localTitle: string,
   localYear: number,
@@ -94,6 +101,9 @@ function pickBestMovieMatch(
   // anything beyond the top 5 is rarely worth showing the user.
   for (const c of sorted.slice(0, 5)) candidateIds.push(c.id)
 
+  const scored: { c: TmdbMovieSearchResult; titleScore: number; yearDelta: number }[] = []
+  let best: (typeof scored)[number] | null = null
+
   for (const c of sorted) {
     const theirTitle = normalizeTitle(c.title)
     const theirOrigTitle = normalizeTitle(c.original_title)
@@ -117,6 +127,7 @@ function pickBestMovieMatch(
     } else if (theirTitle.includes(ourTitle) || ourTitle.includes(theirTitle)) {
       score += 30
     }
+    const titleScore = score
 
     // Year match. The off-by-1 case is by far the most common after exact —
     // TMDB uses the original-release year, which often differs from the wide-
@@ -127,9 +138,32 @@ function pickBestMovieMatch(
     else if (yearDelta === 2) score += 15
     else score -= 20
 
+    const entry = { c, titleScore, yearDelta }
+    scored.push(entry)
     if (score > bestScore) {
       bestScore = score
       bestId = c.id
+      best = entry
+    }
+  }
+
+  // A famous film one year off beats an obscure namesake on the exact year.
+  // "Enemy (2013)" is Villeneuve's (TMDB dates it 2014, ~6,600 votes), not the
+  // Tamil "Enemy" (2013, 8 votes) the exact year would pick. Only an
+  // overwhelming vote gap overrides the year, and the result drops to the
+  // score it earned on its own (medium), so it's never reported as certain.
+  if (best && best.yearDelta === 0) {
+    const bestVotes = best.c.vote_count ?? 0
+    const famous = scored.find(
+      s =>
+        s.yearDelta === 1 &&
+        s.titleScore === best.titleScore &&
+        (s.c.vote_count ?? 0) >= FAMOUS_MIN_VOTES &&
+        (s.c.vote_count ?? 0) >= bestVotes * FAMOUS_VOTE_RATIO
+    )
+    if (famous) {
+      bestId = famous.c.id
+      bestScore = famous.titleScore + 30
     }
   }
 

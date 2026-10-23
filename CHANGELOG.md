@@ -2,6 +2,14 @@
 
 What's landed, newest first. Not formal release notes — pointers to what's new if you're returning after time away. Entries marked _(breaking)_ change a file format or setting you may need to update.
 
+## v0.22
+
+- **Three new music checks.** `warn_duplicate_track` flags two files in one album with the same disc and track number, such as a leftover `18 - Holliday - Copy.flac`. `warn_garbled_name` flags artist, album and track names with mis-encoded characters (`Thereâ€™s` for `There’s`) and gives the repaired spelling; real accents like `Pâté` are left alone. `warn_missing_duration` flags tracks whose header records no length, which players may show as 0:00. On the Server drive they found one duplicate, two garbled Witcher 3 names and 11 Halo bonus-track FLACs. Each has a toggle in `rules/music.yaml`. See [the music warning table](docs/OUTPUT.md#music).
+- **`validate:movies` prefers a famous film one year off over an obscure namesake.** `Enemy (2013)` matched a Tamil film with 8 TMDB votes at `high` confidence, because Villeneuve's _Enemy_ is dated 2014 on TMDB and the exact year always won. A same-title film one year off now wins when it has at least 1,000 votes and 100 times as many, at `medium` confidence. The TMDB search cache moves to version 5, so the first `validate` run re-searches every title (about 20 minutes on the Server drive). See [How matching works](docs/SCANS.md#how-matching-works).
+- **`plex:logs` names transcode failures.** A `Failed to transcode file` line was reported as the generic _Plex logged a problem_, so Star City S01E03 on the Server drive looked like noise, though its audio and video are corrupt. It now reads _Plex failed to transcode the file_, with advice to play it through and replace it. See [the problems table](docs/PLEX.md#log-warnings).
+- **`npm run report -- --type shows` works.** The `report` script always passes `--all`, so `--type` was ignored and the type name was read as the drive (`no root named 'shows'`). An explicit `--type` now narrows a leading `--all`, for every runner.
+- **A `Specials` ignore entry reaches the shows quality checks.** `warn_multi_quality` and `warn_duplicate_quality` labelled a named season folder `Season Specials`, which no `seasons:` entry could match, so Saturday Night Live's specials couldn't be silenced. Named seasons now keep their folder name (`Show (2020) — Specials`).
+
 ## v0.21
 
 - **Node 24 is now the minimum.** `engines` and the README require Node 24 (it was 22.12), matching what CI already ran. CI's `actions/checkout` and `actions/setup-node` move from v4 to v7, which run on Node 24 themselves, clearing GitHub's Node 20 deprecation warning. `music-metadata` moves to 11.16.1 for two security fixes (a malformed file could hang the tag reader or exhaust memory), alongside patch updates to vitest, tsx and zod.

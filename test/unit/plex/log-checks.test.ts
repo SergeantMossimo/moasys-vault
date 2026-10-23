@@ -149,6 +149,15 @@ describe('explainProblem', () => {
         event({ component: 'FFMPEG', message: '[FFMPEG] - stream 0, timescale not set' })
       ).label
     ).toMatch(/FFmpeg/)
+    expect(
+      explainProblem(
+        event({
+          component: null,
+          message:
+            'Failed to transcode file (234): /media/Shows/Other SD/Star City (2026)/Season 01/Star City (2026) - s01e03 - Bad Dancer.mp4',
+        })
+      ).label
+    ).toBe('Plex failed to transcode the file')
     expect(explainProblem(event({ component: 'Other', message: '[Other] odd' })).label).toMatch(
       /logged a problem/
     )

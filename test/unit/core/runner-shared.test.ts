@@ -110,6 +110,32 @@ describe('parseRunnerArgs', () => {
     expect(parseRunnerArgs(VALID_TYPES)).toEqual({ kind: 'all', drive: 'external' })
   })
 
+  // `report` bakes `--all` into its npm script, so `npm run report -- --type
+  // shows external` arrives as `--all --type shows external`.
+  it('lets an explicit --type narrow a baked-in --all', () => {
+    setArgv('--all', '--type', 'shows', 'external')
+    expect(parseRunnerArgs(VALID_TYPES)).toEqual({
+      kind: 'one',
+      type: 'shows',
+      drive: 'external',
+    })
+  })
+
+  it('reads the drive before --type when it follows --all', () => {
+    setArgv('--all', 'external', '--type', 'movies')
+    expect(parseRunnerArgs(VALID_TYPES)).toEqual({
+      kind: 'one',
+      type: 'movies',
+      drive: 'external',
+    })
+  })
+
+  it('exits on an invalid --type after --all', () => {
+    setArgv('--all', '--type', 'photos')
+    expect(() => parseRunnerArgs(VALID_TYPES)).toThrow('process.exit called')
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/Choices:/))
+  })
+
   it('does not mistake the type value for a drive name', () => {
     setArgv('--type', 'movies')
     const parsed = parseRunnerArgs(VALID_TYPES)

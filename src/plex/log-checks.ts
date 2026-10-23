@@ -198,6 +198,13 @@ const KNOWN_PROBLEMS: KnownProblem[] = [
       "Plex couldn't parse a date in the file's metadata. Fix the tag with a tag editor (MKVToolNix, Mp3tag), or ignore this if Plex shows the right date.",
   },
   {
+    matches: e => /^Failed to transcode file\b/i.test(e.message),
+    label: 'Plex failed to transcode the file',
+    advice:
+      'Playback stopped because Plex could not decode the file. Usually the file is damaged — decoder errors at the same moment in ' +
+      'logs-summary.json confirm it. Play the file through; if it breaks, replace it.',
+  },
+  {
     matches: e => e.component === 'FFMPEG',
     label: "Plex's media analysis (FFmpeg) reported a problem reading the file",
     advice:

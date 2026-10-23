@@ -137,6 +137,92 @@ export function findSuspiciousPathChars(name: string): string[] {
 }
 
 // ─────────────────────────────────────────────
+// Mojibake detection
+// ─────────────────────────────────────────────
+
+/**
+ * Windows-1252's 0x80–0x9F block, which Latin-1 leaves as control codes. The
+ * five bytes 1252 doesn't define (0x81, 0x8D, 0x8F, 0x90, 0x9D) come through
+ * a mis-decode as the matching C1 control character, handled below.
+ */
+const CP1252_HIGH: Record<string, number> = {
+  '€': 0x80,
+  '‚': 0x82,
+  ƒ: 0x83,
+  '„': 0x84,
+  '…': 0x85,
+  '†': 0x86,
+  '‡': 0x87,
+  ˆ: 0x88,
+  '‰': 0x89,
+  Š: 0x8a,
+  '‹': 0x8b,
+  Œ: 0x8c,
+  Ž: 0x8e,
+  '‘': 0x91,
+  '’': 0x92,
+  '“': 0x93,
+  '”': 0x94,
+  '•': 0x95,
+  '–': 0x96,
+  '—': 0x97,
+  '˜': 0x98,
+  '™': 0x99,
+  š: 0x9a,
+  '›': 0x9b,
+  œ: 0x9c,
+  ž: 0x9e,
+  Ÿ: 0x9f,
+}
+
+/** The Windows-1252 byte for `ch`, or null when 1252 has no byte for it. */
+function cp1252Byte(ch: string): number | null {
+  const code = ch.codePointAt(0)!
+  if (code >= 0x80 && code <= 0xff) return code
+  return CP1252_HIGH[ch] ?? null
+}
+
+/** One garbled stretch of a name and what it should read. */
+export interface GarbledRun {
+  garbled: string
+  fixed: string
+}
+
+/**
+ * Detect mojibake: UTF-8 text that was decoded as Windows-1252 somewhere
+ * along the way, so `There’s` became `Thereâ€™s`. Returns the repaired name
+ * and each repaired stretch, or null when the name is clean.
+ *
+ * Each run of non-ASCII characters is turned back into the bytes 1252 would
+ * have written for it and decoded strictly as UTF-8. A genuinely garbled run
+ * always decodes, because it came from valid UTF-8; a real accented name
+ * almost never does, because a lone `é` (0xE9) or `â` (0xE2) is not valid
+ * UTF-8 on its own — so `Pâté` and `CORAÇÃO` stay clean. A run holding a
+ * character 1252 can't encode (a correct `’`, say) is left alone.
+ */
+export function findGarbledText(name: string): { repaired: string; runs: GarbledRun[] } | null {
+  const decoder = new TextDecoder('utf-8', { fatal: true })
+  const runs: GarbledRun[] = []
+  const repaired = name.replace(/[\u0080-\u{10ffff}]+/gu, run => {
+    const bytes: number[] = []
+    for (const ch of run) {
+      const byte = cp1252Byte(ch)
+      if (byte === null) return run
+      bytes.push(byte)
+    }
+    let fixed: string
+    try {
+      fixed = decoder.decode(new Uint8Array(bytes))
+    } catch {
+      return run
+    }
+    runs.push({ garbled: run, fixed })
+    return fixed
+  })
+  return runs.length > 0 ? { repaired, runs } : null
+}
+
+// ─────────────────────────────────────────────
 // Unexpected-entry detection
 // ─────────────────────────────────────────────
 

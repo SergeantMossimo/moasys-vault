@@ -387,6 +387,35 @@ export async function probeMusic(
     }
   }
 
+  // Missing-duration check — ffprobe read the audio stream but the header
+  // records no length, so there's nothing to report a runtime from. The file
+  // still decodes; players just can't show or seek by time. Per-album summary,
+  // like the mono check. Tracks with no audio stream are left out — that's a
+  // different problem, not a header one.
+  if (rules.checks.warn_missing_duration) {
+    for (const artist of aggregated) {
+      for (const album of artist.albums) {
+        const withAudio = album.tracks.filter(t => t.audio !== null)
+        const missing = withAudio.filter(t => t.duration_seconds === null)
+        if (missing.length === 0) continue
+        const names = missing.slice(0, 3).map(t => `'${path.posix.basename(t.path)}'`)
+        const more = missing.length > 3 ? `, +${missing.length - 3} more` : ''
+        warnings.add(
+          'warn_missing_duration',
+          albumWarningPath(album.media_type, artist.artist, album.album),
+          `${missing.length}/${withAudio.length} tracks have no length in their header: ` +
+            `${names.join(', ')}${more}.`,
+          {
+            fix:
+              `The file plays, but its header doesn't record its length, so players can show ` +
+              `0:00 or fail to seek. Re-encoding the file rewrites the header.`,
+            scope: albumWarningScope(album.media_type, artist.artist, album.album),
+          }
+        )
+      }
+    }
+  }
+
   // Tag-driven checks — only run when at least one track in any album has
   // tags. Saves time on libraries without ID3 data (rare but possible).
   analyzeTags(aggregated, rules, warnings)
