@@ -163,6 +163,63 @@ describe('validateMovies — confidence scoring', () => {
     expect(result[0]?.confidence).toBe('medium')
   })
 
+  describe('famous film one year off', () => {
+    // Villeneuve's "Enemy" is dated 2014 on TMDB; a Tamil "Enemy" is 2013.
+    const obscure: TmdbMovieSearchResult = {
+      id: 522815,
+      title: 'Enemy',
+      original_title: 'Enemy',
+      release_date: '2013-08-30',
+      popularity: 1,
+      vote_count: 8,
+    }
+    const famous: TmdbMovieSearchResult = {
+      id: 181886,
+      title: 'Enemy',
+      original_title: 'Enemy',
+      release_date: '2014-03-14',
+      popularity: 11,
+      vote_count: 6647,
+    }
+    const details: Record<number, TmdbMovieDetails> = {
+      522815: { id: 522815, title: 'Enemy', original_title: 'Enemy', release_date: '2013-08-30' },
+      181886: { id: 181886, title: 'Enemy', original_title: 'Enemy', release_date: '2014-03-14' },
+    }
+
+    async function resolve(results: TmdbMovieSearchResult[]) {
+      const client = mockClient({ searchResults: results, details })
+      const result = await validateMovies(
+        [movie('Enemy', 2013)],
+        defaultMoviesRules,
+        client,
+        memoryCache(),
+        memoryCache(),
+        warnings
+      )
+      return result[0]
+    }
+
+    it('beats an obscure exact-year namesake, at medium confidence', async () => {
+      const entry = await resolve([obscure, famous])
+      expect(entry?.tmdb_id).toBe(181886)
+      expect(entry?.confidence).toBe('medium')
+    })
+
+    it('keeps the exact-year match when the vote gap is not overwhelming', async () => {
+      const entry = await resolve([{ ...obscure, vote_count: 500 }, famous])
+      expect(entry?.tmdb_id).toBe(522815)
+      expect(entry?.confidence).toBe('high')
+    })
+
+    it('needs a minimum vote count, not just a ratio', async () => {
+      const entry = await resolve([
+        { ...obscure, vote_count: 0 },
+        { ...famous, vote_count: 900 },
+      ])
+      expect(entry?.tmdb_id).toBe(522815)
+    })
+  })
+
   it('resolves "medium" via the loose tier when a colon was rendered as " - "', async () => {
     const client = mockClient({
       searchResults: [

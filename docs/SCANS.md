@@ -269,6 +269,8 @@ Confidence is scored from title-match strength plus year-match closeness (exact 
 
 A **medium** from the loose tier means "this is the right film, but your folder name isn't byte-identical to TMDB's" — no confidence warning fires, and `warn_tmdb_title_canonical` carries the rename target.
 
+Movies have one override: an exact-year match loses to a film with the same title one year off when that film has at least 1,000 TMDB votes and 100 times as many as the exact-year one. `Enemy (2013)` is Villeneuve's film, which TMDB dates 2014 with ~6,600 votes, not the Tamil `Enemy` from 2013 with 8. The famous film keeps its own off-by-one score, so it comes out **medium**, never **high**.
+
 #### ID tags on show folders
 
 A `{tmdb-N}` tag settles the match outright: the search is skipped and the show is looked up by that ID, at `high` confidence.

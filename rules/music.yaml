@@ -111,3 +111,6 @@ checks:
   warn_missing_tags: true             # Required embedded tag fields are blank
   warn_track_number_mismatch: true    # Filename track number disagrees with the embedded tag
   warn_mono_audio: true               # Album has tracks encoded as mono (single channel)
+  warn_duplicate_track: true          # Two files in an album share a disc + track number
+  warn_garbled_name: true             # Folder or file name has mis-encoded characters (Thereâ€™s)
+  warn_missing_duration: true         # Track's header records no length

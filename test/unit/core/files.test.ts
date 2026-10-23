@@ -6,6 +6,7 @@ import {
   isPrimary,
   formatPrimaryExts,
   findSuspiciousPathChars,
+  findGarbledText,
   findUnexpectedEntries,
   stripFilenameIllegalChars,
   toComparableFolderName,
@@ -213,6 +214,36 @@ describe('findSuspiciousPathChars', () => {
 
   it('returns "empty name" for an empty string', () => {
     expect(findSuspiciousPathChars('')).toEqual(['empty name'])
+  })
+})
+
+describe('findGarbledText', () => {
+  it('repairs UTF-8 text that was decoded as Windows-1252', () => {
+    expect(findGarbledText('26 - Drink Up, Thereâ€™s More!.flac')).toEqual({
+      repaired: '26 - Drink Up, There’s More!.flac',
+      runs: [{ garbled: 'â€™', fixed: '’' }],
+    })
+    expect(findGarbledText('The Song of the Swordâ€“Dancer')?.repaired).toBe(
+      'The Song of the Sword–Dancer'
+    )
+    expect(findGarbledText('CafÃ© Ã¼ber')).toEqual({
+      repaired: 'Café über',
+      runs: [
+        { garbled: 'Ã©', fixed: 'é' },
+        { garbled: 'Ã¼', fixed: 'ü' },
+      ],
+    })
+  })
+
+  it('leaves genuine accented and typographic names alone', () => {
+    for (const name of ['Pâté', 'Coeur d’Alene', 'CORAÇÃO', 'Mötley Crüe', 'Sigur Rós', 'Plain']) {
+      expect(findGarbledText(name)).toBeNull()
+    }
+  })
+
+  it('leaves a run alone when it holds a character Windows-1252 cannot encode', () => {
+    // '→' has no Windows-1252 byte, so the run it sits in can't be decoded back.
+    expect(findGarbledText('Thereâ€™→s')).toBeNull()
   })
 })
 

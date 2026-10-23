@@ -31,6 +31,8 @@ import {
   formatPrimaryExts,
   findSuspiciousPathChars,
   findUnexpectedEntries,
+  findGarbledText,
+  type GarbledRun,
 } from '../core/files'
 import { findNumericGaps, formatGaps } from '../core/gaps'
 import { MusicRules } from '../core/rules/music'
@@ -74,6 +76,10 @@ const FIX = {
   warn_duplicate_album:
     `The same album in two categories — keep the copy in the category you want and delete ` +
     `the rest.`,
+  warn_duplicate_track: `Delete the extra copy, or renumber it if it's a different track.`,
+  warn_garbled_name:
+    `The name was saved in one text encoding and read back in another. Rename it to the ` +
+    `repaired spelling.`,
   permission_denied: `Check the folder's permissions, or whether the drive is still mounted.`,
 } as const
 
@@ -106,6 +112,19 @@ function parseTrackStem(
     }
   }
   return null
+}
+
+/** `'a.flac', 'b.flac', 'c.flac', +2 more` */
+function listNames(names: string[], max = 3): string {
+  const shown = names.slice(0, max).map(n => `'${n}'`)
+  return shown.join(', ') + (names.length > max ? `, +${names.length - max} more` : '')
+}
+
+/** `'â€™' → '’', 'Ã©' → 'é'` — each distinct repair once, capped like listNames. */
+function listRepairs(runs: GarbledRun[], max = 3): string {
+  const distinct = [...new Map(runs.map(r => [r.garbled, r])).values()]
+  const shown = distinct.slice(0, max).map(r => `'${r.garbled}' → '${r.fixed}'`)
+  return shown.join(', ') + (distinct.length > max ? `, +${distinct.length - max} more` : '')
 }
 
 function makeArtistKey(artist: string): string {
@@ -208,6 +227,17 @@ export function createMusicModule(
             )
           }
         }
+        if (rules.checks.warn_garbled_name) {
+          const garbled = findGarbledText(artistEntry.name)
+          if (garbled) {
+            warnings.add(
+              'warn_garbled_name',
+              artistRel,
+              `Artist folder should read '${garbled.repaired}'.`,
+              { fix: FIX.warn_garbled_name }
+            )
+          }
+        }
 
         let albumEntries: fs.Dirent[]
         try {
@@ -279,6 +309,17 @@ export function createMusicModule(
                 albumRel,
                 `Suspicious characters in album folder: ${issues.join(', ')}.`,
                 { fix: FIX.warn_suspicious_folder_chars }
+              )
+            }
+          }
+          if (rules.checks.warn_garbled_name) {
+            const garbled = findGarbledText(albumEntry.name)
+            if (garbled) {
+              warnings.add(
+                'warn_garbled_name',
+                albumRel,
+                `Album folder should read '${garbled.repaired}'.`,
+                { fix: FIX.warn_garbled_name }
               )
             }
           }
@@ -365,9 +406,19 @@ export function createMusicModule(
 
           // Track numbers per disc for gap detection: { discNum: [trackNums] }
           const discTracks = new Map<number, number[]>()
+          // File names per disc + track, for duplicate detection.
+          const trackFiles = new Map<string, { disc: number; track: number; names: string[] }>()
+          const garbledFiles: string[] = []
+          const garbledRuns: GarbledRun[] = []
           let trackCount = 0
 
           for (const f of audioFiles) {
+            const garbled = findGarbledText(f.name)
+            if (garbled) {
+              garbledFiles.push(f.name)
+              garbledRuns.push(...garbled.runs)
+            }
+
             const stem = path.basename(f.name, path.extname(f.name))
             const parsed = parseTrackStem(stem, multiDiscRegex, singleDiscRegex)
 
@@ -388,6 +439,46 @@ export function createMusicModule(
 
             if (!discTracks.has(disc)) discTracks.set(disc, [])
             discTracks.get(disc)!.push(track)
+
+            const slot = trackFiles.get(`${disc}|${track}`)
+            if (slot) slot.names.push(f.name)
+            else trackFiles.set(`${disc}|${track}`, { disc, track, names: [f.name] })
+          }
+
+          // Summarized per album — one row naming the garbled files and the
+          // repairs, rather than one per file.
+          if (rules.checks.warn_garbled_name && garbledFiles.length > 0) {
+            warnings.add(
+              'warn_garbled_name',
+              albumRel,
+              `${garbledFiles.length} file name(s): ${listNames(garbledFiles, 2)} — ` +
+                `${listRepairs(garbledRuns)}.`,
+              { fix: FIX.warn_garbled_name }
+            )
+          }
+
+          if (rules.checks.warn_duplicate_track) {
+            const dupes = [...trackFiles.values()]
+              .filter(t => t.names.length > 1)
+              .sort((a, b) => (a.disc !== b.disc ? a.disc - b.disc : a.track - b.track))
+            if (dupes.length > 0) {
+              const label = (t: { disc: number; track: number }) =>
+                discTracks.size > 1 ? `Disc ${t.disc} track ${t.track}` : `Track ${t.track}`
+              const issue =
+                dupes.length === 1
+                  ? `${label(dupes[0]!)} has ${dupes[0]!.names.length} files: ` +
+                    `${listNames(dupes[0]!.names.sort())}.`
+                  : `${dupes.length} track numbers have more than one file: ` +
+                    dupes
+                      .slice(0, 2)
+                      .map(t => `${label(t)} (${listNames(t.names.sort(), 2)})`)
+                      .join('; ') +
+                    (dupes.length > 2 ? `; +${dupes.length - 2} more` : '') +
+                    '.'
+              warnings.add('warn_duplicate_track', albumRel, issue, {
+                fix: FIX.warn_duplicate_track,
+              })
+            }
           }
 
           if (rules.checks.warn_track_gaps) {

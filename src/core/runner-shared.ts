@@ -63,6 +63,21 @@ export function parseRunnerArgs(validTypes: readonly string[]): RunnerMode {
 
   if (!flag) return { kind: 'help', explicit: false }
 
+  // Scripts like `report` bake in `--all`, so `npm run report -- --type shows`
+  // arrives as `--all --type shows` — an explicit `--type` narrows it.
+  const typeAt = args.indexOf('--type')
+  if (flag === '--all' && typeAt > 0) {
+    const typeValue = args[typeAt + 1]
+    if (!typeValue || !validTypes.includes(typeValue)) {
+      console.error(
+        `\n  Error: invalid type '${typeValue ?? ''}'. Choices: ${validTypes.join(', ')}`
+      )
+      process.exit(1)
+    }
+    const rest = args.filter((_, i) => i !== 0 && i !== typeAt && i !== typeAt + 1)
+    return { kind: 'one', type: typeValue, drive: extractDrive(rest) }
+  }
+
   if (flag === '--all') return { kind: 'all', drive: extractDrive(args.slice(1)) }
   if (flag === '--help' || flag === '-h') return { kind: 'help', explicit: true }
 

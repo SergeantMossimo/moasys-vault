@@ -301,6 +301,69 @@ describe('probeMusic', () => {
     expect(warnings.all().some(w => w.type === 'warn_mono_audio')).toBe(false)
   })
 
+  it('emits warn_missing_duration summarising tracks with no header length', async () => {
+    const { rules, root, cache, warnings } = setup({
+      spec: {
+        Music: {
+          Artist: {
+            Album: {
+              '01 - No Length.flac': '',
+              '02 - Has Length.flac': '',
+            },
+          },
+        },
+      },
+      probes: {
+        'Music/Artist/Album/01 - No Length.flac': fakeProbe({
+          audio: flacAudio(),
+          duration_seconds: null,
+        }),
+        'Music/Artist/Album/02 - Has Length.flac': fakeProbe({
+          audio: flacAudio(),
+          duration_seconds: 200,
+        }),
+      },
+    })
+
+    await probeMusic({ root_path: root }, rules, cache, warnings)
+
+    const rows = warnings.all().filter(w => w.type === 'warn_missing_duration')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.path).toBe('Music/Artist/Album')
+    expect(rows[0]?.issue).toBe("1/2 tracks have no length in their header: '01 - No Length.flac'.")
+  })
+
+  it('does not emit warn_missing_duration for a track with no audio stream', async () => {
+    const { rules, root, cache, warnings } = setup({
+      spec: { Music: { Artist: { Album: { '01 - Odd.flac': '' } } } },
+      probes: {
+        'Music/Artist/Album/01 - Odd.flac': fakeProbe({ audio: null, duration_seconds: null }),
+      },
+    })
+
+    await probeMusic({ root_path: root }, rules, cache, warnings)
+    expect(warnings.all().some(w => w.type === 'warn_missing_duration')).toBe(false)
+  })
+
+  it('respects the warn_missing_duration toggle', async () => {
+    const { rules, root, cache, warnings } = setup({
+      spec: { Music: { Artist: { Album: { '01 - No Length.flac': '' } } } },
+      probes: {
+        'Music/Artist/Album/01 - No Length.flac': fakeProbe({
+          audio: flacAudio(),
+          duration_seconds: null,
+        }),
+      },
+    })
+    const offRules: MusicRules = {
+      ...rules,
+      checks: { ...rules.checks, warn_missing_duration: false },
+    }
+
+    await probeMusic({ root_path: root }, offRules, cache, warnings)
+    expect(warnings.all().some(w => w.type === 'warn_missing_duration')).toBe(false)
+  })
+
   it('emits warn_compilation_detected when AlbumArtist values differ', async () => {
     const { rules, root, cache, warnings } = setup({
       spec: {
@@ -586,6 +649,7 @@ describe('probeMusic', () => {
       probes: {
         'Music/Artist/Album/01 - One.flac': fakeProbe({
           audio: flacAudio(),
+          duration_seconds: 200,
           tags: null, // no tags at all
         }),
       },
@@ -616,6 +680,7 @@ describe('probeMusic', () => {
       probes: {
         'Music/Artist/Album/01 - One.flac': fakeProbe({
           audio: flacAudio(),
+          duration_seconds: 200,
           tags: tags({
             title: null,
             album: 'wrong-album',

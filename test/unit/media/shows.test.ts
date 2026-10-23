@@ -755,6 +755,26 @@ describe('shows module — ignore list reaches the cross-category checks', () =>
     expect(result.warnings.some(w => w.type === 'warn_multi_quality')).toBe(false)
   })
 
+  it('a `seasons:` entry naming `Specials` silences it on the Specials folder', () => {
+    // A named season is labelled with its folder name, not `Season Specials`,
+    // which no entry could ever match.
+    const specialsSpec: DirSpec = {
+      HD: { 'Show (2020)': { Specials: { 'Show (2020) - S00E01.mp4': '' } } },
+      SD: { 'Show (2020)': { Specials: { 'Show (2020) - S00E01.mp4': '' } } },
+    }
+    const unfiltered = runShowsScan({ spec: specialsSpec, rules: noHdSdCombo })
+    expect(unfiltered.warnings.find(w => w.type === 'warn_multi_quality')?.path).toBe(
+      'Show (2020) — Specials'
+    )
+
+    const result = runShowsScan({
+      spec: specialsSpec,
+      rules: noHdSdCombo,
+      ignored: { seasons: ['Show (2020)/Specials'] },
+    })
+    expect(result.warnings.some(w => w.type === 'warn_multi_quality')).toBe(false)
+  })
+
   it('a `folders:` entry reaches it despite the path carrying no category', () => {
     const result = runShowsScan({
       spec: multiQualitySpec,

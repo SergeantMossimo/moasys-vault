@@ -384,6 +384,115 @@ describe('music module — warnings', () => {
     expect(result.warnings.some(w => w.issue.match(/Non-.FLAC/))).toBe(true)
   })
 
+  it('warn_duplicate_track: two files with the same track number', () => {
+    const result = runMusicScan({
+      spec: {
+        Soundtracks: {
+          Soundtrack: {
+            'Destiny 2': {
+              '17 - The Wilds.flac': '',
+              '18 - Holliday.flac': '',
+              '18 - Holliday - Copy.flac': '',
+            },
+          },
+        },
+      },
+    })
+    const rows = result.warnings.filter(w => w.type === 'warn_duplicate_track')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.path).toBe('Soundtracks/Soundtrack/Destiny 2')
+    expect(rows[0]?.issue).toBe(
+      "Track 18 has 2 files: '18 - Holliday - Copy.flac', '18 - Holliday.flac'."
+    )
+  })
+
+  it('warn_duplicate_track: names the disc on a multi-disc album', () => {
+    const result = runMusicScan({
+      spec: {
+        Music: {
+          Artist: {
+            Album: {
+              '101 - One.flac': '',
+              '201 - Two.flac': '',
+              '202 - Four.flac': '',
+              '203 - Three.flac': '',
+              '203 - Three (alt).mp3': '',
+            },
+          },
+        },
+      },
+    })
+    const rows = result.warnings.filter(w => w.type === 'warn_duplicate_track')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.issue).toMatch(/^Disc 2 track 3 has 2 files:/)
+  })
+
+  it('warn_duplicate_track: the same track number on different discs is fine', () => {
+    const result = runMusicScan({
+      spec: {
+        Music: { Artist: { Album: { '101 - One.flac': '', '201 - One.flac': '' } } },
+      },
+    })
+    expect(result.warnings.some(w => w.type === 'warn_duplicate_track')).toBe(false)
+  })
+
+  it('warn_garbled_name: mis-encoded track names, summarized per album', () => {
+    const result = runMusicScan({
+      spec: {
+        Soundtracks: {
+          Soundtrack: {
+            'The Witcher 3': {
+              '25 - Welcome, Imlerith.flac': '',
+              '26 - Drink Up, Thereâ€™s More!.flac': '',
+              '27 - The Musty Scent of Fresh Pâté.flac': '',
+            },
+          },
+        },
+      },
+    })
+    const rows = result.warnings.filter(w => w.type === 'warn_garbled_name')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.path).toBe('Soundtracks/Soundtrack/The Witcher 3')
+    expect(rows[0]?.issue).toBe(
+      "1 file name(s): '26 - Drink Up, Thereâ€™s More!.flac' — 'â€™' → '’'."
+    )
+  })
+
+  it('warn_garbled_name: mis-encoded artist and album folders', () => {
+    const result = runMusicScan({
+      spec: {
+        Music: { 'BeyoncÃ©': { 'CafÃ© Tacvba': { '01 - Song.flac': '' } } },
+      },
+    })
+    const rows = result.warnings
+      .filter(w => w.type === 'warn_garbled_name')
+      .map(w => [w.path, w.issue])
+    expect(rows).toEqual([
+      ['Music/BeyoncÃ©', "Artist folder should read 'Beyoncé'."],
+      ['Music/BeyoncÃ©/CafÃ© Tacvba', "Album folder should read 'Café Tacvba'."],
+    ])
+  })
+
+  it('the duplicate-track and garbled-name toggles silence them', () => {
+    const result = runMusicScan({
+      spec: {
+        Music: {
+          'BeyoncÃ©': { Album: { '01 - Thereâ€™s.flac': '', '01 - Copy.flac': '' } },
+        },
+      },
+      rules: {
+        checks: {
+          ...defaultMusicRules.checks,
+          warn_duplicate_track: false,
+          warn_garbled_name: false,
+        },
+      },
+    })
+    expect(
+      result.warnings.some(w => w.type === 'warn_duplicate_track' || w.type === 'warn_garbled_name')
+    ).toBe(false)
+  })
+
   it('toggles silence warnings when set to false', () => {
     const result = runMusicScan({
       spec: { Music: { '01 - Song.flac': '' } },

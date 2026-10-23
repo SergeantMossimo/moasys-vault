@@ -154,6 +154,25 @@ export const MusicRulesSchema = z.object({
      * (which silences that album's other warnings too).
      */
     warn_mono_audio: z.boolean(),
+    /**
+     * Two or more audio files in one album share a disc and track number —
+     * usually a `- Copy` left behind by a file manager. Plex lists both.
+     * One warning per album.
+     */
+    warn_duplicate_track: z.boolean(),
+    /**
+     * An artist folder, album folder, or track file name contains mojibake:
+     * UTF-8 text that was decoded as Windows-1252, so `There’s` reads
+     * `Thereâ€™s`. The issue gives the repaired spelling. File names are
+     * summarized once per album.
+     */
+    warn_garbled_name: z.boolean(),
+    /**
+     * Tracks ffprobe can read but whose header records no length (common
+     * with FLACs from some rippers). Players can show 0:00 or fail to seek.
+     * One warning per album.
+     */
+    warn_missing_duration: z.boolean(),
   }),
 })
 
@@ -211,5 +230,8 @@ export const defaultMusicRules: MusicRules = MusicRulesSchema.parse({
     warn_missing_tags: true,
     warn_track_number_mismatch: true,
     warn_mono_audio: true,
+    warn_duplicate_track: true,
+    warn_garbled_name: true,
+    warn_missing_duration: true,
   },
 })
