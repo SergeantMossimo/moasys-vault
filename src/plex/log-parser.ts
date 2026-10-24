@@ -173,18 +173,22 @@ export function componentOf(message: string): string | null {
  * guids, long hex runs, and numbers replaced with placeholders.
  */
 export function normalizeSignature(message: string): string {
-  return message
-    .split('\n')[0]!
-    .replace(/\[Req#[0-9a-f]+\]\s*/g, '')
-    .replace(REQUEST_ID, '')
-    .replace(/\b[a-z]+:\/\/[a-z]+\/[0-9a-f]+(?:,[a-z]+:\/\/[a-z]+\/[0-9a-f]+)*/g, '<guids>')
-    .replace(/(["'])\/[^"']*\1/g, '<path>')
-    .replace(/(?<![\w:/])\/(?:[^\s"',\]]+\/)+[^\s"',\]]*/g, '<path>')
-    .replace(/\b[0-9a-f]{8,}(?:-[0-9a-f]{4,})*\b/gi, '<hex>')
-    .replace(/\d+/g, 'N')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 200)
+  return (
+    message
+      .split('\n')[0]!
+      .replace(/\[Req#[0-9a-f]+\]\s*/g, '')
+      .replace(REQUEST_ID, '')
+      .replace(/\b[a-z]+:\/\/[a-z]+\/[0-9a-f]+(?:,[a-z]+:\/\/[a-z]+\/[0-9a-f]+)*/g, '<guids>')
+      .replace(/(["'])(?:\/|[A-Za-z]:\\)[^"']*\1/g, '<path>')
+      .replace(/(?<![\w:/])\/(?:[^\s"',\]]+\/)+[^\s"',\]]*/g, '<path>')
+      // A Windows-hosted server logs `E:\Media\…` rather than `/media/…`.
+      .replace(/\b[A-Za-z]:\\(?:[^\s"',\]]+\\)*[^\s"',\]]*/g, '<path>')
+      .replace(/\b[0-9a-f]{8,}(?:-[0-9a-f]{4,})*\b/gi, '<hex>')
+      .replace(/\d+/g, 'N')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 200)
+  )
 }
 
 // ─────────────────────────────────────────────
@@ -207,8 +211,9 @@ const ANNOUNCERS: Array<{ pattern: RegExp; kind: 'key' | 'path' }> = [
   { pattern: /^\[CreditsDetectionManager\] Running credits detection for item (\d+)/, kind: 'key' },
   { pattern: /^Butler: Scheduling credits marker creation for: (\d+)/, kind: 'key' },
   { pattern: /^Analyzing media parts for item (\d+)/, kind: 'key' },
-  { pattern: /^\[ID -?\d+\] Media part analysis: (\/.+)$/, kind: 'path' },
-  { pattern: /^\[MI\] Opening input file: "(\/.+)"$/, kind: 'path' },
+  // A path is `/…` on a Linux or NAS server, `E:\…` on a Windows one.
+  { pattern: /^\[ID -?\d+\] Media part analysis: ((?:\/|[A-Za-z]:\\).+)$/, kind: 'path' },
+  { pattern: /^\[MI\] Opening input file: "((?:\/|[A-Za-z]:\\).+)"$/, kind: 'path' },
 ]
 
 /**
@@ -225,7 +230,7 @@ const CLOSERS = [/^\[CreditsDetectionManager\] Completed credits detection for i
  * runs FFmpeg over the whole file before reporting, which takes seconds to
  * a minute or two on a NAS.
  */
-export const CONTEXT_WINDOW_MS = 5 * 60_000
+const CONTEXT_WINDOW_MS = 5 * 60_000
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -245,10 +250,13 @@ export function libraryPathFinder(prefixes: string[]): (message: string) => stri
   const usable = [...new Set(prefixes.map(p => p.replace(/\/+$/, '')).filter(p => p.length > 1))]
   if (usable.length === 0) return () => null
   usable.sort((a, b) => b.length - a.length)
-  const prefix = `(?:${usable.map(escapeRegExp).join('|')})/`
+  // Prefixes arrive with forward slashes; a Windows server's log lines use
+  // backslashes and don't care about case, so either separator matches.
+  const sep = '[\\\\/]'
+  const prefix = `(?:${usable.map(p => escapeRegExp(p).replace(/\//g, sep)).join('|')})${sep}`
   const pattern = new RegExp(
     `"(${prefix}[^"\\n]+)"|'(${prefix}[^\\n]+?)'(?=[\\s,;:)\\]]|$)|(${prefix}[^"\\]\\n]+)`,
-    'm'
+    'mi'
   )
   return message => {
     const m = pattern.exec(message)

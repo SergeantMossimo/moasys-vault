@@ -54,6 +54,7 @@ describe('audiobooks module — happy paths', () => {
       {
         title: 'The Hobbit',
         authors: ['J.R.R. Tolkien'],
+        author_folder: 'J.R.R. Tolkien',
         chapter_count: 2,
         versions: [{ category: 'Audible', quality: 'MP3' }],
       },
@@ -118,6 +119,33 @@ describe('audiobooks module — happy paths', () => {
       { category: 'Audible', quality: 'MP3' },
       { category: 'Book On CD', quality: 'MP3' },
     ])
+  })
+
+  it('keeps same-titled books by different authors apart', () => {
+    const result = runAudiobooksScan({
+      spec: {
+        Audible: {
+          'Author A': { 'Collected Stories': { '01 - One.mp3': '', '02 - Two.mp3': '' } },
+          'Author B': { 'Collected Stories': { '01 - One.mp3': '' } },
+        },
+      },
+    })
+    expect(result.output.map(b => [b.authors, b.chapter_count])).toEqual([
+      [['Author A'], 2],
+      [['Author B'], 1],
+    ])
+    expect(result.warnings.some(w => w.type === 'warn_duplicate_book')).toBe(false)
+  })
+
+  it('splits ampersand-joined author folders the same way tags are split', () => {
+    const result = runAudiobooksScan({
+      spec: {
+        Audible: {
+          'Douglas Preston & Lincoln Child': { Relic: { '01 - Chapter.mp3': '' } },
+        },
+      },
+    })
+    expect(result.output[0]?.authors).toEqual(['Douglas Preston', 'Lincoln Child'])
   })
 
   it('sorts books by title alphabetically', () => {
@@ -209,7 +237,19 @@ describe('audiobooks module — warnings', () => {
         },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Also in \d+ other categories/))).toBe(true)
+    const dup = result.warnings.find(w => w.type === 'warn_duplicate_book')
+    expect(dup?.issue).toBe('Copies in 2 categories: Audible, Book On CD.')
+  })
+
+  it('warn_duplicate_book: path uses the author folder exactly as named on disk', () => {
+    const result = runAudiobooksScan({
+      spec: {
+        Audible: { 'A One, B Two, and C Three': { Book: { '01 - Chapter.mp3': '' } } },
+        'Book On CD': { 'A One, B Two, and C Three': { Book: { '01 - Chapter.mp3': '' } } },
+      },
+    })
+    const dup = result.warnings.find(w => w.type === 'warn_duplicate_book')
+    expect(dup?.path).toBe('A One, B Two, and C Three/Book')
   })
 
   it('warn_duplicate_book: silenced when category set is in acceptable_book_combos', () => {
@@ -226,7 +266,7 @@ describe('audiobooks module — warnings', () => {
         acceptable_book_combos: [['Audible', 'Book On CD']],
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Also in \d+ other categories/))).toBe(false)
+    expect(result.warnings.some(w => w.type === 'warn_duplicate_book')).toBe(false)
   })
 
   it('warn_loose_files: audio files in author folder (no book wrapper)', () => {

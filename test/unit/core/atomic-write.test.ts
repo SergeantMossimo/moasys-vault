@@ -3,7 +3,8 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
-import { writeFileAtomic } from '../../../src/core/atomic-write'
+import { assertProjectPath, writeFileAtomic } from '../../../src/core/atomic-write'
+import { PROJECT_ROOT } from '../../../src/core/project'
 
 describe('writeFileAtomic', () => {
   let tmpDir: string
@@ -61,5 +62,42 @@ describe('writeFileAtomic', () => {
     expect(rename).toHaveBeenCalledTimes(5)
     expect(fs.readFileSync(file, 'utf-8')).toBe('new')
     expect(fs.readdirSync(tmpDir)).toEqual(['cache.json'])
+  })
+
+  it('cleans up the temp file when the in-place fallback fails too', () => {
+    const file = path.join(tmpDir, 'cache.json')
+    vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+      throw Object.assign(new Error('locked'), { code: 'EBUSY' })
+    })
+    const realWrite = fs.writeFileSync
+    vi.spyOn(fs, 'writeFileSync').mockImplementation((target, data, opts) => {
+      if (target === file) throw Object.assign(new Error('still locked'), { code: 'EBUSY' })
+      realWrite(target, data, opts)
+    })
+
+    expect(() => writeFileAtomic(file, 'new')).toThrow('still locked')
+    expect(fs.readdirSync(tmpDir)).toEqual([])
+  })
+})
+
+describe('assertProjectPath', () => {
+  it('allows files inside the project folder', () => {
+    expect(() =>
+      assertProjectPath(path.join(PROJECT_ROOT, 'output', 'server', 'x.json'))
+    ).not.toThrow()
+  })
+
+  it('refuses anything outside it, such as a media library', () => {
+    const outside = path.join(path.parse(PROJECT_ROOT).root, 'Media', 'Movies', 'x.json')
+    expect(() => assertProjectPath(outside)).toThrow('never writes to a media library')
+    expect(() => writeFileAtomic(outside, 'x')).toThrow('never writes to a media library')
+  })
+
+  it('refuses a path that climbs out with ..', () => {
+    expect(() => assertProjectPath(path.join(PROJECT_ROOT, '..', 'elsewhere.json'))).toThrow()
+  })
+
+  it('refuses the project folder itself', () => {
+    expect(() => assertProjectPath(PROJECT_ROOT)).toThrow()
   })
 })

@@ -15,9 +15,7 @@
  * The report runs last so it folds in whatever the earlier steps just wrote.
  *
  * `plex:logs` isn't included — it needs the server owner's token and is an
- * occasional deep-dive rather than part of a routine refresh. `fix:shows`
- * never is: it's the one command that writes to a library, and always runs by
- * hand.
+ * occasional deep-dive rather than part of a routine refresh.
  *
  * Each step runs as its own process, exactly as if you'd typed its npm script,
  * so output and exit codes are the same. A failing step stops the run.
@@ -119,8 +117,7 @@ function printHelp(): void {
   runs last and folds every warnings file written above into one entry per
   folder; a step that was skipped is listed as a missing source in that file.
 
-  Not included: plex:logs (needs the server owner's token) and fix:shows
-  (the one command that renames files — always run it yourself).
+  Not included: plex:logs (needs the server owner's token).
   `)
 }
 

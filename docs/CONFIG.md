@@ -138,19 +138,45 @@ Boot-time logs make it clear which files contributed:
 
 ---
 
-## Three configuration shapes
+## Choosing a layout
 
-Before diving into individual settings, here are the three common ways people organize categories. Knowing which shape fits your library makes the settings reference below much easier to navigate.
+The scanner needs to know one thing about how your library is arranged: does each type's folder hold the titles directly, or is it split into category folders first? Pick the shape below that matches what's on disk. Each one is a few lines in `rules/<type>.local.yaml`, or nothing at all.
 
-### A. Quality-organized categories (e.g. movies + shows by UHD/HD/SD)
+| Your folders look like…                                       | Shape                                                       | What to set                             |
+| ------------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------- |
+| `Movies/Heat (1995)/Heat (1995).mkv`                          | [Flat](#flat-titles-directly-under-root_path) — the default | Nothing                                 |
+| `Movies/HD/Heat (1995)/…`, `Movies/UHD/Dune (2021)/…`         | [Quality folders](#quality-folders-uhd-hd-sd)               | `categories`, `quality_thresholds`      |
+| `Audiobooks/Audible/Author/Book/…`, `Audiobooks/Book On CD/…` | [Tag folders](#tag-folders-audible-book-on-cd-soundtracks)  | `categories`                            |
+| `Media/Movies/…`, `Media/TV Shows/…`, `Media/Music/…`         | [One share, every type](#one-share-holding-every-type)      | A `root_path` per type in `config.json` |
 
-You have subfolders like `UHD/`, `HD/`, `SD/`, possibly with `Other UHD/`, `Other HD/`, `Other SD/` variants. You want the scanner to:
+Each `rules/<type>.local.yaml.example` is a ready-made categorized setup: copy it to `rules/<type>.local.yaml` and edit the names.
 
-- Flag files whose actual dimensions don't match the quality their folder implies (`warn_quality_mismatch`)
-- Flag the same media stored across multiple distinct qualities (`warn_multi_quality`)
-- Flag the same media stored twice at the SAME quality, e.g. in both `HD/` and `Other HD/` (`warn_duplicate_quality`)
+### Flat: titles directly under `root_path`
 
-**Configure**:
+```text
+D:\Movies\Heat (1995)\Heat (1995).mkv
+D:\TV\Firefly (2002)\Season 01\Firefly (2002) - s01e01 - Serenity.mkv
+D:\Music\Pink Floyd\The Wall\01 - In the Flesh.flac
+D:\Audiobooks\Andy Weir\The Martian\01 - Chapter 1.m4b
+```
+
+This is what the shipped rules expect (`categories: []`), so there's nothing to set. The scanner walks `root_path` itself, and every catalog entry's `category` is `"default"`. `"default"` is reserved for this, so no real category may use the name.
+
+Every naming check runs. The checks that compare category folders with each other have nothing to compare, so they stay quiet: `warn_quality_mismatch`, `warn_multi_quality`, `warn_duplicate_quality`, `warn_duplicate_album`, and `warn_duplicate_book`. Checks within one title still run, including `warn_duplicate_edition`, `warn_duplicate_episode`, `warn_duplicate_track`, `warn_large_file` (when `quality_thresholds` has `max_mbps`), and Plex's `warn_plex_duplicate`.
+
+Warnings about loose files sitting directly in `root_path` have the path `.`. Silence them with `folders: ['.']` in the [ignore list](#ignoreddrivetypeyaml--silencing-specific-warnings).
+
+If a top-level folder is named like a quality category (`HD`, `Other UHD`), you'll get `warn_unlisted_folder`. That usually means the library is actually split into quality folders and needs the next shape.
+
+### Quality folders (UHD, HD, SD)
+
+```text
+M:\Movies\UHD\Dune (2021)\Dune (2021).mkv
+M:\Movies\HD\Heat (1995)\Heat (1995).mp4
+M:\Movies\Other SD\Casablanca (1942)\Casablanca (1942).mp4
+```
+
+List the folders as categories, in the order you rank them, and say what resolution each quality should hold:
 
 ```yaml
 # rules/movies.local.yaml
@@ -168,39 +194,58 @@ quality_thresholds:
   - { name: SD, max_width: 1000 }
 
 acceptable_quality_combos:
-  - [UHD, HD] # auto-detect collapses "Other UHD"+"Other HD" into the same set
+  - [UHD, HD] # a UHD and an HD copy of the same title is deliberate
 ```
 
-**Quality auto-detection rule**: each category name is scanned for the whole-word, case-insensitive substring `UHD`, `HD`, or `SD` (UHD checked first so it wins over the contained `HD`). Matching is on word boundaries — `USD`, `Standard`, or `Hi-Def` do NOT match.
+That turns on the quality checks:
 
-### B. General-purpose tag categories (e.g. audiobooks: Audible, Book On CD)
+- `warn_quality_mismatch`: a file whose resolution doesn't fit its folder's quality.
+- `warn_multi_quality`: one title in more than one quality, unless the set is in `acceptable_quality_combos`.
+- `warn_duplicate_quality`: one title twice at the same quality, e.g. in both `HD/` and `Other HD/`.
 
-Your subfolder names are concepts (a format, an imprint, a vendor) that aren't quality buckets. You want each record tagged with which folder it's in, but no dimension checks should apply.
+**How a folder's quality is found:** each category name is searched for the whole word `UHD`, `HD`, or `SD`, ignoring case, with `UHD` checked first so it wins over the `HD` inside it. `USD`, `Standard`, and `Hi-Def` don't match. A category with none of the three is a [tag folder](#tag-folders-audible-book-on-cd-soundtracks).
 
-**Configure**:
+Only listed folders are scanned. A folder under `root_path` that isn't listed (a new `Other SD/` you forgot to add, a title dropped at the top) gets `warn_unlisted_folder`, so nothing goes unseen.
+
+### Tag folders (Audible, Book On CD, Soundtracks)
+
+```text
+M:\Audiobooks\Audible\Andy Weir\The Martian\01 - Chapter 1.m4b
+M:\Audiobooks\Book On CD\Terry Pratchett\Mort\101 - Chapter 1.mp3
+```
+
+The folder names are a format, a source, or a genre rather than a resolution. List them the same way:
 
 ```yaml
 # rules/audiobooks.local.yaml
 categories:
   - { name: Audible }
-  - { name: Other Audible }
   - { name: Book On CD }
-# quality_thresholds and acceptable_quality_combos are not used in this scenario
 ```
 
-Because none of these names contain `UHD`/`HD`/`SD`, all categories resolve to `quality: null`. `warn_quality_mismatch` never fires. `warn_duplicate_book` still fires if the same book exists across multiple categories.
+None of the names contain `UHD`/`HD`/`SD`, so no resolution checks apply. Each catalog entry records which folder it's in, and the same title in two folders still raises `warn_duplicate_book` / `warn_duplicate_album`, unless you list the pair in `acceptable_book_combos` / `acceptable_album_combos`.
 
-### C. No categories — flat library
+### One share holding every type
 
-Your media just lives directly under `root_path` with no subfolders for organization.
-
-**Configure**:
-
-```yaml
-categories: [] # or omit entirely
+```text
+D:\Media\Movies\Heat (1995)\…
+D:\Media\TV Shows\Firefly (2002)\…
+D:\Media\Music\Pink Floyd\…
 ```
 
-The scanner walks `root_path` directly and labels every record's category as `"default"`. No quality or duplicate checks fire. Naming hygiene checks still work.
+Give each type its own `root_path` in `config.json`, pointing at its own folder:
+
+```json
+{
+  "movies": [{ "root_path": "D:\\Media\\Movies", "name": "NAS" }],
+  "shows": [{ "root_path": "D:\\Media\\TV Shows", "name": "NAS" }],
+  "music": [{ "root_path": "D:\\Media\\Music", "name": "NAS" }]
+}
+```
+
+Each type then starts out flat. Add categories under any of them as above. Don't point every type at `D:\Media` itself: each type would read the other types' folders as badly named titles.
+
+For Plex, each root's last folder name (`Movies`, `TV Shows`) is what ties it to a Plex library. A root at the very top of a drive (`D:\`) has no folder name to match, so it needs a [`path_map`](PLEX.md) entry.
 
 ---
 
@@ -212,7 +257,7 @@ Each setting lives in `rules/<type>.yaml`. For each one below: what it is, why y
 
 **Applies to:** all four types.
 
-**What it is:** Regular expressions with named capture groups that tell the scanner how to parse your folder and file names. Each pattern can be a plain string or `{ pattern, flags }` if you need flags like case-insensitive matching.
+**What it is:** Regular expressions with named capture groups that tell the scanner how to parse your folder and file names. Each pattern can be a plain string or `{ pattern, flags }` if you need flags like case-insensitive matching (`i`). The flags allowed are `d`, `i`, `m`, `s`, and `u`; `g` and `y` are refused at startup, because they make a pattern that's reused for every name skip every other match.
 
 **Why you'd change it:** Your library uses a different naming convention than Plex's defaults. Most users won't touch this.
 
@@ -236,11 +281,11 @@ patterns:
 
 **Applies to:** all four types.
 
-**What it is:** A list of subfolder names under `root_path` that the scanner walks. Each category's `name` is both the folder name on disk AND the label that appears on each catalog entry.
+**What it is:** A list of subfolder names under `root_path` that the scanner walks. Each category's `name` is both the folder name on disk AND the label that appears on each catalog entry. Names must be unique (ignoring case, as Windows does), and `default` is reserved for a library with no categories. A folder under `root_path` that isn't listed raises `warn_unlisted_folder`.
 
-**Why you'd change it:** To tell the scanner which subfolders to look in and how to organize the output. See [Three configuration shapes](#three-configuration-shapes) above to pick the right shape for your library.
+**Why you'd change it:** To tell the scanner which subfolders to look in and how to organize the output. See [Choosing a layout](#choosing-a-layout) above to pick the right shape for your library.
 
-**Related warnings:** `warn_quality_mismatch`, `warn_multi_quality`, `warn_duplicate_quality`, `warn_duplicate_album`, `warn_duplicate_book` all depend on how you set this up.
+**Related warnings:** `warn_unlisted_folder`, plus `warn_quality_mismatch`, `warn_multi_quality`, `warn_duplicate_quality`, `warn_duplicate_album`, and `warn_duplicate_book`, which all depend on how you set this up.
 
 **Example:**
 
@@ -369,7 +414,7 @@ Whichever style you pick, the canonical multi-episode suffix spells the letter o
 
 **Related warnings:** `warn_episode_code_case`, summarised once per season.
 
-**Fixing it:** `npm run fix:shows -- --fix episode-code <drive>` previews the renames; add `--apply` to execute. See [Scans](SCANS.md#fixing-filenames--npm-run-fixshows).
+**Fixing it:** rename the files. The warning names the season and how many files are off-style, so a bulk renamer (Advanced Renamer, FileBot, or your file manager's batch rename) can do a season at a time.
 
 **Example:**
 
@@ -399,7 +444,7 @@ specials_folder: specials
 
 ### `quality_thresholds`
 
-**Applies to:** movies + shows. **Only useful if your `categories` are organized by quality** (see [shape A above](#a-quality-organized-categories-eg-movies--shows-by-uhdhdsd)). If you're using general-purpose tag categories or a flat library, leave this empty.
+**Applies to:** movies + shows. **Only useful if your `categories` are organized by quality** (see [Quality folders](#quality-folders-uhd-hd-sd) above). If you're using general-purpose tag categories or a flat library, leave this empty.
 
 **What it is:** Pixel-range buckets that define what `UHD`, `HD`, and `SD` mean dimensionally. Each bucket's `name` matches an auto-detected quality keyword from your category names (e.g. `Other UHD` resolves to quality `UHD` and gets checked against the `UHD` bucket). For each file, the scanner takes its long edge — the max of its width and height — and checks that it falls in the bucket's range.
 
@@ -467,7 +512,7 @@ runtime_tolerance_percent: 50
 
 ### `acceptable_quality_combos`
 
-**Applies to:** movies + shows. **Only useful if your `categories` are organized by quality** (see [shape A above](#a-quality-organized-categories-eg-movies--shows-by-uhdhdsd)). If you don't use quality categories, this setting does nothing.
+**Applies to:** movies + shows. **Only useful if your `categories` are organized by quality** (see [Quality folders](#quality-folders-uhd-hd-sd) above). If you don't use quality categories, this setting does nothing.
 
 **What it is:** A list of quality sets that are explicitly OK to coexist for a single item. After category-to-quality mapping, a movie that lives in both `Other UHD` and `Other HD` resolves to the quality set `{UHD, HD}` — listing `[UHD, HD]` here tells the scanner that's an intentional pair, not a hygiene problem. For shows, the same logic applies per-season (different seasons in different qualities are fine on their own).
 
@@ -547,7 +592,7 @@ acceptable_book_combos:
 
 **Applies to:** all four types.
 
-**What it is:** A flat table of per-warning toggles. Every warning the scanner can emit has a corresponding `warn_*` boolean here. Set one to `false` to silence that warning across the board.
+**What it is:** A flat table of per-warning toggles. Every `warn_*` warning has a boolean here; set one to `false` to silence that warning across the board. The two that report a file the scanner physically couldn't read — `permission_denied` and `warn_probe_failed` — have no toggle; silence those per path with an ignore list.
 
 **Why you'd change it:** You've decided a particular warning isn't useful for your library and want to suppress it globally. To silence warnings on specific paths only, use [`ignored/<drive>/<type>.yaml`](#ignoreddrivetypeyaml--silencing-specific-warnings) instead.
 
@@ -684,6 +729,6 @@ Credentials live in `.secrets.json` at the project root, which is gitignored. Co
 | Block  | Needed by                                                                  | How to get it                                                                                                 |
 | ------ | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `tmdb` | `validate:movies`, `validate:shows` (skipped by `validate:all` if missing) | A free v3 API key — see [TMDB's getting-started guide](https://developer.themoviedb.org/docs/getting-started) |
-| `plex` | `plex:pull`, `plex:check`, `plex:logs`                                     | Your `X-Plex-Token` — see [Plex setup](PLEX.md#2-token--secretsjson)                                          |
+| `plex` | `plex:pull`, `plex:logs`, and the Plex steps of `npm run all`              | Your `X-Plex-Token` — see [Plex setup](PLEX.md#2-token--secretsjson)                                          |
 
 `validate:audiobooks` uses Open Library and needs no key. A missing, malformed, or still-placeholder block fails at startup with instructions, before any requests are made.

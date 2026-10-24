@@ -109,7 +109,7 @@ export interface CacheEntry {
   data: ProbeData
 }
 
-/** On-disk format of cache/<type>-probe.json */
+/** On-disk format of cache/<drive>/<type>-probe.json */
 export interface CacheFile {
   /** Schema version — bump if the ProbeData shape ever changes incompatibly. */
   version: number
@@ -147,8 +147,11 @@ export interface ProbeResult<T> {
  * `data:` key — easier for the website to render.
  */
 export interface FileProbe extends ProbeData {
-  /** Folder tag from config.json — UHD, HD, Music, Audible, etc. */
-  quality: string
+  /**
+   * The category folder the file sits in — UHD, HD, Music, Audible, etc. Not a
+   * quality: a movie in `Other HD/` is `"Other HD"` here, whatever its resolution.
+   */
+  category: string
   /** Path relative to the media root, forward slashes. */
   path: string
 }
@@ -190,8 +193,8 @@ export interface TrackProbe extends FileProbe {
    * one (rare). Computed from the audio stream's codec + bit_depth + sample
    * rate (lossless) or bitrate (lossy).
    *
-   * Distinct from `FileProbe.quality`, which is the folder tag (e.g. "Music",
-   * "Soundtracks"). This field describes encoded audio quality.
+   * Distinct from `FileProbe.category`, the folder the track sits in (e.g.
+   * "Music", "Soundtracks"). This field describes encoded audio quality.
    */
   audio_quality: string | null
 }

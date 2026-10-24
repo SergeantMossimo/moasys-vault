@@ -177,6 +177,27 @@ describe('shows module — happy paths', () => {
     expect(versions).toContainEqual({ category: 'HD', quality: 'SD' })
   })
 
+  it('adds no version for a file whose name does not parse', () => {
+    const result = runShowsScan({
+      spec: {
+        HD: {
+          'Show (2020)': {
+            'Season 01': {
+              'Show (2020) - S01E01.mp4': '',
+              'random clip.mp4': '',
+            },
+          },
+        },
+      },
+      probes: {
+        'HD/Show (2020)/Season 01/Show (2020) - S01E01.mp4': fakeProbe({
+          video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 },
+        }),
+      },
+    })
+    expect(result.output[0]?.seasons[0]?.versions).toEqual([{ category: 'HD', quality: 'HD' }])
+  })
+
   it('sorts seasons numerically with named seasons after numeric', () => {
     const result = runShowsScan({
       spec: {
@@ -954,7 +975,7 @@ describe('shows module — warn_duplicate_quality (per-season)', () => {
     const dupes = result.warnings.filter(w => w.type === 'warn_duplicate_quality')
     expect(dupes.length).toBe(1)
     expect(dupes[0]?.path).toBe('Show (2020) — Season 1')
-    expect(dupes[0]?.issue).toMatch(/Duplicate HD copies in 2 folders: HD, Other HD/)
+    expect(dupes[0]?.issue).toMatch(/HD copies in 2 categories: HD, Other HD/)
     expect(result.warnings.some(w => w.type === 'warn_multi_quality')).toBe(false)
   })
 

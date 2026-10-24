@@ -6,16 +6,18 @@
  *
  * Naming-related warnings (bad file name, year mismatch, etc.) are NOT
  * re-emitted here — those are the scan pass's job. The probe pass only
- * adds probe-specific warnings (currently: quality_mismatch, short_duration).
+ * adds probe-specific warnings: quality_mismatch, short_duration, large_file.
  */
 
 import fs from 'fs'
 import path from 'path'
 
+import { DirReader } from '../core/dir-reader'
 import { MoviesConfig, WarningCollector } from '../core/types'
-import { isPrimary } from '../core/files'
+import { isPrimary, toRel } from '../core/files'
 import { MoviesRules } from '../core/rules/movies'
 import { compilePattern, resolveCategories } from '../core/rules/helpers'
+import { makeKey, parseFileStem } from '../media/movies'
 
 import { ProbeCache } from './cache'
 import {
@@ -25,6 +27,7 @@ import {
   findOversizedFile,
   formatBitrateAndSize,
   formatBucketRange,
+  logProbeProgress,
   probeBatch,
 } from './helpers'
 import { MovieProbeOutput, FileProbe, ProbeData, ProbeResult } from './types'
@@ -32,38 +35,6 @@ import { MovieProbeOutput, FileProbe, ProbeData, ProbeResult } from './types'
 // ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
-
-/**
- * Parse a movie file stem to extract title / year / edition.
- * Mirrors the scan-side parser but returns only what the probe needs to key
- * a file. Files that fail to parse are skipped silently — the scan pass has
- * already flagged them.
- */
-function parseFileStem(
-  stem: string,
-  regex: RegExp
-): { title: string; year: number; edition: string | null } | null {
-  const m = regex.exec(stem)
-  if (!m?.groups) return null
-  const { title, year, edition: editionRaw } = m.groups
-  if (title === undefined || year === undefined) return null
-  let edition: string | null
-  if (editionRaw === undefined) edition = null
-  else if (editionRaw.trim() === '')
-    edition = null // Empty {edition-} treated as none, same as scan
-  else edition = editionRaw.trim()
-  return { title: title.trim(), year: parseInt(year, 10), edition }
-}
-
-/** Canonical movie key — title|year|edition, lowercased. Matches scan output. */
-function makeKey(title: string, year: number, edition: string | null): string {
-  return `${title.toLowerCase()}|${year}|${(edition ?? '').toLowerCase()}`
-}
-
-/** Normalize a relative path to forward slashes for cache/output consistency. */
-function toRel(p: string): string {
-  return p.split(path.sep).join('/')
-}
 
 /**
  * Human-readable runtime for warning messages — `2m 05s`, `1h 47m 12s`.
@@ -90,7 +61,8 @@ function formatDuration(seconds: number): string {
  */
 function collectTasks(
   config: MoviesConfig,
-  rules: MoviesRules
+  rules: MoviesRules,
+  dir: DirReader
 ): Array<{
   task: ProbeTask
   identity: { title: string; year: number; edition: string | null }
@@ -104,15 +76,22 @@ function collectTasks(
   for (const cat of resolveCategories(rules.categories)) {
     const folderPath = path.join(config.root_path, cat.folderName)
     // Missing folders are reported once, by the scan pass (core/scanner.ts).
-    if (!fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) continue
+    if (!dir.isDirectory(folderPath)) continue
 
-    for (const movieEntry of fs.readdirSync(folderPath, { withFileTypes: true })) {
+    let topEntries: fs.Dirent[]
+    try {
+      topEntries = dir.readdir(folderPath)
+    } catch {
+      continue // the scan pass reports it as permission_denied
+    }
+
+    for (const movieEntry of topEntries) {
       if (!movieEntry.isDirectory()) continue
       const movieFolderPath = path.join(folderPath, movieEntry.name)
 
       let files: fs.Dirent[]
       try {
-        files = fs.readdirSync(movieFolderPath, { withFileTypes: true })
+        files = dir.readdir(movieFolderPath)
       } catch {
         continue // Permission errors etc. — scan pass will have already flagged
       }
@@ -142,7 +121,8 @@ function collectTasks(
             mtime: stat.mtimeMs,
             size: stat.size,
           },
-          identity: parsed,
+          // An empty `{edition-}` is no edition, as the scan catalogues it.
+          identity: { title: parsed.title, year: parsed.year, edition: parsed.edition || null },
         })
       }
     }
@@ -169,7 +149,7 @@ interface MovieGroup {
 function aggregate(
   probed: ProbedFile[],
   identities: Map<string, { title: string; year: number; edition: string | null }>,
-  qualityOrder: string[]
+  categoryOrder: string[]
 ): MovieProbeOutput[] {
   const groups = new Map<string, MovieGroup>()
 
@@ -190,7 +170,7 @@ function aggregate(
     }
 
     group.files.push({
-      quality: task.category,
+      category: task.category,
       path: task.relativePath,
       size_bytes: data.size_bytes,
       duration_seconds: data.duration_seconds,
@@ -203,12 +183,12 @@ function aggregate(
 
   // Sort files within each movie by configured quality order, then sort movies
   // by title for stable output.
-  const qIndex = (q: string) => {
-    const i = qualityOrder.indexOf(q)
+  const categoryIndex = (c: string) => {
+    const i = categoryOrder.indexOf(c)
     return i === -1 ? Number.MAX_SAFE_INTEGER : i
   }
   for (const group of groups.values()) {
-    group.files.sort((a, b) => qIndex(a.quality) - qIndex(b.quality))
+    group.files.sort((a, b) => categoryIndex(a.category) - categoryIndex(b.category))
   }
 
   return [...groups.values()].sort((a, b) => {
@@ -238,9 +218,10 @@ export async function probeMovies(
   config: MoviesConfig,
   rules: MoviesRules,
   cache: ProbeCache,
-  warnings: WarningCollector
+  warnings: WarningCollector,
+  dir: DirReader = new DirReader()
 ): Promise<ProbeResult<MovieProbeOutput[]>> {
-  const collected = collectTasks(config, rules)
+  const collected = collectTasks(config, rules, dir)
   console.log(`    [PROBE] ${collected.length} primary files to probe`)
 
   // Build a reverse map so aggregation can look up identity by relativePath
@@ -252,11 +233,7 @@ export async function probeMovies(
   const probed = await probeBatch(
     tasks,
     cache,
-    (done, total, cached) => {
-      if (done === total || done % 100 === 0) {
-        console.log(`    [PROBE] ${done}/${total} (${cached} cached)`)
-      }
-    },
+    logProbeProgress,
     undefined,
     warnings,
     config.probe_concurrency
@@ -332,9 +309,9 @@ export async function probeMovies(
     }
   }
 
-  const qualityOrder = resolveCategories(rules.categories).map(c => c.name)
+  const categoryOrder = resolveCategories(rules.categories).map(c => c.name)
   const byPath = new Map<string, ProbeData>()
   for (const { task, data } of probed) byPath.set(task.relativePath, data)
 
-  return { output: aggregate(probed, identities, qualityOrder), byPath }
+  return { output: aggregate(probed, identities, categoryOrder), byPath }
 }

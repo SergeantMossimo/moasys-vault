@@ -49,6 +49,7 @@ import {
   parseRunnerArgs,
   printBanner,
   printRunSummary,
+  progressLogger,
   selectRoot,
   writeJsonOutput,
   writeWarnings,
@@ -56,7 +57,7 @@ import {
 
 import { hasSecrets, loadSecrets } from './secrets'
 import { JsonCache } from './cache'
-import { TmdbClient, slimSeasonDetails } from './tmdb'
+import { TmdbAbortError, TmdbClient, slimSeasonDetails } from './tmdb'
 import { validateMovies, movieDurationKey, type MovieDurations } from './movies'
 import { validateShows } from './shows'
 import { validateAudiobooks, OPENLIBRARY_CACHE_VERSION } from './audiobooks'
@@ -202,23 +203,24 @@ async function runMovies(client: TmdbClient, root: MediaRootConfig, days: number
       prunedNote(days, `${search.pruned} search + ${details.pruned} details`)
   )
 
-  const data = await validateMovies(
-    movies,
-    rules,
-    client,
-    search.cache,
-    details.cache,
-    ctx.warnings,
-    durations,
-    (done, total, cached) => {
-      if (done === total || done % 50 === 0) {
-        console.log(`    [TMDB] ${done}/${total} (${cached} cached)`)
-      }
-    }
-  )
-
-  search.cache.save()
-  details.cache.save()
+  // Caches are saved even if the run aborts: they hold only good answers,
+  // and keeping them means the next run doesn't ask for them again.
+  let data
+  try {
+    data = await validateMovies(
+      movies,
+      rules,
+      client,
+      search.cache,
+      details.cache,
+      ctx.warnings,
+      durations,
+      progressLogger('TMDB')
+    )
+  } finally {
+    search.cache.save()
+    details.cache.save()
+  }
   finishRun(ctx, data, `${client.totalRequests} TMDB requests.`)
 }
 
@@ -245,24 +247,23 @@ async function runShows(client: TmdbClient, root: MediaRootConfig, days: number)
       )
   )
 
-  const data = await validateShows(
-    shows,
-    rules,
-    client,
-    search.cache,
-    details.cache,
-    seasons.cache,
-    ctx.warnings,
-    (done, total, cached) => {
-      if (done === total || done % 10 === 0) {
-        console.log(`    [TMDB] ${done}/${total} (${cached} cached)`)
-      }
-    }
-  )
-
-  search.cache.save()
-  details.cache.save()
-  seasons.cache.save()
+  let data
+  try {
+    data = await validateShows(
+      shows,
+      rules,
+      client,
+      search.cache,
+      details.cache,
+      seasons.cache,
+      ctx.warnings,
+      progressLogger('TMDB')
+    )
+  } finally {
+    search.cache.save()
+    details.cache.save()
+    seasons.cache.save()
+  }
   finishRun(ctx, data, `${client.totalRequests} TMDB requests.`)
 }
 
@@ -284,20 +285,19 @@ async function runAudiobooks(root: MediaRootConfig, days: number): Promise<void>
   )
 
   const client = new OpenLibraryClient()
-  const data = await validateAudiobooks(
-    books,
-    rules,
-    client,
-    search.cache,
-    ctx.warnings,
-    (done, total, cached) => {
-      if (done === total || done % 10 === 0) {
-        console.log(`    [OPENLIBRARY] ${done}/${total} (${cached} cached)`)
-      }
-    }
-  )
-
-  search.cache.save()
+  let data
+  try {
+    data = await validateAudiobooks(
+      books,
+      rules,
+      client,
+      search.cache,
+      ctx.warnings,
+      progressLogger('OPENLIBRARY')
+    )
+  } finally {
+    search.cache.save()
+  }
   finishRun(ctx, data, `${client.totalRequests} Open Library requests.`)
 }
 
@@ -336,16 +336,18 @@ function printHelp(): void {
 }
 
 /**
- * Pull `--refresh-older-than=Nd` (or `=N`) out of process.argv, returning the
- * number of days (0 = no refresh). Mutates argv so parseRunnerArgs sees a
- * clean view afterwards.
+ * Pull `--refresh-older-than=Nd` (or `=N`, or `--refresh-older-than N`) out
+ * of argv, returning the number of days (0 = no refresh). Mutates argv so
+ * parseRunnerArgs sees a clean view afterwards — in particular, the value
+ * after a space must go too, or it would be read as the drive name.
  */
-function extractRefreshOlderThanFlag(): number {
-  const flagPrefix = '--refresh-older-than='
-  const argIndex = process.argv.findIndex(a => a.startsWith(flagPrefix))
+export function extractRefreshOlderThanFlag(argv: string[] = process.argv): number {
+  const flag = '--refresh-older-than'
+  const argIndex = argv.findIndex(a => a === flag || a.startsWith(`${flag}=`))
   if (argIndex === -1) return 0
 
-  const value = process.argv[argIndex]!.slice(flagPrefix.length)
+  const spaced = argv[argIndex] === flag
+  const value = spaced ? (argv[argIndex + 1] ?? '') : argv[argIndex]!.slice(flag.length + 1)
   const match = value.match(/^(\d+)d?$/)
   if (!match) {
     console.error(
@@ -354,7 +356,7 @@ function extractRefreshOlderThanFlag(): number {
     process.exit(1)
   }
 
-  process.argv.splice(argIndex, 1)
+  argv.splice(argIndex, spaced ? 2 : 1)
   return parseInt(match[1]!, 10)
 }
 
@@ -388,23 +390,39 @@ async function main(): Promise<void> {
   const tmdb =
     wantsTmdb && tmdbAvailable ? new TmdbClient(loadSecrets(PROJECT_ROOT, 'tmdb').api_key) : null
 
+  let tmdbAborted = false
   for (const mediaType of types) {
     if (mediaType !== 'audiobooks' && tmdb === null) {
       console.log(`\n  [SKIP] ${mediaType} — no TMDB key in .secrets.json`)
       continue
     }
+    if (mediaType !== 'audiobooks' && tmdbAborted) {
+      console.log(`\n  [SKIP] ${mediaType} — TMDB stopped answering earlier in this run`)
+      continue
+    }
     const root = selectRoot(config, mediaType, parsed.drive, acrossAllTypes)
     if (!root) continue
 
-    if (mediaType === 'movies') await runMovies(tmdb!, root, days)
-    else if (mediaType === 'shows') await runShows(tmdb!, root, days)
-    else await runAudiobooks(root, days)
+    try {
+      if (mediaType === 'movies') await runMovies(tmdb!, root, days)
+      else if (mediaType === 'shows') await runShows(tmdb!, root, days)
+      else await runAudiobooks(root, days)
+    } catch (err) {
+      if (!(err instanceof TmdbAbortError)) throw err
+      // Nothing was written for this type, so its previous results stand.
+      console.error(`\n  Error: ${err.message}`)
+      console.error(`    Nothing was written for ${mediaType}; its previous results are unchanged.`)
+      tmdbAborted = true
+      process.exitCode = 1
+    }
   }
 
   console.log()
 }
 
-main().catch(err => {
-  console.error(err)
-  process.exit(1)
-})
+if (require.main === module) {
+  main().catch(err => {
+    console.error(err)
+    process.exit(1)
+  })
+}

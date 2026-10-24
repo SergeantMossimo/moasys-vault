@@ -19,11 +19,17 @@
 
 import { BookOutput, WarningCollector } from '../core/types'
 import { AudiobooksRules } from '../core/rules/audiobooks'
+import { categoryPath } from '../core/rules/helpers'
 import { authorKey, editDistance } from '../media/audiobook-names'
 import { comparableTitle } from '../probe/audiobook-tags'
 
 import { JsonCache } from './cache'
-import { categoriesOf, normalizeTitleLoose, stripFilenameIllegalChars } from './helpers'
+import {
+  RECHECK_WARNED_AFTER_DAYS,
+  categoriesOf,
+  normalizeTitleLoose,
+  stripFilenameIllegalChars,
+} from './helpers'
 import { OpenLibraryClient, OpenLibraryDoc } from './openlibrary'
 
 // ─────────────────────────────────────────────
@@ -214,15 +220,19 @@ function queryKey(query: string, author: string | undefined): string {
  *   2. book title alone (catches a misspelled author)
  *   3. first title segment + first author (catches a mangled subtitle)
  *
- * Results are cached per query. Empty results are NOT cached, so a book
- * Open Library didn't know about is asked again next run — same reasoning as
- * the TMDB pass re-asking its no-match verdicts.
+ * Results are cached per query. An empty result is cached too, but asked
+ * again once it's RECHECK_WARNED_AFTER_DAYS old — the same rule as TMDB's
+ * no-match verdicts, so a book Open Library adds later is found without
+ * re-asking every run for every book it doesn't know.
+ *
+ * Returns null when a search failed (network, server error): the book is then
+ * left out of this run rather than reported as missing from Open Library.
  */
 async function searchBook(
   book: BookOutput,
   client: OpenLibraryClient,
   cache: JsonCache<OpenLibraryDoc[]>
-): Promise<{ docs: OpenLibraryDoc[]; cached: boolean }> {
+): Promise<{ docs: OpenLibraryDoc[]; cached: boolean } | null> {
   const title = bookTitleOnly(book.title)
   const query = title.replace(/\s+-\s+/g, ' ')
   const firstSegment = title.split(' - ')[0]!
@@ -236,15 +246,16 @@ async function searchBook(
   for (const [q, a] of chain) {
     const key = queryKey(q, a)
     let docs = cache.get(key)
-    if (!docs) {
+    const stale = docs?.length === 0 && !cache.fetchedWithin(key, RECHECK_WARNED_AFTER_DAYS)
+    if (!docs || stale) {
       allCached = false
       try {
         docs = await client.search(q, a)
       } catch (err) {
         console.error(`    [OPENLIBRARY] Search failed for '${q}': ${(err as Error).message}`)
-        docs = []
+        return null
       }
-      if (docs.length > 0) cache.set(key, docs)
+      cache.set(key, docs)
     }
     if (docs.length > 0) return { docs, cached: allCached }
   }
@@ -260,6 +271,11 @@ function displayTitle(doc: OpenLibraryDoc): string {
   return doc.subtitle ? `${doc.title}: ${doc.subtitle}` : doc.title
 }
 
+/**
+ * Look every book in a scan catalog up on Open Library and warn on title,
+ * author, and not-found results. Returns one entry per book for
+ * data/validation.json; a book whose search failed this run is left out.
+ */
 export async function validateAudiobooks(
   books: BookOutput[],
   rules: AudiobooksRules,
@@ -273,7 +289,13 @@ export async function validateAudiobooks(
 
   for (let i = 0; i < books.length; i++) {
     const book = books[i]!
-    const { docs, cached } = await searchBook(book, client, cache)
+    const found = await searchBook(book, client, cache)
+    // Open Library couldn't be asked — leave the book for next run.
+    if (found === null) {
+      onProgress?.(i + 1, books.length, cachedCount)
+      continue
+    }
+    const { docs, cached } = found
     if (cached) cachedCount++
 
     const { status, doc } = resolveBook(book.title, book.authors, docs)
@@ -287,9 +309,10 @@ export async function validateAudiobooks(
       first_publish_year: doc?.first_publish_year ?? null,
     })
 
-    const authorFolder = book.authors.join(', ')
+    // Catalogs written before author_folder existed only have the parsed names.
+    const authorFolder = book.author_folder ?? book.authors.join(', ')
     const categories = categoriesOf(book.versions)
-    const bookPath = [...categories.slice(0, 1), authorFolder, book.title].join('/')
+    const bookPath = categoryPath(categories[0], authorFolder, book.title)
     const options = { scope: { categories, levels: [authorFolder, book.title] } }
     const olTitle = doc ? displayTitle(doc) : ''
     const safeTitle = stripFilenameIllegalChars(olTitle.replace(/\s*:\s+/g, ' - '))

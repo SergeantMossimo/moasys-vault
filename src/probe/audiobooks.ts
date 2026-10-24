@@ -8,14 +8,22 @@
 import fs from 'fs'
 import path from 'path'
 
+import { DirReader } from '../core/dir-reader'
 import { AudiobooksConfig, WarningCollector } from '../core/types'
-import { isPrimary } from '../core/files'
+import { isPrimary, toRel } from '../core/files'
 import { AudiobooksRules } from '../core/rules/audiobooks'
-import { compilePattern, resolveCategories } from '../core/rules/helpers'
+import {
+  categoryPath,
+  compilePattern,
+  isRealCategory,
+  resolveCategories,
+} from '../core/rules/helpers'
 
-import { analyzeBookTags } from './audiobook-tags'
+import { bookKey, parseChapterStem } from '../media/audiobooks'
+
+import { analyzeBookTags, splitAuthors } from './audiobook-tags'
 import { ProbeCache } from './cache'
-import { ProbeTask, ProbedFile, probeBatch } from './helpers'
+import { ProbeTask, ProbedFile, logProbeProgress, probeBatch } from './helpers'
 import { readTags } from './id3'
 import { BookProbeOutput, ChapterProbe, ProbeData, ProbeResult } from './types'
 
@@ -32,49 +40,14 @@ interface ChapterIdentity {
   chapter: number
 }
 
-function parseAuthors(folderName: string): string[] {
-  const cleaned = folderName.replace(/,?\s+and\s+/gi, ', ')
-  return cleaned
-    .split(',')
-    .map(a => a.trim())
-    .filter(a => a.length > 0)
-}
-
-function parseChapterStem(
-  stem: string,
-  multiDiscRegex: RegExp,
-  singleDiscRegex: RegExp
-): { disc: number; chapter: number } | null {
-  const mm = multiDiscRegex.exec(stem)
-  if (mm?.groups) {
-    const { disc, chapter } = mm.groups
-    if (disc !== undefined && chapter !== undefined) {
-      return { disc: parseInt(disc, 10), chapter: parseInt(chapter, 10) }
-    }
-  }
-  const sm = singleDiscRegex.exec(stem)
-  if (sm?.groups) {
-    const { chapter } = sm.groups
-    if (chapter !== undefined) return { disc: 1, chapter: parseInt(chapter, 10) }
-  }
-  return null
-}
-
-function bookKey(t: string): string {
-  return t.toLowerCase()
-}
-
-function toRel(p: string): string {
-  return p.split(path.sep).join('/')
-}
-
 // ─────────────────────────────────────────────
 // Walk
 // ─────────────────────────────────────────────
 
 function collectTasks(
   config: AudiobooksConfig,
-  rules: AudiobooksRules
+  rules: AudiobooksRules,
+  dir: DirReader
 ): Array<{ task: ProbeTask; identity: ChapterIdentity }> {
   const multiDiscRegex = compilePattern(rules.patterns.multi_disc)
   const singleDiscRegex = compilePattern(rules.patterns.single_disc)
@@ -83,16 +56,23 @@ function collectTasks(
   for (const cat of resolveCategories(rules.categories)) {
     const folderPath = path.join(config.root_path, cat.folderName)
     // Missing folders are reported once, by the scan pass (core/scanner.ts).
-    if (!fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) continue
+    if (!dir.isDirectory(folderPath)) continue
 
-    for (const authorEntry of fs.readdirSync(folderPath, { withFileTypes: true })) {
+    let topEntries: fs.Dirent[]
+    try {
+      topEntries = dir.readdir(folderPath)
+    } catch {
+      continue // the scan pass reports it as permission_denied
+    }
+
+    for (const authorEntry of topEntries) {
       if (!authorEntry.isDirectory()) continue
       const authorPath = path.join(folderPath, authorEntry.name)
-      const authors = parseAuthors(authorEntry.name)
+      const authors = splitAuthors(authorEntry.name)
 
       let bookEntries: fs.Dirent[]
       try {
-        bookEntries = fs.readdirSync(authorPath, { withFileTypes: true })
+        bookEntries = dir.readdir(authorPath)
       } catch {
         continue
       }
@@ -103,7 +83,7 @@ function collectTasks(
 
         let files: fs.Dirent[]
         try {
-          files = fs.readdirSync(bookPath, { withFileTypes: true })
+          files = dir.readdir(bookPath)
         } catch {
           continue
         }
@@ -167,7 +147,7 @@ function aggregate(
     const id = identities.get(task.relativePath)
     if (!id) continue
 
-    const key = bookKey(id.title)
+    const key = bookKey(id.authorFolder, id.title)
     let book = books.get(key)
     if (!book) {
       book = { title: id.title, authors: id.authors, media_type: [], chapters: [] }
@@ -176,7 +156,7 @@ function aggregate(
     if (!book.media_type.includes(id.mediaType)) book.media_type.push(id.mediaType)
 
     const chapter: ChapterProbe = {
-      quality: task.category,
+      category: task.category,
       path: task.relativePath,
       disc: id.disc,
       chapter: id.chapter,
@@ -235,10 +215,8 @@ function checkBookTags(
     )
     // The path can show one category, but the scope carries all of them so a
     // `folders:` entry matches regardless of which came first.
-    const categories = book.media_type.filter(c => c !== 'default')
-    const bookPath = categories[0]
-      ? path.join(categories[0], identity.authorFolder, book.title)
-      : path.join(identity.authorFolder, book.title)
+    const categories = book.media_type.filter(isRealCategory)
+    const bookPath = categoryPath(categories[0], identity.authorFolder, book.title)
     for (const finding of findings) {
       warnings.add(finding.type, bookPath, finding.issue, {
         fix: finding.fix,
@@ -252,13 +230,19 @@ function checkBookTags(
 // Entry point
 // ─────────────────────────────────────────────
 
+/**
+ * Run the audiobooks probe pass end-to-end: walk the library, probe each
+ * chapter (cache-aware, with its embedded tags), aggregate per book, and emit
+ * the tag-vs-folder warnings. Cache writes are the caller's responsibility.
+ */
 export async function probeAudiobooks(
   config: AudiobooksConfig,
   rules: AudiobooksRules,
   cache: ProbeCache,
-  warnings: WarningCollector
+  warnings: WarningCollector,
+  dir: DirReader = new DirReader()
 ): Promise<ProbeResult<BookProbeOutput[]>> {
-  const collected = collectTasks(config, rules)
+  const collected = collectTasks(config, rules, dir)
   console.log(`    [PROBE] ${collected.length} primary files to probe`)
 
   const identities = new Map<string, ChapterIdentity>()
@@ -268,11 +252,7 @@ export async function probeAudiobooks(
   const probed = await probeBatch(
     tasks,
     cache,
-    (done, total, cached) => {
-      if (done === total || done % 50 === 0) {
-        console.log(`    [PROBE] ${done}/${total} (${cached} cached)`)
-      }
-    },
+    logProbeProgress,
     readTags,
     warnings,
     config.probe_concurrency

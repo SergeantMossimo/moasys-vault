@@ -47,6 +47,8 @@ import {
   noIgnoreRequested,
   plexWarningCollector,
   probeFilePaths,
+  readLibraries,
+  readPulledCatalog,
   warningsPath,
   writePlexWarnings,
 } from './run-shared'
@@ -55,25 +57,12 @@ import { MediaType, PlexCatalogOutput, PlexLibrariesOutput } from './types'
 
 const ARCHIVE_PATH = path.join(PROJECT_ROOT, 'cache', 'plex-logs', 'latest.zip')
 
-function readJson<T>(p: string): T {
-  return JSON.parse(fs.readFileSync(p, 'utf-8')) as T
-}
-
 /** Every pulled catalog for a library that maps to a media type. */
 function readPulledCatalogs(libraries: PlexLibrariesOutput): PlexCatalogOutput[] {
-  const catalogs: PlexCatalogOutput[] = []
-  for (const library of libraries.libraries) {
-    if (library.media_type === null) continue
-    const catalogPath = path.join(PLEX_OUTPUT_DIR, library.slug, 'catalog.json')
-    if (!fs.existsSync(catalogPath)) {
-      console.log(
-        `    [SKIP] '${library.title}' hasn't been pulled — its items can't be identified in the logs.`
-      )
-      continue
-    }
-    catalogs.push(readJson<PlexCatalogOutput>(catalogPath))
-  }
-  return catalogs
+  return libraries.libraries
+    .filter(library => library.media_type !== null)
+    .map(library => readPulledCatalog(library, "its items can't be identified in the logs"))
+    .filter((c): c is PlexCatalogOutput => c !== null)
 }
 
 function printHelp(): void {
@@ -92,7 +81,7 @@ function printHelp(): void {
 }
 
 async function main(): Promise<void> {
-  const parsed = parseRunnerArgs(MEDIA_TYPES)
+  const parsed = parseRunnerArgs(MEDIA_TYPES, [NO_IGNORE_FLAG])
   if (parsed.kind === 'help') {
     printHelp()
     process.exit(parsed.explicit ? 0 : 1)
@@ -100,13 +89,7 @@ async function main(): Promise<void> {
 
   printBanner('Plex Logs')
 
-  const librariesPath = path.join(PLEX_OUTPUT_DIR, 'libraries.json')
-  if (!fs.existsSync(librariesPath)) {
-    console.error(`\n  Error: ${librariesPath} not found. Run \`npm run plex:pull\` first.`)
-    process.exit(1)
-  }
-  const libraries = readJson<PlexLibrariesOutput>(librariesPath)
-  console.log(`    [INPUT] Plex pull from ${new Date(libraries.generated).toLocaleString()}`)
+  const libraries = readLibraries()
   const unfiltered = noIgnoreRequested()
   if (unfiltered) {
     console.log(`    [INPUT] ${NO_IGNORE_FLAG}: ignore lists skipped — writing to unfiltered/`)

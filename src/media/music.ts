@@ -18,13 +18,8 @@
 import fs from 'fs'
 import path from 'path'
 
-import {
-  MusicConfig,
-  ArtistRecord,
-  ArtistOutput,
-  WarningCollector,
-  MediaModule,
-} from '../core/types'
+import { DirReader } from '../core/dir-reader'
+import { ArtistRecord, ArtistOutput, WarningCollector, MediaModule } from '../core/types'
 import {
   hasExtension,
   isPrimary,
@@ -34,9 +29,9 @@ import {
   findGarbledText,
   type GarbledRun,
 } from '../core/files'
-import { findNumericGaps, formatGaps } from '../core/gaps'
+import { findNumericGaps, formatGaps, listWithMore, quotedList } from '../core/gaps'
 import { MusicRules } from '../core/rules/music'
-import { compilePattern, resolveCategories } from '../core/rules/helpers'
+import { compilePattern, isAcceptableCombo, resolveCategories } from '../core/rules/helpers'
 import { finalizeVersions, distinctCategories } from '../core/versions'
 import { ProbeData } from '../probe/types'
 
@@ -92,7 +87,7 @@ const FIX = {
  * Tries the multi-disc pattern first (more specific), then single-disc as fallback.
  * Single-disc files (e.g. "01 - Track Name") are treated as disc 1.
  */
-function parseTrackStem(
+export function parseTrackStem(
   stem: string,
   multiDiscRegex: RegExp,
   singleDiscRegex: RegExp
@@ -116,22 +111,23 @@ function parseTrackStem(
 
 /** `'a.flac', 'b.flac', 'c.flac', +2 more` */
 function listNames(names: string[], max = 3): string {
-  const shown = names.slice(0, max).map(n => `'${n}'`)
-  return shown.join(', ') + (names.length > max ? `, +${names.length - max} more` : '')
+  return quotedList(names, max)
 }
 
 /** `'â€™' → '’', 'Ã©' → 'é'` — each distinct repair once, capped like listNames. */
 function listRepairs(runs: GarbledRun[], max = 3): string {
   const distinct = [...new Map(runs.map(r => [r.garbled, r])).values()]
-  const shown = distinct.slice(0, max).map(r => `'${r.garbled}' → '${r.fixed}'`)
-  return shown.join(', ') + (distinct.length > max ? `, +${distinct.length - max} more` : '')
+  return listWithMore(
+    distinct.map(r => `'${r.garbled}' → '${r.fixed}'`),
+    max
+  )
 }
 
-function makeArtistKey(artist: string): string {
+export function makeArtistKey(artist: string): string {
   return artist.toLowerCase()
 }
 
-function makeAlbumKey(artist: string, album: string): string {
+export function makeAlbumKey(artist: string, album: string): string {
   return `${artist.toLowerCase()}|${album.toLowerCase()}`
 }
 
@@ -139,9 +135,7 @@ function makeAlbumKey(artist: string, album: string): string {
 // Factory
 // ─────────────────────────────────────────────
 
-export function createMusicModule(
-  rules: MusicRules
-): MediaModule<ArtistRecord, ArtistOutput, MusicConfig> {
+export function createMusicModule(rules: MusicRules): MediaModule<ArtistRecord, ArtistOutput> {
   const artistFolderRegex = compilePattern(rules.patterns.artist_folder)
   const albumFolderRegex = compilePattern(rules.patterns.album_folder)
   const multiDiscRegex = compilePattern(rules.patterns.multi_disc)
@@ -152,18 +146,19 @@ export function createMusicModule(
 
   return {
     getCategories: () => effectiveCategories,
+    warnUnlistedFolders: rules.checks.warn_unlisted_folder,
 
     scanCategory(
       folderPath: string,
       folderName: string,
       category: string,
-      config: MusicConfig,
+      dir: DirReader,
       warnings: WarningCollector,
       _probeByPath: Map<string, ProbeData>
     ): Map<string, ArtistRecord> {
       const records = new Map<string, ArtistRecord>()
 
-      const rootEntries = fs.readdirSync(folderPath, { withFileTypes: true })
+      const rootEntries = dir.readdir(folderPath)
 
       // Loose audio files at media folder level — silently dropped without
       // this check. Plex expects every track to live inside Artist/Album/.
@@ -175,7 +170,7 @@ export function createMusicModule(
           warnings.add(
             'warn_loose_files',
             folderName,
-            `${looseRoot.length} loose audio file(s) in the category root.`,
+            `${looseRoot.length} loose audio file(s), outside any artist folder.`,
             { fix: FIX.warn_loose_files }
           )
         }
@@ -190,12 +185,9 @@ export function createMusicModule(
         )
         if (unexpected.length > 0) {
           const names = unexpected.map(e => `'${e.name}'`).join(', ')
-          warnings.add(
-            'warn_unexpected_entries',
-            folderName,
-            `Unexpected file(s) in the category root: ${names}.`,
-            { fix: FIX.warn_unexpected_entries }
-          )
+          warnings.add('warn_unexpected_entries', folderName, `Unexpected file(s): ${names}.`, {
+            fix: FIX.warn_unexpected_entries,
+          })
         }
       }
 
@@ -241,7 +233,7 @@ export function createMusicModule(
 
         let albumEntries: fs.Dirent[]
         try {
-          albumEntries = fs.readdirSync(artistPath, { withFileTypes: true })
+          albumEntries = dir.readdir(artistPath)
         } catch {
           warnings.add('permission_denied', artistRel, 'Permission denied reading artist folder.', {
             fix: FIX.permission_denied,
@@ -326,7 +318,7 @@ export function createMusicModule(
 
           let allFiles: fs.Dirent[]
           try {
-            allFiles = fs.readdirSync(albumPath, { withFileTypes: true })
+            allFiles = dir.readdir(albumPath)
           } catch {
             warnings.add('permission_denied', albumRel, 'Permission denied reading album folder.', {
               fix: FIX.permission_denied,
@@ -469,11 +461,11 @@ export function createMusicModule(
                   ? `${label(dupes[0]!)} has ${dupes[0]!.names.length} files: ` +
                     `${listNames(dupes[0]!.names.sort())}.`
                   : `${dupes.length} track numbers have more than one file: ` +
-                    dupes
-                      .slice(0, 2)
-                      .map(t => `${label(t)} (${listNames(t.names.sort(), 2)})`)
-                      .join('; ') +
-                    (dupes.length > 2 ? `; +${dupes.length - 2} more` : '') +
+                    listWithMore(
+                      dupes.map(t => `${label(t)} (${listNames(t.names.sort(), 2)})`),
+                      2,
+                      '; '
+                    ) +
                     '.'
               warnings.add('warn_duplicate_track', albumRel, issue, {
                 fix: FIX.warn_duplicate_track,
@@ -575,13 +567,12 @@ export function createMusicModule(
         for (const album of artist.albums.values()) {
           const cats = distinctCategories(album.versions)
           if (cats.length <= 1) continue
-          const catSet = new Set(cats)
-          if (isAcceptableComboSet(catSet, rules.acceptable_album_combos)) continue
+          if (isAcceptableCombo(new Set(cats), rules.acceptable_album_combos)) continue
           const ordered = categoryOrder.filter(c => cats.includes(c))
           warnings.add(
             'warn_duplicate_album',
             path.join(artist.artist, album.album),
-            `Also in ${ordered.length} other categories: ${ordered.join(', ')}.`,
+            `Copies in ${ordered.length} categories: ${ordered.join(', ')}.`,
             // The path carries no category — this check spans them by
             // definition — so scope derivation would read the artist as one.
             // Spelling it out is also what lets a `folders:` entry reach here.
@@ -594,9 +585,4 @@ export function createMusicModule(
       }
     },
   }
-}
-
-/** Return true if `set` matches one of the acceptable category combos. */
-function isAcceptableComboSet(set: Set<string>, combos: readonly string[][]): boolean {
-  return combos.some(combo => combo.length === set.size && combo.every(c => set.has(c)))
 }

@@ -85,7 +85,7 @@ export function splitAuthors(s: string): string[] {
 // Comparison
 // ─────────────────────────────────────────────
 
-export type TagComparison = 'match' | 'case-only' | 'mismatch'
+type TagComparison = 'match' | 'case-only' | 'mismatch'
 
 /**
  * Compare an album tag with a book folder name. A folder may extend the tag
@@ -141,7 +141,7 @@ export type BookTagCheck =
   | 'warn_author_tag_case'
   | 'warn_missing_book_tags'
 
-export interface BookTagFinding {
+interface BookTagFinding {
   type: BookTagCheck
   issue: string
   /**
@@ -152,9 +152,9 @@ export interface BookTagFinding {
 }
 
 /**
- * The remedy for each tag check. Kept in one map so every `findings.push` of
- * a given type relays the same text — `WarningCollector.groupedByType()` takes
- * the first it sees and warns if a bucket disagrees with itself.
+ * The remedy for each tag check. Not written to the warnings files — its home
+ * is the warning tables in docs/OUTPUT.md — but kept in one map so every
+ * `findings.push` of a type documents the same wording.
  */
 const FIX: Record<BookTagCheck, string> = {
   warn_missing_book_tags:

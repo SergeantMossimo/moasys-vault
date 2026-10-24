@@ -13,7 +13,7 @@
 
 import { z } from 'zod'
 
-import { PatternSchema, CategorySchema } from './helpers'
+import { PatternSchema, CategoryListSchema } from './helpers'
 
 export const AudiobooksRulesSchema = z.object({
   /**
@@ -31,7 +31,7 @@ export const AudiobooksRulesSchema = z.object({
   }),
 
   /** Subfolders under root_path to walk. Empty = walk root_path directly with "default" label. */
-  categories: z.array(CategorySchema),
+  categories: CategoryListSchema,
 
   /** Expected primary file format(s) for audiobook chapters. */
   primary_extension: z.array(z.string()).min(1),
@@ -70,6 +70,13 @@ export const AudiobooksRulesSchema = z.object({
      * this warning enabled.
      */
     warn_loose_files: z.boolean(),
+    /**
+     * A folder directly under root_path that isn't one of `categories`, so
+     * nothing in it is scanned. In a library with no categories, flags a
+     * top-level folder named like a quality category (UHD/HD/SD) instead —
+     * a sign `categories` should be set.
+     */
+    warn_unlisted_folder: z.boolean(),
     /**
      * Subfolders inside a book folder. The scanner expects a flat chapter
      * layout (multi-disc uses prefix like 101, 201). Files in subfolders
@@ -167,6 +174,7 @@ export const defaultAudiobooksRules: AudiobooksRules = AudiobooksRulesSchema.par
     warn_chapter_gaps: true,
     warn_duplicate_book: true,
     warn_loose_files: true,
+    warn_unlisted_folder: true,
     warn_extra_subfolders: true,
     warn_unexpected_entries: true,
     warn_series_name_mismatch: true,

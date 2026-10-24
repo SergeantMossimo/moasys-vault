@@ -5,8 +5,8 @@
  * stays human-inspectable and debuggable:
  *
  *   cache/tmdb-search.json        ← search lookups   (key = "<type>|<title>|<year>")
- *   cache/tmdb-movies.json        ← movie details   (key = TMDB ID as string)
- *   cache/tmdb-shows.json         ← show details    (key = TMDB ID as string)
+ *   cache/tmdb-movies.json        ← movie details + credits/keywords (key = TMDB ID as string)
+ *   cache/tmdb-shows.json         ← show details + credits/keywords  (key = TMDB ID as string)
  *   cache/tmdb-show-seasons.json  ← per-season ep details (key = "<showId>:<seasonNumber>")
  *
  * Each cache shares the same load/save logic via the generic JsonCache class.
@@ -114,6 +114,12 @@ export class JsonCache<T> {
 
   has(key: string): boolean {
     return this.entries.has(key)
+  }
+
+  /** True when `key` is cached and was fetched less than `days` days ago. */
+  fetchedWithin(key: string, days: number): boolean {
+    const ts = Date.parse(this.entries.get(key)?.fetched_at ?? '')
+    return Number.isFinite(ts) && Date.now() - ts < days * 24 * 60 * 60 * 1000
   }
 
   size(): number {

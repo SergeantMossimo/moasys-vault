@@ -1,0 +1,27 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# MOASYS-Vault — example personal overrides for shows
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Copy to rules/shows.local.yaml (gitignored) and edit. Anything here
+# deep-merges over rules/shows.yaml — set only what differs.
+#
+# This example is for a library split into quality folders:
+#
+#   M:\Shows\
+#     HD\Firefly (2002)\Season 01\Firefly (2002) - s01e01 - Serenity.mp4
+#     SD\Cheers (1982)\Season 01\Cheers (1982) - s01e01 - Give Me a Ring.mp4
+#
+# If your shows sit directly in M:\Shows\ instead, you don't need this file.
+# See docs/CONFIG.md "Choosing a layout".
+# ─────────────────────────────────────────────────────────────────────────────
+
+categories:
+  - { name: HD }
+  - { name: SD }
+
+quality_thresholds:
+  - { name: HD, min_width: 1270 }
+  - { name: SD, max_width: 1270 }
+
+# House style for episode codes: lower (s01e01), upper (S01E01), or any.
+episode_code_case: lower

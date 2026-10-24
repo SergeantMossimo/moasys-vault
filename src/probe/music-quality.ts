@@ -17,8 +17,7 @@
  * findable when someone needs to tune them.
  */
 
-import { AudioProbe } from './types'
-import { TrackProbe } from './types'
+import { AudioProbe, TrackProbe } from './types'
 
 // ─────────────────────────────────────────────
 // Constants
@@ -30,7 +29,22 @@ import { TrackProbe } from './types'
  * FLAC file is highly variable and doesn't reflect "quality" the way it does
  * for MP3/AAC).
  */
-const LOSSLESS_CODECS = new Set(['flac', 'alac', 'wav', 'wavpack', 'ape', 'tak'])
+const LOSSLESS_CODECS = new Set(['flac', 'alac', 'wavpack', 'ape', 'tak'])
+
+/**
+ * Whether ffprobe's codec name is lossless. Uncompressed audio (WAV, AIFF)
+ * reports as `pcm_s16le`, `pcm_s24be` and friends rather than a container
+ * name, so the whole `pcm_` family counts.
+ */
+function isLosslessCodec(codec: string): boolean {
+  const c = codec.toLowerCase()
+  return LOSSLESS_CODECS.has(c) || c.startsWith('pcm_')
+}
+
+/** The label a codec gets in a quality string — every PCM variant reads as `PCM`. */
+function codecLabel(codec: string): string {
+  return codec.toLowerCase().startsWith('pcm_') ? 'PCM' : codec.toUpperCase()
+}
 
 /**
  * VBR (variable bitrate) tolerance for the album quality summary. Tracks
@@ -79,10 +93,9 @@ export function deriveAudioQuality(
   containerBitrate: number | null
 ): string | null {
   if (!audio) return null
-  const codecUpper = audio.codec.toUpperCase()
-  const isLossless = LOSSLESS_CODECS.has(audio.codec.toLowerCase())
+  const codecUpper = codecLabel(audio.codec)
 
-  if (isLossless) {
+  if (isLosslessCodec(audio.codec)) {
     // Lossless: codec + bit_depth/sample_rate
     if (audio.bit_depth && audio.sample_rate) {
       return `${codecUpper} ${audio.bit_depth}/${formatKhz(audio.sample_rate)}`
@@ -118,7 +131,7 @@ export function summarizeAlbumQuality(tracks: TrackProbe[]): string[] {
 
   for (const t of tracks) {
     if (!t.audio || !t.audio_quality) continue
-    if (LOSSLESS_CODECS.has(t.audio.codec.toLowerCase())) {
+    if (isLosslessCodec(t.audio.codec)) {
       losslessSet.add(t.audio_quality)
       continue
     }

@@ -32,6 +32,33 @@ export interface TmdbMovieDetails {
   runtime?: number | null
   overview?: string
   genres?: Array<{ id: number; name: string }>
+  /**
+   * Appended to the details request and trimmed by `slimMovieDetails`. No
+   * check reads these; they're kept so collection reviews need no extra
+   * TMDB requests. Absent on entries cached before 0.23.
+   */
+  credits?: TmdbCredits
+  keywords?: string[]
+}
+
+/** One cast member, top-billed first. */
+export interface TmdbCastMember {
+  id: number
+  name: string
+  character?: string
+}
+
+/** One crew credit — only directors and Writing-department credits are kept. */
+export interface TmdbCrewMember {
+  id: number
+  name: string
+  job: string
+}
+
+/** Trimmed cast and crew for a movie or show. */
+export interface TmdbCredits {
+  cast: TmdbCastMember[]
+  crew: TmdbCrewMember[]
 }
 
 /** One result from `/search/tv`. */
@@ -62,6 +89,9 @@ export interface TmdbShowDetails {
   number_of_episodes: number
   seasons: TmdbShowSeasonSummary[]
   genres?: Array<{ id: number; name: string }>
+  /** As on `TmdbMovieDetails`; built from TMDB's `aggregate_credits`. */
+  credits?: TmdbCredits
+  keywords?: string[]
 }
 
 /** One episode summary inside a season details response. */
@@ -84,16 +114,6 @@ export interface TmdbSeasonDetails {
 // Cache shapes
 // ─────────────────────────────────────────────
 
-/**
- * Lookup key shape for the search cache. Stored as a string in the cache
- * (`<type>|<title-lower>|<year>`) but tracked here for documentation.
- */
-export interface SearchKey {
-  type: 'movie' | 'show'
-  title: string
-  year: number
-}
-
 /** Result of a search resolved to (best) TMDB ID + alternate candidates. */
 export interface ResolvedSearch {
   /** Picked TMDB ID, or null when no acceptable match. */
@@ -101,10 +121,20 @@ export interface ResolvedSearch {
   /** How confident we were in the pick. */
   confidence: 'high' | 'medium' | 'low' | 'none'
   /**
-   * All candidate IDs returned (up to a small cap) so a user reviewing
-   * `needs_review` warnings can see what we considered.
+   * The top search results (up to five), so a low-confidence warning can name
+   * what else TMDB offered. Each carries its title and year from the search
+   * itself, which costs no extra request. A bare id is an entry cached before
+   * 0.23; its title comes from the details cache when it's there, and the
+   * entry is replaced the next time the verdict is re-checked.
    */
-  candidates: number[]
+  candidates: Array<SearchCandidate | number>
+}
+
+/** One search result kept for the alternatives list. */
+export interface SearchCandidate {
+  id: number
+  title: string
+  year: number | null
 }
 
 /**
@@ -185,14 +215,14 @@ export interface ShowValidation {
   year: number
   /**
    * Plex's TV Show Editions tag, or null when untagged. Carried so the row
-   * joins back to a specific show folder on disk — `fix:shows` keys on the
-   * folder name, and two editions share one title+year.
+   * joins back to a specific show folder on disk — two editions share one
+   * title+year.
    */
   edition: string | null
   /**
    * The show folder's `{tmdb-N}` tag, or null. Carried for the same reason as
-   * `edition` — it's part of the folder name `fix:shows` joins on. Absent in
-   * validation.json files written before the tag was supported.
+   * `edition` — it's part of the folder name. Absent in validation.json files
+   * written before the tag was supported.
    */
   tmdb_tag?: number | null
   /** The show folder's `{tvdb-N}` tag, or null — carried for the same join. */

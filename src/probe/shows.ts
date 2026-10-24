@@ -5,17 +5,27 @@
  * file (with cache), and writes the per-show/per-season aggregated result.
  *
  * Naming warnings are not re-emitted here — the scan pass handles those.
- * The probe pass only adds quality_mismatch warnings.
+ * The probe pass only adds quality_mismatch and large_file warnings, one row
+ * per season.
  */
 
 import fs from 'fs'
 import path from 'path'
 
+import { DirReader } from '../core/dir-reader'
 import { ShowsConfig, WarningCollector } from '../core/types'
-import { isPrimary } from '../core/files'
+import { isPrimary, toRel } from '../core/files'
 import { ShowsRules } from '../core/rules/shows'
 import { compilePattern, resolveCategories } from '../core/rules/helpers'
 
+import { listWithMore } from '../core/gaps'
+import {
+  makeShowKey,
+  parseFileStem,
+  parseSeasonFolder,
+  parseShowFolder,
+  seasonSortKey,
+} from '../media/shows'
 import { ProbeCache } from './cache'
 import {
   ProbeTask,
@@ -26,6 +36,7 @@ import {
   findOversizedFile,
   formatBitrateAndSize,
   formatBucketRange,
+  logProbeProgress,
   probeBatch,
 } from './helpers'
 import { ShowProbeOutput, ShowSeasonProbe, EpisodeProbe, ProbeData, ProbeResult } from './types'
@@ -47,44 +58,8 @@ interface EpisodeIdentity {
   episodeId: string // "S01E01" or "S01E01-E02"
 }
 
-function parseShowFolder(name: string, regex: RegExp): ShowIdentity | null {
-  const m = regex.exec(name)
-  if (!m?.groups) return null
-  const { title, year, edition } = m.groups
-  if (title === undefined || year === undefined) return null
-  // An empty `{edition-}` folds to null here, matching what the scan pass
-  // catalogues after it warns — the probe pass never warns about naming.
-  const trimmedEdition = edition?.trim()
-  return {
-    title: title.trim(),
-    year: parseInt(year, 10),
-    edition: trimmedEdition !== undefined && trimmedEdition.length > 0 ? trimmedEdition : null,
-  }
-}
-
-function parseSeasonFolder(name: string, regex: RegExp): number | null {
-  const m = regex.exec(name)
-  if (!m?.groups) return null
-  const season = m.groups.season
-  if (season === undefined) return null
-  return parseInt(season, 10)
-}
-
-interface FileParse {
-  season: number
-  firstEpisode: number
-  lastEpisode: number
-}
-
-function parseFileStem(stem: string, regex: RegExp): FileParse | null {
-  const m = regex.exec(stem)
-  if (!m?.groups) return null
-  const { season, episode, episode_end } = m.groups
-  if (season === undefined || episode === undefined) return null
-  const first = parseInt(episode, 10)
-  const last = episode_end !== undefined ? parseInt(episode_end, 10) : first
-  return { season: parseInt(season, 10), firstEpisode: first, lastEpisode: last }
-}
+/** Order episode codes by their numbers, so `S01E99` sorts before `S01E100`. */
+export const byEpisodeCode = new Intl.Collator('en', { numeric: true }).compare
 
 function formatEpisodeId(season: number, first: number, last: number): string {
   const s = String(season).padStart(2, '0')
@@ -94,36 +69,14 @@ function formatEpisodeId(season: number, first: number, last: number): string {
   return `S${s}E${e1}-E${e2}`
 }
 
-/**
- * Keyed on edition as well as title+year, matching the scan pass — otherwise
- * two editions of one series fold into a single probe entry and their seasons
- * merge, which would collapse the per-season quality-mismatch summary too.
- */
-function showKey(t: string, y: number, edition: string | null): string {
-  return `${t.toLowerCase()}|${y}|${(edition ?? '').toLowerCase()}`
-}
-
-function toRel(p: string): string {
-  return p.split(path.sep).join('/')
-}
-
-/**
- * Sort key for season labels — numeric first (in numeric order), then named
- * (alphabetical). Matches the scan-side ordering.
- */
-function seasonSortKey(label: string): [number, number, string] {
-  const n = parseInt(label, 10)
-  if (!isNaN(n)) return [0, n, '']
-  return [1, 0, label.toLowerCase()]
-}
-
 // ─────────────────────────────────────────────
 // Walk
 // ─────────────────────────────────────────────
 
 function collectTasks(
   config: ShowsConfig,
-  rules: ShowsRules
+  rules: ShowsRules,
+  dir: DirReader
 ): Array<{ task: ProbeTask; identity: EpisodeIdentity }> {
   const showFolderRegex = compilePattern(rules.patterns.show_folder)
   const seasonFolderRegex = compilePattern(rules.patterns.season_folder)
@@ -135,17 +88,30 @@ function collectTasks(
   for (const cat of resolveCategories(rules.categories)) {
     const folderPath = path.join(config.root_path, cat.folderName)
     // Missing folders are reported once, by the scan pass (core/scanner.ts).
-    if (!fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) continue
+    if (!dir.isDirectory(folderPath)) continue
 
-    for (const showEntry of fs.readdirSync(folderPath, { withFileTypes: true })) {
+    let topEntries: fs.Dirent[]
+    try {
+      topEntries = dir.readdir(folderPath)
+    } catch {
+      continue // the scan pass reports it as permission_denied
+    }
+
+    for (const showEntry of topEntries) {
       if (!showEntry.isDirectory()) continue
-      const show = parseShowFolder(showEntry.name, showFolderRegex)
-      if (!show) continue // Scan pass already warned
+      const parsedShow = parseShowFolder(showEntry.name, showFolderRegex)
+      if (!parsedShow) continue // Scan pass already warned
+      // An empty `{edition-}` is no edition, as the scan catalogues it.
+      const show: ShowIdentity = {
+        title: parsedShow.title,
+        year: parsedShow.year,
+        edition: parsedShow.edition || null,
+      }
 
       const showPath = path.join(folderPath, showEntry.name)
       let seasonEntries: fs.Dirent[]
       try {
-        seasonEntries = fs.readdirSync(showPath, { withFileTypes: true })
+        seasonEntries = dir.readdir(showPath)
       } catch {
         continue
       }
@@ -164,7 +130,7 @@ function collectTasks(
         const seasonPath = path.join(showPath, seasonEntry.name)
         let files: fs.Dirent[]
         try {
-          files = fs.readdirSync(seasonPath, { withFileTypes: true })
+          files = dir.readdir(seasonPath)
         } catch {
           continue
         }
@@ -216,7 +182,7 @@ function collectTasks(
 function aggregate(
   probed: ProbedFile[],
   identities: Map<string, EpisodeIdentity>,
-  qualityOrder: string[]
+  categoryOrder: string[]
 ): ShowProbeOutput[] {
   const shows = new Map<
     string,
@@ -232,7 +198,7 @@ function aggregate(
     const id = identities.get(task.relativePath)
     if (!id) continue
 
-    const key = showKey(id.show.title, id.show.year, id.show.edition)
+    const key = makeShowKey(id.show.title, id.show.year, id.show.edition)
     let show = shows.get(key)
     if (!show) {
       show = {
@@ -249,7 +215,7 @@ function aggregate(
       show.seasons.set(id.seasonLabel, seasonEps)
     }
     seasonEps.push({
-      quality: task.category,
+      category: task.category,
       path: task.relativePath,
       episode: id.episodeId,
       size_bytes: data.size_bytes,
@@ -261,8 +227,8 @@ function aggregate(
     })
   }
 
-  const qIndex = (q: string) => {
-    const i = qualityOrder.indexOf(q)
+  const categoryIndex = (c: string) => {
+    const i = categoryOrder.indexOf(c)
     return i === -1 ? Number.MAX_SAFE_INTEGER : i
   }
 
@@ -285,9 +251,9 @@ function aggregate(
         .map(([season, episodes]) => ({
           season,
           episodes: episodes.sort((a, b) => {
-            // Sort by episode id, then quality
-            if (a.episode !== b.episode) return a.episode.localeCompare(b.episode)
-            return qIndex(a.quality) - qIndex(b.quality)
+            // Sort by episode id (numerically, so S01E99 precedes S01E100), then category
+            if (a.episode !== b.episode) return byEpisodeCode(a.episode, b.episode)
+            return categoryIndex(a.category) - categoryIndex(b.category)
           }),
         }))
       return { title: show.title, year: show.year, edition: show.edition, seasons }
@@ -360,21 +326,17 @@ function reportQualityMismatches(
     const byDims = new Map<string, number>()
     for (const miss of tally.misses) byDims.set(miss.dims, (byDims.get(miss.dims) ?? 0) + 1)
     const dims = [...byDims.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    const dimsText = dims
-      .slice(0, QUALITY_SAMPLE_LIMIT)
-      .map(([d, n]) => {
+    const dimsText = listWithMore(
+      dims.map(([d, n]) => {
         const [w, h] = d.split('x').map(Number)
         const fitsQuality = deriveQuality(w!, h!, rules.quality_thresholds)
         return `${d}${fitsQuality ? ` (fits ${fitsQuality})` : ''} ×${n}`
-      })
-      .join(', ')
-    const moreDims =
-      dims.length > QUALITY_SAMPLE_LIMIT ? `, +${dims.length - QUALITY_SAMPLE_LIMIT} more` : ''
+      }),
+      QUALITY_SAMPLE_LIMIT
+    )
 
-    const codes = tally.misses.map(m => m.episodeId).sort()
-    const codesText =
-      codes.slice(0, QUALITY_SAMPLE_LIMIT).join(', ') +
-      (codes.length > QUALITY_SAMPLE_LIMIT ? `, +${codes.length - QUALITY_SAMPLE_LIMIT} more` : '')
+    const codes = tally.misses.map(m => m.episodeId).sort(byEpisodeCode)
+    const codesText = listWithMore(codes, QUALITY_SAMPLE_LIMIT)
 
     // Name the category only when it isn't simply the bucket (`Other HD` → HD).
     const from = tally.category === bucket.name ? '' : ` for '${tally.category}'`
@@ -382,7 +344,7 @@ function reportQualityMismatches(
     warnings.add(
       'warn_quality_mismatch',
       seasonFolder,
-      `${tally.misses.length}/${tally.total} episodes are ${dimsText}${moreDims}, not ` +
+      `${tally.misses.length}/${tally.total} episodes are ${dimsText}, not ` +
         `${bucket.name} (${formatBucketRange(bucket)})${from}. ${codesText}.`,
       {
         fix:
@@ -435,22 +397,17 @@ function reportLargeFiles(
   for (const [seasonFolder, tally] of seasons) {
     if (tally.over.length === 0) continue
     const largest = [...tally.over].sort((a, b) => b.mbps - a.mbps)
-    const shown = largest
-      .slice(0, QUALITY_SAMPLE_LIMIT)
-      .map(o => `${o.episodeId} ${formatBitrateAndSize(o.mbps, o.size)}`)
-      .join(', ')
-    const more =
-      largest.length > QUALITY_SAMPLE_LIMIT
-        ? `, +${largest.length - QUALITY_SAMPLE_LIMIT} more`
-        : ''
+    const shown = listWithMore(
+      largest.map(o => `${o.episodeId} ${formatBitrateAndSize(o.mbps, o.size)}`),
+      QUALITY_SAMPLE_LIMIT
+    )
     // A season is almost always one quality; name each limit when it isn't.
     const limits = [...new Set(tally.over.map(o => `${o.quality} limit of ${o.limit} Mbps`))]
 
     warnings.add(
       'warn_large_file',
       seasonFolder,
-      `${tally.over.length}/${tally.total} episodes over the ${limits.join(' / ')}: ` +
-        `${shown}${more}.`,
+      `${tally.over.length}/${tally.total} episodes over the ${limits.join(' / ')}: ` + `${shown}.`,
       {
         fix:
           `Re-encode, or replace the season with a smaller copy. Raise max_mbps in ` +
@@ -464,13 +421,20 @@ function reportLargeFiles(
 // Entry point
 // ─────────────────────────────────────────────
 
+/**
+ * Run the shows probe pass end-to-end: walk the library, probe each episode
+ * (cache-aware), aggregate per show and season, and emit the per-season
+ * quality_mismatch and large_file summaries. Cache writes are the caller's
+ * responsibility.
+ */
 export async function probeShows(
   config: ShowsConfig,
   rules: ShowsRules,
   cache: ProbeCache,
-  warnings: WarningCollector
+  warnings: WarningCollector,
+  dir: DirReader = new DirReader()
 ): Promise<ProbeResult<ShowProbeOutput[]>> {
-  const collected = collectTasks(config, rules)
+  const collected = collectTasks(config, rules, dir)
   console.log(`    [PROBE] ${collected.length} primary files to probe`)
 
   const identities = new Map<string, EpisodeIdentity>()
@@ -480,11 +444,7 @@ export async function probeShows(
   const probed = await probeBatch(
     tasks,
     cache,
-    (done, total, cached) => {
-      if (done === total || done % 100 === 0) {
-        console.log(`    [PROBE] ${done}/${total} (${cached} cached)`)
-      }
-    },
+    logProbeProgress,
     undefined,
     warnings,
     config.probe_concurrency
@@ -497,9 +457,9 @@ export async function probeShows(
     reportLargeFiles(probed, identities, rules, warnings)
   }
 
-  const qualityOrder = resolveCategories(rules.categories).map(c => c.name)
+  const categoryOrder = resolveCategories(rules.categories).map(c => c.name)
   const byPath = new Map<string, ProbeData>()
   for (const { task, data } of probed) byPath.set(task.relativePath, data)
 
-  return { output: aggregate(probed, identities, qualityOrder), byPath }
+  return { output: aggregate(probed, identities, categoryOrder), byPath }
 }

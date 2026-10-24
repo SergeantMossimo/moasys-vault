@@ -183,4 +183,39 @@ describe('probeAudiobooks', () => {
     await probeAudiobooks({ root_path: root }, rules, cache, warnings)
     expect(warnings.all().map(w => w.type)).toEqual(['warn_missing_book_tags'])
   })
+
+  it('accepts an artist tag that matches an ampersand-joined author folder', async () => {
+    const folder = 'Douglas Preston & Lincoln Child'
+    const { rules, root, cache, warnings } = setup({
+      spec: { Audible: { [folder]: { Relic: { '01 - Chapter.mp3': '' } } } },
+      probes: {
+        [`Audible/${folder}/Relic/01 - Chapter.mp3`]: fakeProbe({ tags: tags('Relic', folder) }),
+      },
+    })
+
+    await probeAudiobooks({ root_path: root }, rules, cache, warnings)
+    expect(warnings.all()).toEqual([])
+  })
+
+  it('keeps same-titled books by different authors apart', async () => {
+    const { rules, root, cache, warnings } = setup({
+      spec: {
+        Audible: {
+          'Author A': { Stories: { '01 - One.mp3': '' } },
+          'Author B': { Stories: { '01 - One.mp3': '' } },
+        },
+      },
+      probes: {
+        'Audible/Author A/Stories/01 - One.mp3': fakeProbe({ tags: tags('Stories', 'Author A') }),
+        'Audible/Author B/Stories/01 - One.mp3': fakeProbe({ tags: tags('Stories', 'Author B') }),
+      },
+    })
+
+    const result = await probeAudiobooks({ root_path: root }, rules, cache, warnings)
+    expect(result.output.map(b => [b.authors, b.chapters.length])).toEqual([
+      [['Author A'], 1],
+      [['Author B'], 1],
+    ])
+    expect(warnings.all()).toEqual([])
+  })
 })

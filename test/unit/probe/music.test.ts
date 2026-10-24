@@ -3,7 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
-import { probeMusic } from '../../../src/probe/music'
+import { describeQualityMix, probeMusic } from '../../../src/probe/music'
 import { defaultMusicRules, type MusicRules } from '../../../src/core/rules/music'
 import { ProbeCache } from '../../../src/probe/cache'
 import { WarningCollector } from '../../../src/core/types'
@@ -609,9 +609,10 @@ describe('probeMusic', () => {
     })
 
     await probeMusic({ root_path: root }, rules, cache, warnings)
-    expect(warnings.all().some(w => w.issue.match(/missing title, album or artist tags/i))).toBe(
-      true
-    )
+    // The row sits on the album, so it names the file alone, not its full path.
+    const row = warnings.all().find(w => w.type === 'warn_missing_tags')
+    expect(row?.path).toBe('Music/Pink Floyd/The Wall')
+    expect(row?.issue).toBe("1 tracks missing title, album or artist tags: '01 - One.flac'.")
   })
 
   it('emits warn_track_number_mismatch when filename track number differs from tag', async () => {
@@ -632,9 +633,10 @@ describe('probeMusic', () => {
     })
 
     await probeMusic({ root_path: root }, rules, cache, warnings)
-    expect(
-      warnings.all().some(w => w.issue.match(/number differs between filename and tag/i))
-    ).toBe(true)
+    const row = warnings.all().find(w => w.type === 'warn_track_number_mismatch')
+    expect(row?.issue).toBe(
+      "1 tracks whose number differs between filename and tag: '01 - One.flac' (filename=1, tag=5)."
+    )
   })
 
   it('skips tag-driven checks when no tracks have tags', async () => {
@@ -693,5 +695,24 @@ describe('probeMusic', () => {
 
     await probeMusic({ root_path: root }, rules, cache, warnings)
     expect(warnings.all()).toEqual([])
+  })
+})
+
+describe('describeQualityMix', () => {
+  it('lists a short mix as it is', () => {
+    expect(describeQualityMix(['AAC ~336', 'FLAC 16/44.1'])).toBe('AAC ~336, FLAC 16/44.1')
+    expect(describeQualityMix(['MP3 128', 'MP3 192', 'MP3 256', 'MP3 320'])).toBe(
+      'MP3 128, MP3 192, MP3 256, MP3 320'
+    )
+  })
+
+  it('folds a long spread of one codec into a range', () => {
+    const rates = [196, 199, 202, 205, 209, 280].map(r => `MP3 ${r}`)
+    expect(describeQualityMix(rates)).toBe('MP3 196–280 (6 bitrates)')
+  })
+
+  it('keeps lossless entries and other codecs beside the range', () => {
+    const mix = ['FLAC 16/44.1', ...[100, 110, 120, 130, 140].map(r => `MP3 ${r}`), 'AAC 256']
+    expect(describeQualityMix(mix)).toBe('FLAC 16/44.1, MP3 100–140 (5 bitrates), AAC 256')
   })
 })

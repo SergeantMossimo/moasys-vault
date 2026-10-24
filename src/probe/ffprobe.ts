@@ -61,42 +61,81 @@ interface RawProbe {
 // ─────────────────────────────────────────────
 
 /**
+ * How long one ffprobe may run. It reads only headers, so even a large remux
+ * on a network share answers in seconds; anything this slow is a stalled
+ * share or a pathological file, and waiting on it would hang the whole run.
+ */
+const FFPROBE_TIMEOUT_MS = 120_000
+
+/**
+ * Run a command and collect its stdout, rejecting on a non-zero exit, a spawn
+ * failure, or when it outlives `timeoutMs` (it's killed). Output is decoded
+ * as UTF-8 across chunk boundaries, so a multi-byte character in a tag or
+ * file name split between two reads arrives intact.
+ */
+export function runProcess(command: string, args: string[], timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    // FFREPORT would make ffprobe write a log file; the app writes nothing it
+    // doesn't own, so it's cleared from the child's environment.
+    const env = { ...process.env }
+    delete env.FFREPORT
+    const child = spawn(command, args, { windowsHide: true, env })
+
+    let stdout = ''
+    let stderr = ''
+    let timedOut = false
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => (stdout += chunk))
+    child.stderr.on('data', (chunk: string) => (stderr += chunk))
+
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill()
+    }, timeoutMs)
+
+    child.on('error', err => {
+      clearTimeout(timer)
+      reject(err)
+    })
+
+    child.on('close', code => {
+      clearTimeout(timer)
+      if (timedOut) reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)}s`))
+      else if (code !== 0) reject(new Error(`exited ${code}: ${stderr.trim()}`))
+      else resolve(stdout)
+    })
+  })
+}
+
+/**
  * Run ffprobe against a single file and return the parsed JSON.
- * Rejects if ffprobe exits non-zero, can't be found, or emits malformed JSON.
+ * Rejects if ffprobe exits non-zero, can't be found, times out, or emits
+ * malformed JSON.
  *
  * `-v quiet` silences the human-readable log lines so stdout is pure JSON.
  * `-show_streams -show_format` requests both the per-stream and format-level
  * info we care about. We deliberately avoid -show_chapters / -show_packets —
  * those balloon output and we don't use them.
  */
-function runFFprobe(filePath: string): Promise<RawProbe> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
+async function runFFprobe(filePath: string): Promise<RawProbe> {
+  let stdout: string
+  try {
+    stdout = await runProcess(
       ffprobeStatic.path,
       ['-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_format', filePath],
-      { windowsHide: true }
+      FFPROBE_TIMEOUT_MS
     )
-
-    let stdout = ''
-    let stderr = ''
-
-    child.stdout.on('data', chunk => (stdout += chunk.toString()))
-    child.stderr.on('data', chunk => (stderr += chunk.toString()))
-
-    child.on('error', err => reject(err))
-
-    child.on('close', code => {
-      if (code !== 0) {
-        reject(new Error(`ffprobe exited ${code} for ${filePath}: ${stderr.trim()}`))
-        return
-      }
-      try {
-        resolve(JSON.parse(stdout) as RawProbe)
-      } catch (err) {
-        reject(new Error(`ffprobe returned non-JSON for ${filePath}: ${(err as Error).message}`))
-      }
+  } catch (err) {
+    throw new Error(`ffprobe ${(err as Error).message} for ${filePath}`, { cause: err })
+  }
+  try {
+    return JSON.parse(stdout) as RawProbe
+  } catch (err) {
+    throw new Error(`ffprobe returned non-JSON for ${filePath}: ${(err as Error).message}`, {
+      cause: err,
     })
-  })
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -185,8 +224,8 @@ export async function probeFile(filePath: string): Promise<ProbeData> {
     bitrate: intOrNull(fmt.bit_rate),
     video: summarizeVideo(streams),
     audio: summarizeAudio(streams),
-    // Tags are populated separately by the music probe (which calls
-    // src/probe/id3.ts). For other media types they stay null.
+    // Tags are read separately by the music and audiobook probes (see
+    // src/probe/id3.ts). For movies and shows they stay null.
     tags: null,
   }
 }

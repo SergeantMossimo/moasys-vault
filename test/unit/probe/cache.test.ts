@@ -265,5 +265,48 @@ describe('ProbeCache', () => {
       expect(cache.pruneOrphans(tmpDir)).toBe(0)
       expect(cache.size()).toBe(0)
     })
+
+    it("drops a file's superseded entry once its new mtime/size was read this run", () => {
+      const root = path.join(tmpDir, 'media')
+      fs.mkdirSync(root, { recursive: true })
+      fs.writeFileSync(path.join(root, 'track.flac'), '')
+      const cachePath = path.join(tmpDir, 'cache.json')
+
+      const before = new ProbeCache(cachePath)
+      before.set('track.flac', 1, 100, sampleData())
+      before.save()
+
+      // Next run: the file was re-tagged, so it has a new mtime and size.
+      const cache = new ProbeCache(cachePath)
+      cache.set('track.flac', 2, 120, sampleData())
+      expect(cache.size()).toBe(2)
+
+      expect(cache.pruneOrphans(root, [], new Set(['track.flac']))).toBe(1)
+      expect(cache.get('track.flac', 2, 120)).not.toBeNull()
+      expect(cache.get('track.flac', 1, 100)).toBeNull()
+    })
+  })
+
+  describe('case-only renames', () => {
+    it('finds the entry under the new spelling and moves it there', () => {
+      const cachePath = path.join(tmpDir, 'cache.json')
+      const before = new ProbeCache(cachePath)
+      before.set('Show/Show - S01E01.mkv', 5, 50, sampleData({ size_bytes: 50 }))
+      before.save()
+
+      const cache = new ProbeCache(cachePath)
+      expect(cache.get('Show/Show - s01e01.mkv', 5, 50)?.size_bytes).toBe(50)
+      expect(cache.size()).toBe(1)
+
+      cache.save()
+      const saved = JSON.parse(fs.readFileSync(cachePath, 'utf-8')).entries
+      expect(saved.map((e: { path: string }) => e.path)).toEqual(['Show/Show - s01e01.mkv'])
+    })
+
+    it('still misses when the content changed as well as the case', () => {
+      const cache = new ProbeCache(path.join(tmpDir, 'cache.json'))
+      cache.set('A.mkv', 5, 50, sampleData())
+      expect(cache.get('a.mkv', 6, 50)).toBeNull()
+    })
   })
 })

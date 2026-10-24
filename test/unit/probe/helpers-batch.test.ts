@@ -54,7 +54,8 @@ describe('probeOrCache', () => {
     cache.set(task.relativePath, task.mtime, task.size, sampleData({ size_bytes: 999 }))
 
     const result = await probeOrCache(task, cache)
-    expect(result.size_bytes).toBe(999) // came from cache
+    expect(result.data.size_bytes).toBe(999) // came from cache
+    expect(result.cached).toBe(true)
   })
 
   it('calls ffprobe and writes to cache when no hit', async () => {
@@ -83,7 +84,8 @@ describe('probeOrCache', () => {
     const readTags = vi.fn(async () => tags)
 
     const result = await probeOrCache(task, cache, readTags)
-    expect(result.tags).toEqual(tags)
+    expect(result.data.tags).toEqual(tags)
+    expect(result.cached).toBe(false)
     expect(readTags).toHaveBeenCalledWith(task.absolutePath)
   })
 

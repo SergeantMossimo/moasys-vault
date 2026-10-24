@@ -111,7 +111,7 @@ function readYamlIfExists(filePath: string): unknown {
 // Loader
 // ─────────────────────────────────────────────
 
-export interface LoadRulesOptions<T> {
+interface LoadRulesOptions<T> {
   /** Logical name used in error messages and the YAML filename, e.g. "movies" */
   mediaType: string
   /** Zod schema for the rules — also the source of the inferred TypeScript type */
@@ -138,13 +138,11 @@ export function loadRules<T>(opts: LoadRulesOptions<T>): T {
   const localPath = path.join(projectRoot, 'rules', `${mediaType}.local.yaml`)
 
   let merged: unknown = defaults
-  let baseOverrideCount = 0
   let localOverrideCount = 0
 
   // ── Tier 2: committed YAML (mirrors code defaults by default) ──────────
   const baseRules = readYamlIfExists(basePath)
   if (isPlainObject(baseRules) && Object.keys(baseRules).length > 0) {
-    baseOverrideCount = Object.keys(baseRules).length
     merged = deepMerge(merged, baseRules)
   }
 
@@ -168,11 +166,6 @@ export function loadRules<T>(opts: LoadRulesOptions<T>): T {
       `    [RULES] Loaded rules/${mediaType}.yaml + ${localOverrideCount} override(s) from rules/${mediaType}.local.yaml`
     )
   }
-  // Reference baseOverrideCount so TS doesn't complain about unused vars in
-  // the future if we add finer-grained logging. It's a real signal already
-  // surfaced in the messages above.
-  void baseOverrideCount
-
   // Resolve sentinels BEFORE validation so the schema sees their resolved form
   merged = resolveSentinels(merged)
 

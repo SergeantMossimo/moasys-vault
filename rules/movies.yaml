@@ -146,6 +146,7 @@ checks:
   warn_short_duration: false      # Runtime at or below min_duration_minutes
   warn_large_file: true           # Bitrate over its quality's max_mbps
   warn_loose_files: true          # Video files at unexpected nesting
+  warn_unlisted_folder: true      # Folder under root_path that isn't a listed category
   warn_extra_subfolders: true     # Unexpected subfolders inside a movie folder
   warn_unexpected_entries: true   # Non-video, non-sidecar files
   warn_tmdb_no_match: true        # TMDB found no plausible match

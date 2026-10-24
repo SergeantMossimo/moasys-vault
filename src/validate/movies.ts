@@ -16,176 +16,29 @@
 
 import { MovieOutput, WarningCollector } from '../core/types'
 import { MoviesRules } from '../core/rules/movies'
+import { categoryPath } from '../core/rules/helpers'
 
 import { JsonCache, searchKey } from './cache'
 import {
+  cachedFetch,
+  alternativesOf,
   categoriesOf,
-  normalizeTitle,
-  normalizeTitleLoose,
+  guessText,
+  hasCredits,
   parseYear,
+  pickBestMatch,
+  resolveSearch,
   stripFilenameIllegalChars,
 } from './helpers'
 import { TmdbClient } from './tmdb'
-import { MovieValidation, ResolvedSearch, TmdbMovieDetails, TmdbMovieSearchResult } from './types'
-
-// ─────────────────────────────────────────────
-// Match scoring
-// ─────────────────────────────────────────────
-
-/**
- * Score the best TMDB candidate against the local title + year and assign
- * a confidence bucket.
- *
- * ── Scoring components ─────────────────────────
- * Title match (one of, in priority order):
- *   100  exact match on either `title` or `original_title` after strict
- *        normalization (see `normalizeTitle`)
- *    90  exact match under the LOOSE normalization (see `normalizeTitleLoose`) —
- *        bridges the ways a filename-illegal character gets rendered in a folder
- *        name: "Ghostbusters - Afterlife" vs TMDB's "Ghostbusters: Afterlife",
- *        "Pain And Gain" vs "Pain & Gain", "Good Morning Vietnam" vs
- *        "Good Morning, Vietnam". Weighted so a loose hit always outranks a
- *        prefix hit (60 + 50 = 110) but never beats a strict one.
- *    60  one side is a prefix of the other followed by a space (handles missing
- *        subtitles like "Star Wars" vs "Star Wars: A New Hope")
- *    30  substring containment in either direction (last-resort fuzzy)
- *
- * Year match:
- *    50  exact
- *    30  off by 1 (US vs international release dates often differ by a year)
- *    15  off by 2
- *   -20  off by more (strong penalty — wrong year usually means wrong film)
- *
- * ── Confidence thresholds ──────────────────────
- *   high   ≥ 150  → only achievable as 100 (title exact) + 50 (year exact).
- *                   Locks in cases where both fields agree.
- *   medium ≥ 110  → 100 + 30 (title exact, year off by 1),
- *                   90 + 50 (loose title match, year exact — matched, but not
- *                   byte-identical) or 60 + 50 (prefix match, year exact).
- *   low    ≥ 60   → anything else with at least a partial title match.
- *   none   < 60   → no plausible candidate; we drop the ID entirely so the
- *                   warning isn't misleading.
- *
- * The popularity sort below means: when two candidates tie on score (very
- * common with generic titles like "Heat" or "It"), we pick the more famous
- * one — which is almost always what the user has.
- *
- * One override: an exact-year winner loses to a same-title candidate one year
- * off that has at least FAMOUS_MIN_VOTES votes and FAMOUS_VOTE_RATIO times the
- * winner's. That candidate keeps its own (medium) score.
- */
-const FAMOUS_MIN_VOTES = 1000
-const FAMOUS_VOTE_RATIO = 100
-
-function pickBestMovieMatch(
-  localTitle: string,
-  localYear: number,
-  candidates: TmdbMovieSearchResult[]
-): ResolvedSearch {
-  if (candidates.length === 0) {
-    return { best_id: null, confidence: 'none', candidates: [] }
-  }
-
-  const ourTitle = normalizeTitle(localTitle)
-  const ourLooseTitle = normalizeTitleLoose(localTitle)
-  let bestScore = 0
-  let bestId: number | null = null
-  const candidateIds: number[] = []
-
-  // Sort by popularity descending so that score ties resolve to the better-
-  // known film. TMDB's `popularity` is updated nightly from view counts +
-  // search frequency, so it's a decent proxy for "the one most users mean".
-  const sorted = [...candidates].sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))
-
-  // Keep only the top 5 candidate IDs for the output's `alternatives` list —
-  // anything beyond the top 5 is rarely worth showing the user.
-  for (const c of sorted.slice(0, 5)) candidateIds.push(c.id)
-
-  const scored: { c: TmdbMovieSearchResult; titleScore: number; yearDelta: number }[] = []
-  let best: (typeof scored)[number] | null = null
-
-  for (const c of sorted) {
-    const theirTitle = normalizeTitle(c.title)
-    const theirOrigTitle = normalizeTitle(c.original_title)
-    const theirYear = parseYear(c.release_date)
-    const yearDelta = theirYear === null ? 99 : Math.abs(theirYear - localYear)
-
-    let score = 0
-
-    // Title match — try both `title` (localized) and `original_title` (native).
-    // Foreign films often hit on `original_title` when the user kept the
-    // native name (e.g. "Amélie" vs the English-localized version).
-    if (theirTitle === ourTitle || theirOrigTitle === ourTitle) {
-      score += 100
-    } else if (
-      normalizeTitleLoose(c.title) === ourLooseTitle ||
-      normalizeTitleLoose(c.original_title) === ourLooseTitle
-    ) {
-      score += 90
-    } else if (theirTitle.startsWith(ourTitle + ' ') || ourTitle.startsWith(theirTitle + ' ')) {
-      score += 60
-    } else if (theirTitle.includes(ourTitle) || ourTitle.includes(theirTitle)) {
-      score += 30
-    }
-    const titleScore = score
-
-    // Year match. The off-by-1 case is by far the most common after exact —
-    // TMDB uses the original-release year, which often differs from the wide-
-    // release year a user gets their copy from. Casablanca (1942 premiere /
-    // 1943 wide), 300 (2006 premiere / 2007 wide), etc.
-    if (yearDelta === 0) score += 50
-    else if (yearDelta === 1) score += 30
-    else if (yearDelta === 2) score += 15
-    else score -= 20
-
-    const entry = { c, titleScore, yearDelta }
-    scored.push(entry)
-    if (score > bestScore) {
-      bestScore = score
-      bestId = c.id
-      best = entry
-    }
-  }
-
-  // A famous film one year off beats an obscure namesake on the exact year.
-  // "Enemy (2013)" is Villeneuve's (TMDB dates it 2014, ~6,600 votes), not the
-  // Tamil "Enemy" (2013, 8 votes) the exact year would pick. Only an
-  // overwhelming vote gap overrides the year, and the result drops to the
-  // score it earned on its own (medium), so it's never reported as certain.
-  if (best && best.yearDelta === 0) {
-    const bestVotes = best.c.vote_count ?? 0
-    const famous = scored.find(
-      s =>
-        s.yearDelta === 1 &&
-        s.titleScore === best.titleScore &&
-        (s.c.vote_count ?? 0) >= FAMOUS_MIN_VOTES &&
-        (s.c.vote_count ?? 0) >= bestVotes * FAMOUS_VOTE_RATIO
-    )
-    if (famous) {
-      bestId = famous.c.id
-      bestScore = famous.titleScore + 30
-    }
-  }
-
-  let confidence: ResolvedSearch['confidence']
-  if (bestScore >= 150) confidence = 'high'
-  else if (bestScore >= 110) confidence = 'medium'
-  else if (bestScore >= 60) confidence = 'low'
-  else confidence = 'none'
-
-  // Drop the ID for `none` so consumers don't accidentally treat a low-score
-  // best guess as a real match. The candidate list is still preserved for
-  // the alternatives section of the warning.
-  if (confidence === 'none') bestId = null
-  return { best_id: bestId, confidence, candidates: candidateIds }
-}
+import { MovieValidation, ResolvedSearch, TmdbMovieDetails } from './types'
 
 // ─────────────────────────────────────────────
 // Local runtime comparison
 // ─────────────────────────────────────────────
 
 /** One probed file's measured runtime, keyed into `MovieDurations` by movie. */
-export interface MovieFileDuration {
+interface MovieFileDuration {
   /** Library-relative path, used as the warning path. */
   path: string
   duration_seconds: number
@@ -202,6 +55,18 @@ export function movieDurationKey(title: string, year: number, edition: string | 
   return `${title.toLowerCase()}|${year}|${(edition ?? '').toLowerCase()}`
 }
 
+/**
+ * The folder label for a catalog written before `movies.json` carried
+ * `folder`: the title, year and tags, which is right unless an edition sits as
+ * a file in a shared folder. A re-scan replaces it with the real name.
+ */
+function legacyFolderLabel(movie: MovieOutput): string {
+  let label = `${movie.title} (${movie.year})`
+  if (movie.edition) label += ` {edition-${movie.edition}}`
+  if (movie.tmdb_id !== null) label += ` {tmdb-${movie.tmdb_id}}`
+  return label
+}
+
 /** Format a minute count for warning text — `5m`, `1h 47m`. */
 function formatMinutes(minutes: number): string {
   const total = Math.round(minutes)
@@ -214,6 +79,12 @@ function formatMinutes(minutes: number): string {
 // Validation entry point
 // ─────────────────────────────────────────────
 
+/**
+ * Validate every movie in a scan catalog against TMDB — see the file header
+ * for the steps. Returns one entry per movie for data/validation.json; a
+ * movie TMDB couldn't be asked about this run (and has no earlier answer) is
+ * left out. Throws `TmdbAbortError` when the run can't go on.
+ */
 export async function validateMovies(
   movies: MovieOutput[],
   rules: MoviesRules,
@@ -234,38 +105,29 @@ export async function validateMovies(
 
   for (let i = 0; i < movies.length; i++) {
     const movie = movies[i]!
-    const sKey = searchKey('movie', movie.title, movie.year)
-
-    // A cached verdict that produced a warning is never final. TMDB's search
-    // index changes over time — "Face/Off" simply wasn't returned for the query
-    // "FaceOff" when this library was first validated, and stayed a permanent
-    // false no-match because nothing ever re-asked. Confident matches stay
-    // cached, so warm runs are still fast; only the warning set is re-queried.
-    //
-    // A `{tmdb-N}` tag on the folder or file settles the match outright — it is
-    // how a user disambiguates a title the search keeps getting wrong — so it
-    // skips the search and its cache entirely.
-    const cached = searchCache.get(sKey)
-    let resolved: ResolvedSearch | undefined =
-      movie.tmdb_id !== null
-        ? { best_id: movie.tmdb_id, confidence: 'high', candidates: [] }
-        : cached && cached.confidence !== 'none' && cached.confidence !== 'low'
-          ? cached
-          : undefined
-    if (resolved) {
-      cachedCount++
-    } else {
-      try {
-        const candidates = await client.searchMovie(movie.title, movie.year)
-        resolved = pickBestMovieMatch(movie.title, movie.year, candidates)
-        searchCache.set(sKey, resolved)
-      } catch (err) {
-        console.error(
-          `    [TMDB] Search failed for ${movie.title} (${movie.year}): ${(err as Error).message}`
-        )
-        resolved = { best_id: null, confidence: 'none', candidates: [] }
-      }
+    const lookup = await resolveSearch(
+      searchKey('movie', movie.title, movie.year),
+      movie.tmdb_id,
+      searchCache,
+      async () =>
+        pickBestMatch(
+          movie.title,
+          movie.year,
+          (await client.searchMovie(movie.title, movie.year)).map(c => ({
+            ...c,
+            date: c.release_date,
+          })),
+          { preferFamous: true }
+        ),
+      `${movie.title} (${movie.year})`
+    )
+    // TMDB couldn't be asked and there's no earlier answer — leave it for next run.
+    if (lookup === null) {
+      onProgress?.(i + 1, movies.length, cachedCount)
+      continue
     }
+    const { resolved } = lookup
+    if (lookup.cached) cachedCount++
 
     const entry: MovieValidation = {
       title: movie.title,
@@ -282,17 +144,14 @@ export async function validateMovies(
     // Pull canonical details for the best match
     let tmdbRuntime: number | null = null
     if (resolved.best_id !== null) {
-      let details = detailsCache.get(String(resolved.best_id))
-      if (!details) {
-        try {
-          details = await client.getMovie(resolved.best_id)
-          detailsCache.set(String(resolved.best_id), details)
-        } catch (err) {
-          console.error(
-            `    [TMDB] Details failed for id=${resolved.best_id}: ${(err as Error).message}`
-          )
-        }
-      }
+      const id = resolved.best_id
+      const details = await cachedFetch(
+        detailsCache,
+        String(id),
+        () => client.getMovie(id),
+        `Details for id=${id}`,
+        hasCredits
+      )
       if (details) {
         entry.tmdb_title = details.title
         entry.tmdb_title_filename_safe = stripFilenameIllegalChars(details.title)
@@ -303,29 +162,25 @@ export async function validateMovies(
       }
     }
 
-    // Pull alternates (other candidates) for review
-    for (const altId of resolved.candidates) {
-      if (altId === resolved.best_id) continue
-      const altDetails = detailsCache.get(String(altId))
-      if (altDetails) {
-        entry.alternatives.push({
-          id: altId,
-          title: altDetails.title,
-          year: parseYear(altDetails.release_date),
-        })
-      }
-    }
+    // Other candidates the search turned up, for review
+    entry.alternatives = alternativesOf(resolved, id => {
+      const d = detailsCache.get(String(id))
+      return d ? { id, title: d.title, year: parseYear(d.release_date) } : null
+    })
 
     // Emit warnings according to confidence. Path is prefixed with the
     // movie's first category so flat-library and quality-organized users
-    // both get a clickable, copy-pasteable folder path. "default" is the
-    // sentinel for an empty `categories` config — skip the prefix there.
-    const movieLabel = movie.edition
-      ? `${movie.title} (${movie.year}) {edition-${movie.edition}}`
-      : `${movie.title} (${movie.year})`
-    const firstCategory = movie.versions[0]?.category
-    const moviePath =
-      firstCategory && firstCategory !== 'default' ? `${firstCategory}/${movieLabel}` : movieLabel
+    // both get a clickable, copy-pasteable folder path. The label is the
+    // folder as it sits on disk, so these rows group with the scan's and an
+    // ignore entry naming the folder reaches them.
+    const movieLabel = movie.folder ?? legacyFolderLabel(movie)
+    const moviePath = categoryPath(movie.versions[0]?.category, movieLabel)
+    // Editions kept as files in one shared folder all land on that folder, so
+    // each row says which edition it's about.
+    const lead =
+      movie.edition !== null && !movieLabel.includes(`{edition-${movie.edition}}`)
+        ? `Edition '${movie.edition}': `
+        : ''
 
     // The displayed path names only the first category, but a movie can sit in
     // several. Give the ignore matcher all of them so a `folders:` entry isn't
@@ -336,7 +191,7 @@ export async function validateMovies(
       warnings.add(
         'warn_tmdb_no_match',
         moviePath,
-        `TMDB has nothing matching '${movie.title}' (${movie.year}).`,
+        `${lead}TMDB has nothing matching '${movie.title}' (${movie.year}).`,
         {
           fix:
             `Usually a typo in the title or year, or a missing diacritic. Check the folder ` +
@@ -352,7 +207,7 @@ export async function validateMovies(
       warnings.add(
         'warn_tmdb_low_confidence',
         moviePath,
-        `Best TMDB guess is '${entry.tmdb_title}' (${entry.tmdb_year}), below the confidence ` +
+        `${lead}${guessText(entry.tmdb_title, entry.tmdb_year, entry.tmdb_id)}, below the confidence ` +
           `threshold.${altText}`,
         {
           fix: `Check the match on themoviedb.org and correct the folder name if it is wrong.`,
@@ -367,7 +222,7 @@ export async function validateMovies(
       warnings.add(
         'warn_tmdb_year_mismatch',
         moviePath,
-        `Folder says ${movie.year}, TMDB says '${entry.tmdb_title}' is ${entry.tmdb_year}.`,
+        `${lead}Folder says ${movie.year}, TMDB says '${entry.tmdb_title}' is ${entry.tmdb_year}.`,
         {
           fix:
             `Check which is right on themoviedb.org. A wrong year in the folder can also mean ` +
@@ -387,7 +242,7 @@ export async function validateMovies(
       warnings.add(
         'warn_tmdb_title_canonical',
         moviePath,
-        `Folder is '${movie.title}', TMDB's filename-safe form is ` +
+        `${lead}Folder is '${movie.title}', TMDB's filename-safe form is ` +
           `'${entry.tmdb_title_filename_safe}'.`,
         {
           fix:

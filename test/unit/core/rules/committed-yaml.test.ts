@@ -66,3 +66,33 @@ describe('committed rules/<type>.yaml matches the code defaults', () => {
     expect(fromYaml).toEqual(fromCode)
   })
 })
+
+describe('committed rules/<type>.local.yaml.example templates', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'moasys-local-example-'))
+    fs.mkdirSync(path.join(tmpDir, 'rules'))
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    vi.restoreAllMocks()
+  })
+
+  // What the README tells people to copy has to load as it ships.
+  it.each(TYPES.filter(t => t.mediaType !== 'plex'))(
+    '$mediaType loads as a local override',
+    ({ mediaType, schema, defaults }) => {
+      fs.copyFileSync(
+        path.join(REPO_ROOT, 'rules', `${mediaType}.local.yaml.example`),
+        path.join(tmpDir, 'rules', `${mediaType}.local.yaml`)
+      )
+      const rules = loadRules({ mediaType, schema, defaults, projectRoot: tmpDir }) as {
+        categories: unknown[]
+      }
+      expect(rules.categories.length).toBeGreaterThan(0)
+    }
+  )
+})

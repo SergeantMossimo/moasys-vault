@@ -16,96 +16,29 @@ import { toComparableFolderName } from '../core/files'
 import { formatGaps } from '../core/gaps'
 import { EpisodeOutput, ShowOutput, WarningCollector } from '../core/types'
 import { ShowsRules } from '../core/rules/shows'
+import { categoryPath } from '../core/rules/helpers'
 
 import { JsonCache, searchKey } from './cache'
 import {
+  alternativesOf,
+  cachedFetch,
   categoriesOf,
-  normalizeTitle,
+  guessText,
+  hasCredits,
   normalizeTitleLoose,
   parseYear,
+  pickBestMatch,
+  resolveSearch,
   stripFilenameIllegalChars,
 } from './helpers'
-import { TmdbClient } from './tmdb'
+import { TmdbAbortError, TmdbClient } from './tmdb'
 import {
   ShowValidation,
   ResolvedSearch,
   TmdbShowDetails,
-  TmdbShowSearchResult,
   TmdbSeasonDetails,
   SeasonValidation,
 } from './types'
-
-// ─────────────────────────────────────────────
-// Match scoring (shows-specific)
-// ─────────────────────────────────────────────
-
-/**
- * Same scoring shape as movies — see `pickBestMovieMatch` in
- * `validate/movies.ts` for the full rationale on weights and thresholds.
- *
- * The only TV-specific concern: matched against `name` / `original_name` /
- * `first_air_date` instead of `title` / `original_title` / `release_date`.
- * Year off-by-one is even more common for shows because UK shows often
- * use UK air dates while users tag their copies with US-broadcast year.
- */
-function pickBestShowMatch(
-  localTitle: string,
-  localYear: number,
-  candidates: TmdbShowSearchResult[]
-): ResolvedSearch {
-  if (candidates.length === 0) {
-    return { best_id: null, confidence: 'none', candidates: [] }
-  }
-
-  const ourTitle = normalizeTitle(localTitle)
-  const ourLooseTitle = normalizeTitleLoose(localTitle)
-  let bestScore = 0
-  let bestId: number | null = null
-  const candidateIds: number[] = []
-
-  const sorted = [...candidates].sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))
-  for (const c of sorted.slice(0, 5)) candidateIds.push(c.id)
-
-  for (const c of sorted) {
-    const theirTitle = normalizeTitle(c.name)
-    const theirOrigTitle = normalizeTitle(c.original_name)
-    const theirYear = parseYear(c.first_air_date)
-    const yearDelta = theirYear === null ? 99 : Math.abs(theirYear - localYear)
-
-    let score = 0
-    if (theirTitle === ourTitle || theirOrigTitle === ourTitle) {
-      score += 100
-    } else if (
-      normalizeTitleLoose(c.name) === ourLooseTitle ||
-      normalizeTitleLoose(c.original_name) === ourLooseTitle
-    ) {
-      score += 90
-    } else if (theirTitle.startsWith(ourTitle + ' ') || ourTitle.startsWith(theirTitle + ' ')) {
-      score += 60
-    } else if (theirTitle.includes(ourTitle) || ourTitle.includes(theirTitle)) {
-      score += 30
-    }
-
-    if (yearDelta === 0) score += 50
-    else if (yearDelta === 1) score += 30
-    else if (yearDelta === 2) score += 15
-    else score -= 20
-
-    if (score > bestScore) {
-      bestScore = score
-      bestId = c.id
-    }
-  }
-
-  let confidence: ResolvedSearch['confidence']
-  if (bestScore >= 150) confidence = 'high'
-  else if (bestScore >= 110) confidence = 'medium'
-  else if (bestScore >= 60) confidence = 'low'
-  else confidence = 'none'
-
-  if (confidence === 'none') bestId = null
-  return { best_id: bestId, confidence, candidates: candidateIds }
-}
 
 // ─────────────────────────────────────────────
 // Season comparison
@@ -215,7 +148,7 @@ function findEpisodeTitleMismatches(
     const matchesCombined =
       isMultiEpisode && tmdbSafe.length > 1 && containsAllInOrder(localSafe, tmdbSafe)
 
-    // Second tier, mirroring how pickBestShowMatch and pickBestMovieMatch
+    // Second tier, mirroring how pickBestMatch
     // already pair strict and loose normalization. Needed because the strict
     // tier compares against a title the filesystem may not be able to store:
     // Windows silently drops trailing periods, so `All Good Things...` and
@@ -261,6 +194,37 @@ function containsAllInOrder(haystack: string, parts: string[]): boolean {
   return true
 }
 
+/**
+ * Validate every show in a scan catalog against TMDB: the match itself, then
+ * per-season episode counts and titles, then seasons missing locally. Returns
+ * one entry per show for data/validation.json; a show TMDB couldn't be asked
+ * about this run (and has no earlier answer) is left out. Throws
+ * `TmdbAbortError` when the run can't go on.
+ */
+/**
+ * Fill the season cache for `seasons` of one show in as few requests as
+ * TMDB allows — see `TmdbClient.getShowSeasons`. A failed batch is logged and
+ * left to the per-season fetch that follows; `TmdbAbortError` propagates.
+ */
+async function prefetchSeasons(
+  client: TmdbClient,
+  seasonsCache: JsonCache<TmdbSeasonDetails>,
+  showId: number,
+  seasons: number[]
+): Promise<void> {
+  const missing = seasons.filter(n => !seasonsCache.has(`${showId}:${n}`))
+  // One season costs one request either way.
+  if (missing.length < 2) return
+  try {
+    for (const [n, season] of await client.getShowSeasons(showId, missing)) {
+      seasonsCache.set(`${showId}:${n}`, season)
+    }
+  } catch (err) {
+    if (err instanceof TmdbAbortError) throw err
+    console.error(`    [TMDB] Seasons for show ${showId} failed: ${(err as Error).message}`)
+  }
+}
+
 export async function validateShows(
   shows: ShowOutput[],
   rules: ShowsRules,
@@ -279,43 +243,46 @@ export async function validateShows(
 
   for (let i = 0; i < shows.length; i++) {
     const show = shows[i]!
-    const sKey = searchKey('show', show.title, show.year)
-
-    // Cached no-match / low-confidence verdicts are always re-queried — see
-    // the matching comment in validate/movies.ts for the rationale.
-    // A `{tmdb-N}` tag on the show folder settles the match outright and skips
-    // the search — see the matching note in validate/movies.ts.
+    // A `{tmdb-N}` tag on the show folder settles the match — see resolveSearch.
     // A `{tvdb-N}` tag means the folder follows TVDB's season and episode
     // layout, which TMDB often splits or orders differently (an anthology is
     // several TMDB shows; The Muppet Show's guests air in another order). With
     // no `{tmdb-N}` beside it, a title search lands on the wrong series —
-    // `Monster` → `Monster High` — and that id would feed fix:shows and
-    // plex:check. So it isn't searched at all, and with both tags only the
+    // `Monster` → `Monster High` — and that id would feed plex:check. So it isn't searched at all, and with both tags only the
     // title checks run: the episode comparisons would be against TMDB's order.
     const tvdbOrdered = show.tvdb_id !== null
-    const cached = searchCache.get(sKey)
-    let resolved: ResolvedSearch | undefined =
-      show.tmdb_id !== null
-        ? { best_id: show.tmdb_id, confidence: 'high', candidates: [] }
-        : tvdbOrdered
-          ? { best_id: null, confidence: 'none', candidates: [] }
-          : cached && cached.confidence !== 'none' && cached.confidence !== 'low'
-            ? cached
-            : undefined
-    if (resolved) {
-      cachedCount++
-    } else {
-      try {
-        const candidates = await client.searchShow(show.title, show.year)
-        resolved = pickBestShowMatch(show.title, show.year, candidates)
-        searchCache.set(sKey, resolved)
-      } catch (err) {
-        console.error(
-          `    [TMDB] Search failed for ${show.title} (${show.year}): ${(err as Error).message}`
-        )
-        resolved = { best_id: null, confidence: 'none', candidates: [] }
-      }
+    const lookup =
+      tvdbOrdered && show.tmdb_id === null
+        ? {
+            resolved: { best_id: null, confidence: 'none' as const, candidates: [] },
+            cached: true,
+          }
+        : await resolveSearch(
+            searchKey('show', show.title, show.year),
+            show.tmdb_id,
+            searchCache,
+            async () =>
+              pickBestMatch(
+                show.title,
+                show.year,
+                (await client.searchShow(show.title, show.year)).map(c => ({
+                  id: c.id,
+                  title: c.name,
+                  original_title: c.original_name,
+                  date: c.first_air_date,
+                  popularity: c.popularity,
+                  vote_count: c.vote_count,
+                }))
+              ),
+            `${show.title} (${show.year})`
+          )
+    // TMDB couldn't be asked and there's no earlier answer — leave it for next run.
+    if (lookup === null) {
+      onProgress?.(i + 1, shows.length, cachedCount)
+      continue
     }
+    const { resolved } = lookup
+    if (lookup.cached) cachedCount++
 
     const entry: ShowValidation = {
       title: show.title,
@@ -340,17 +307,14 @@ export async function validateShows(
 
     let details: TmdbShowDetails | undefined
     if (resolved.best_id !== null) {
-      details = detailsCache.get(String(resolved.best_id))
-      if (!details) {
-        try {
-          details = await client.getShow(resolved.best_id)
-          detailsCache.set(String(resolved.best_id), details)
-        } catch (err) {
-          console.error(
-            `    [TMDB] Details failed for show id=${resolved.best_id}: ${(err as Error).message}`
-          )
-        }
-      }
+      const id = resolved.best_id
+      details = await cachedFetch(
+        detailsCache,
+        String(id),
+        () => client.getShow(id),
+        `Details for show id=${id}`,
+        hasCredits
+      )
       if (details) {
         entry.tmdb_title = details.name
         entry.tmdb_title_filename_safe = stripFilenameIllegalChars(details.name)
@@ -359,18 +323,11 @@ export async function validateShows(
       }
     }
 
-    // Collect alternates from cache for review
-    for (const altId of resolved.candidates) {
-      if (altId === resolved.best_id) continue
-      const altDetails = detailsCache.get(String(altId))
-      if (altDetails) {
-        entry.alternatives.push({
-          id: altId,
-          title: altDetails.name,
-          year: parseYear(altDetails.first_air_date),
-        })
-      }
-    }
+    // Other candidates the search turned up, for review
+    entry.alternatives = alternativesOf(resolved, id => {
+      const d = detailsCache.get(String(id))
+      return d ? { id, title: d.name, year: parseYear(d.first_air_date) } : null
+    })
 
     // Warnings. Path is prefixed with the show's first category (taken from
     // the first season's first version) so flat-library and quality-organized
@@ -383,9 +340,7 @@ export async function validateShows(
     if (show.edition) label += ` {edition-${show.edition}}`
     if (show.tmdb_id !== null) label += ` {tmdb-${show.tmdb_id}}`
     if (show.tvdb_id !== null) label += ` {tvdb-${show.tvdb_id}}`
-    const firstCategory = show.seasons[0]?.versions[0]?.category
-    const showPath =
-      firstCategory && firstCategory !== 'default' ? `${firstCategory}/${label}` : label
+    const showPath = categoryPath(show.seasons[0]?.versions[0]?.category, label)
 
     // The displayed path names only the first category, but a show can span
     // several. Give the ignore matcher every one of them so a `folders:` entry
@@ -415,7 +370,7 @@ export async function validateShows(
       warnings.add(
         'warn_tmdb_low_confidence',
         showPath,
-        `Best TMDB guess is '${entry.tmdb_title}' (${entry.tmdb_first_air_year}), below the ` +
+        `${guessText(entry.tmdb_title, entry.tmdb_first_air_year, entry.tmdb_id)}, below the ` +
           `confidence threshold.${altText}`,
         {
           fix: `Check the match on themoviedb.org and correct the folder name if it is wrong.`,
@@ -454,9 +409,7 @@ export async function validateShows(
         if (season.tmdb_episode_count === null) continue
         if (season.season === '0' || season.season.toLowerCase() === 'specials') continue
         if (season.missing !== null && season.missing > 0) {
-          const seasonCategory = show.seasons[s]?.versions[0]?.category
-          const seasonShowPath =
-            seasonCategory && seasonCategory !== 'default' ? `${seasonCategory}/${label}` : label
+          const seasonShowPath = categoryPath(show.seasons[s]?.versions[0]?.category, label)
           warnings.add(
             'warn_tmdb_episode_count',
             `${seasonShowPath}/Season ${season.season}`,
@@ -480,42 +433,43 @@ export async function validateShows(
     }
 
     // Per-episode title check. Only runs when we have a confident TMDB match
-    // (details fetched) and the toggle is on. One TMDB API call per season
-    // that has episodes to check — cached by (show_id, season_number).
+    // (details fetched) and the toggle is on. Season details are cached by
+    // (show_id, season_number); the ones missing are fetched together first.
     if (
       rules.checks.warn_tmdb_episode_name_mismatch &&
       resolved.best_id !== null &&
       details !== undefined &&
       !tvdbOrdered
     ) {
-      for (let s = 0; s < entry.seasons.length; s++) {
-        const season = entry.seasons[s]!
+      const showId = resolved.best_id
+      // The seasons worth checking: ones with local episodes, a TMDB number
+      // (`Specials` is TMDB's season 0, like `Season 00`; other named seasons
+      // have none), and a season TMDB actually claims at that number.
+      const toCheck = entry.seasons.flatMap((season, s) => {
         const localSeason = show.seasons[s]
-        if (!localSeason || localSeason.episodes.length === 0) continue
-
-        // `Specials` is checked against TMDB's season 0, like `Season 00`.
-        // Other named seasons (`Champion of Champions`) have no TMDB season.
+        if (!localSeason || localSeason.episodes.length === 0) return []
         const seasonNumber = tmdbSeasonNumber(season.season)
-        if (seasonNumber === null) continue
+        if (seasonNumber === null) return []
+        if (!details!.seasons.some(s2 => s2.season_number === seasonNumber)) return []
+        return [{ season, localSeason, seasonNumber }]
+      })
+      await prefetchSeasons(
+        client,
+        seasonsCache,
+        showId,
+        toCheck.map(c => c.seasonNumber)
+      )
 
-        // Skip if TMDB doesn't claim a season at this number — keeps us from
-        // wasting a call on a numbering mismatch already reported elsewhere.
-        const tmdbHasSeason = details.seasons.some(s2 => s2.season_number === seasonNumber)
-        if (!tmdbHasSeason) continue
-
-        const seasonCacheKey = `${resolved.best_id}:${seasonNumber}`
-        let tmdbSeason = seasonsCache.get(seasonCacheKey)
-        if (!tmdbSeason) {
-          try {
-            tmdbSeason = await client.getShowSeason(resolved.best_id, seasonNumber)
-            seasonsCache.set(seasonCacheKey, tmdbSeason)
-          } catch (err) {
-            console.error(
-              `    [TMDB] Season details failed for show ${resolved.best_id} S${seasonNumber}: ${(err as Error).message}`
-            )
-            continue
-          }
-        }
+      for (const { season, localSeason, seasonNumber } of toCheck) {
+        // Normally a cache hit now; a season the batch couldn't get is
+        // fetched on its own.
+        const tmdbSeason = await cachedFetch(
+          seasonsCache,
+          `${showId}:${seasonNumber}`,
+          () => client.getShowSeason(showId, seasonNumber),
+          `Season details for show ${showId} S${seasonNumber}`
+        )
+        if (!tmdbSeason) continue
 
         const mismatches = findEpisodeTitleMismatches(
           localSeason.episodes,
@@ -524,9 +478,7 @@ export async function validateShows(
         )
         if (mismatches.length === 0) continue
 
-        const seasonCategory = localSeason.versions[0]?.category
-        const seasonShowPath =
-          seasonCategory && seasonCategory !== 'default' ? `${seasonCategory}/${label}` : label
+        const seasonShowPath = categoryPath(localSeason.versions[0]?.category, label)
         // The season level is the folder as it sits on disk, so a `Specials`
         // folder stays `Specials` rather than becoming `Season 0`.
         const seasonLevel = isNaN(parseInt(season.season, 10))
@@ -587,7 +539,7 @@ interface SeasonCoverageCheck {
  * Season 0 is left out for the same reason the episode count skips it, and a
  * season with no air date, or one still to come, isn't missing yet.
  */
-export function airedSeasonNumbers(details: TmdbShowDetails, today: string): number[] {
+function airedSeasonNumbers(details: TmdbShowDetails, today: string): number[] {
   return details.seasons
     .filter(
       s =>
@@ -650,7 +602,7 @@ function reportMissingSeasons(
  * season 0 to Plex and TMDB alike, a number is itself, and any other named
  * season (`Champion of Champions`) has none.
  */
-export function tmdbSeasonNumber(label: string): number | null {
+function tmdbSeasonNumber(label: string): number | null {
   if (label.toLowerCase() === 'specials') return 0
   const n = parseInt(label, 10)
   return isNaN(n) ? null : n

@@ -46,6 +46,7 @@ describe('writeJson', () => {
           year: 2000,
           edition: null,
           tmdb_id: null,
+          folder: 'X (2000)',
           versions: [{ category: 'UHD', quality: null }],
         },
       ],
@@ -111,5 +112,49 @@ describe('scan — top-level integration', () => {
 
     const messages = logSpy.mock.calls.flat().join('\n')
     expect(messages).toMatch(/no categories configured/)
+  })
+})
+
+describe('scan — warn_unlisted_folder', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'moasys-scan-unlisted-'))
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    vi.restoreAllMocks()
+  })
+
+  function run(dirs: string[], rules: Partial<typeof defaultMoviesRules>) {
+    for (const d of dirs) fs.mkdirSync(path.join(tmpDir, d))
+    const module = createMoviesModule({ ...defaultMoviesRules, ...rules })
+    const warnings = new WarningCollector(undefined, (rules.categories ?? []).length > 0)
+    scan({ root_path: tmpDir }, module, warnings, new Map())
+    return warnings.all().filter(w => w.type === 'warn_unlisted_folder')
+  }
+
+  it('names a top-level folder that is not a listed category', () => {
+    const hits = run(['UHD', 'HD', 'Other SD', '#recycle', '.hidden'], {
+      categories: [{ name: 'UHD' }, { name: 'hd' }],
+    })
+    expect(hits.map(w => w.path)).toEqual(['Other SD'])
+    expect(hits[0]?.issue).toMatch(/nothing in it is scanned/)
+  })
+
+  it('in a flat library, flags only folders named like a category', () => {
+    const hits = run(['HD', 'The Crow (1994)', 'Other UHD'], { categories: [] })
+    expect(hits.map(w => w.path)).toEqual(['HD', 'Other UHD'])
+    expect(hits[0]?.issue).toMatch(/no categories are configured/)
+  })
+
+  it('stays quiet when the toggle is off', () => {
+    const hits = run(['Other SD'], {
+      categories: [{ name: 'UHD' }],
+      checks: { ...defaultMoviesRules.checks, warn_unlisted_folder: false },
+    })
+    expect(hits).toEqual([])
   })
 })

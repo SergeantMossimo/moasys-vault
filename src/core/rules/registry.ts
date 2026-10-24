@@ -21,7 +21,7 @@ import { MusicRules, MusicRulesSchema, defaultMusicRules } from './music'
 import { PlexRules, PlexRulesSchema, defaultPlexRules } from './plex'
 import { ShowsRules, ShowsRulesSchema, defaultShowsRules } from './shows'
 
-export interface RulesByType {
+interface RulesByType {
   movies: MoviesRules
   shows: ShowsRules
   music: MusicRules
@@ -29,7 +29,7 @@ export interface RulesByType {
   plex: PlexRules
 }
 
-export type RulesType = keyof RulesByType
+type RulesType = keyof RulesByType
 
 const REGISTRY = {
   movies: { schema: MoviesRulesSchema, defaults: defaultMoviesRules },

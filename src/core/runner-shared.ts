@@ -2,7 +2,7 @@
  * core/runner-shared.ts
  * ---------------------
  * Boilerplate shared by every CLI entry point (scan, validate, plex:check,
- * plex:logs, fix:shows).
+ * plex:logs, report).
  *
  * Each runner parses the same `--all | --type <value> | --help` argument
  * shape plus an optional trailing drive name, resolves that name against the
@@ -32,18 +32,33 @@ import { AppConfig, MediaRootConfig, WarningCollector, WarningsOutput } from './
  * When undefined the runner falls back to the first root configured for the
  * type — see `resolveRoot()`.
  */
-export type RunnerMode =
+type RunnerMode =
   | { kind: 'all'; drive?: string }
   | { kind: 'one'; type: string; drive?: string }
   | { kind: 'help'; explicit: boolean }
 
 /**
- * Pull the optional drive name out of the remaining args — the first token
- * that isn't a flag. npm forwards bare positionals to the script, so
- * `npm run movies external` arrives here as `--type movies external`.
+ * Pull the optional drive name out of the remaining args. npm forwards bare
+ * positionals to the script, so `npm run movies external` arrives here as
+ * `--type movies external`.
+ *
+ * Anything else is an error rather than ignored: a mistyped `--no-ignor`
+ * would otherwise run as if the flag weren't there, and a stray second word
+ * would silently lose to the first. `extraFlags` are the flags this command
+ * reads for itself.
  */
-function extractDrive(rest: string[]): string | undefined {
-  return rest.find(arg => !arg.startsWith('--'))
+function extractDrive(rest: string[], extraFlags: readonly string[]): string | undefined {
+  const unknown = rest.find(arg => arg.startsWith('-') && !extraFlags.includes(arg))
+  if (unknown !== undefined) {
+    console.error(`\n  Error: unknown flag '${unknown}'`)
+    process.exit(1)
+  }
+  const [drive, extra] = rest.filter(arg => !arg.startsWith('-'))
+  if (extra !== undefined) {
+    console.error(`\n  Error: unexpected argument '${extra}' — give at most one drive name`)
+    process.exit(1)
+  }
+  return drive
 }
 
 /**
@@ -55,8 +70,14 @@ function extractDrive(rest: string[]): string | undefined {
  * `explicit` on the help mode is `true` when the user passed `--help`/`-h`
  * and `false` when they passed nothing — callers usually distinguish those
  * to set the exit status.
+ *
+ * `extraFlags` lists the command's own flags (`--no-ignore`), which it reads
+ * from argv itself; any other flag is rejected.
  */
-export function parseRunnerArgs(validTypes: readonly string[]): RunnerMode {
+export function parseRunnerArgs(
+  validTypes: readonly string[],
+  extraFlags: readonly string[] = []
+): RunnerMode {
   const args = process.argv.slice(2)
   const flag = args[0]
   const value = args[1]
@@ -75,10 +96,10 @@ export function parseRunnerArgs(validTypes: readonly string[]): RunnerMode {
       process.exit(1)
     }
     const rest = args.filter((_, i) => i !== 0 && i !== typeAt && i !== typeAt + 1)
-    return { kind: 'one', type: typeValue, drive: extractDrive(rest) }
+    return { kind: 'one', type: typeValue, drive: extractDrive(rest, extraFlags) }
   }
 
-  if (flag === '--all') return { kind: 'all', drive: extractDrive(args.slice(1)) }
+  if (flag === '--all') return { kind: 'all', drive: extractDrive(args.slice(1), extraFlags) }
   if (flag === '--help' || flag === '-h') return { kind: 'help', explicit: true }
 
   if (flag === '--type') {
@@ -86,7 +107,7 @@ export function parseRunnerArgs(validTypes: readonly string[]): RunnerMode {
       console.error(`\n  Error: invalid type '${value ?? ''}'. Choices: ${validTypes.join(', ')}`)
       process.exit(1)
     }
-    return { kind: 'one', type: value, drive: extractDrive(args.slice(2)) }
+    return { kind: 'one', type: value, drive: extractDrive(args.slice(2), extraFlags) }
   }
 
   console.error(`\n  Error: unknown flag '${flag}'`)
@@ -205,6 +226,21 @@ export function printBanner(title: string, root?: MediaRootConfig): void {
     console.log(`  Root : ${root.root_path}`)
   }
   console.log()
+}
+
+/**
+ * A progress callback that prints a line at each tenth of the way, plus the
+ * last item — about ten lines however big the library.
+ *
+ *   [PROBE] 3081/30806 (3081 cached)
+ */
+export function progressLogger(tag: string): (done: number, total: number, cached: number) => void {
+  return (done, total, cached) => {
+    const step = Math.max(1, Math.ceil(total / 10))
+    if (done === total || done % step === 0) {
+      console.log(`    [${tag}] ${done}/${total} (${cached} cached)`)
+    }
+  }
 }
 
 /** `warn_a (3), warn_b (1)` — the per-type breakdown after a run. */

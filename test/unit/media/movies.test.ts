@@ -71,8 +71,20 @@ describe('movies module — happy paths', () => {
         year: 1994,
         edition: null,
         tmdb_id: null,
+        folder: 'The Crow (1994)',
         versions: [{ category: 'UHD', quality: 'UHD' }],
       },
+    ])
+  })
+
+  it('records the folder an edition file sits in', () => {
+    const result = runMoviesScan({
+      spec: {
+        UHD: { 'The Hobbit (2014)': { 'The Hobbit (2014) {edition-M4 Book Edit}.mp4': '' } },
+      },
+    })
+    expect(result.output.map(m => [m.edition, m.folder])).toEqual([
+      ['M4 Book Edit', 'The Hobbit (2014)'],
     ])
   })
 
@@ -229,6 +241,50 @@ describe('movies module — warnings', () => {
     expect(
       result.warnings.some(w => w.issue.includes(`Folder name is not 'Movie Title (YEAR)'`))
     ).toBe(true)
+  })
+
+  it('warn_bad_folder_name: once per folder, even with several files or none that parse', () => {
+    const result = runMoviesScan({
+      spec: {
+        UHD: {
+          CrowFolder: { 'The Crow (1994).mp4': '', 'The Crow (1994) {edition-Cut}.mp4': '' },
+          Junk: { 'not a movie.mp4': '' },
+        },
+      },
+    })
+    const paths = result.warnings.filter(w => w.type === 'warn_bad_folder_name').map(w => w.path)
+    expect(paths).toEqual(['UHD/CrowFolder', 'UHD/Junk'])
+  })
+
+  it('warn_multi_quality / warn_duplicate_quality: path is the folder name, tags and all', () => {
+    const folder = 'Alien (1979) {tmdb-348}'
+    const result = runMoviesScan({
+      spec: {
+        UHD: { [folder]: { 'Alien (1979).mp4': '' } },
+        HD: { [folder]: { 'Alien (1979).mp4': '' } },
+        SD: { [folder]: { 'Alien (1979).mp4': '' } },
+        'Other HD': { [folder]: { 'Alien (1979).mp4': '' } },
+      },
+      rules: {
+        categories: [{ name: 'UHD' }, { name: 'HD' }, { name: 'SD' }, { name: 'Other HD' }],
+        acceptable_quality_combos: [],
+      },
+    })
+    const hits = result.warnings.filter(w => /quality/.test(w.type))
+    expect(hits.map(w => [w.type, w.path, w.issue])).toEqual([
+      ['warn_duplicate_quality', folder, 'HD copies in 2 categories: HD, Other HD.'],
+      ['warn_multi_quality', folder, 'Exists in multiple qualities: UHD, HD, SD.'],
+    ])
+
+    const silenced = runMoviesScan({
+      spec: {
+        UHD: { [folder]: { 'Alien (1979).mp4': '' } },
+        SD: { [folder]: { 'Alien (1979).mp4': '' } },
+      },
+      rules: { acceptable_quality_combos: [] },
+      ignored: { movies: [folder] },
+    })
+    expect(silenced.warnings.some(w => /quality/.test(w.type))).toBe(false)
   })
 
   it('warn_title_mismatch: file title differs from folder title', () => {
@@ -524,7 +580,7 @@ describe('movies module — warn_duplicate_quality', () => {
     const dupes = result.warnings.filter(w => w.type === 'warn_duplicate_quality')
     expect(dupes.length).toBe(1)
     expect(dupes[0]?.path).toBe('Deadpool (2016)')
-    expect(dupes[0]?.issue).toMatch(/Duplicate HD copies in 2 folders: HD, Other HD/)
+    expect(dupes[0]?.issue).toMatch(/HD copies in 2 categories: HD, Other HD/)
     expect(result.warnings.some(w => w.type === 'warn_multi_quality')).toBe(false)
   })
 
@@ -540,7 +596,7 @@ describe('movies module — warn_duplicate_quality', () => {
     })
     const dupes = result.warnings.filter(w => w.type === 'warn_duplicate_quality')
     expect(dupes.length).toBe(1)
-    expect(dupes[0]?.issue).toMatch(/Duplicate HD copies in 2 folders: HD, Other HD/)
+    expect(dupes[0]?.issue).toMatch(/HD copies in 2 categories: HD, Other HD/)
   })
 
   it('reports one warning per duplicated tier when several tiers duplicate', () => {
@@ -560,8 +616,8 @@ describe('movies module — warn_duplicate_quality', () => {
     expect(dupes.length).toBe(2)
     // sortQualities puts UHD ahead of HD
     expect(dupes.map(d => d.issue)).toEqual([
-      expect.stringMatching(/Duplicate UHD copies in 2 folders: UHD, Other UHD/),
-      expect.stringMatching(/Duplicate HD copies in 2 folders: HD, Other HD/),
+      expect.stringMatching(/UHD copies in 2 categories: UHD, Other UHD/),
+      expect.stringMatching(/HD copies in 2 categories: HD, Other HD/),
     ])
   })
 

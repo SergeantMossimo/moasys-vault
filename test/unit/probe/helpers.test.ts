@@ -172,7 +172,7 @@ describe('probeOrCache — tag backfill', () => {
   it('reads tags onto a cache hit that was never tag-read, without re-probing', async () => {
     const cache = cacheWith(cached())
     const readTags = vi.fn().mockResolvedValue(tags)
-    const data = await probeOrCache(task, cache, readTags)
+    const { data } = await probeOrCache(task, cache, readTags)
     expect(readTags).toHaveBeenCalledOnce()
     expect(data.tags).toEqual(tags)
     expect(cache.get(task.relativePath, task.mtime, task.size)?.tags_read).toBe(true)

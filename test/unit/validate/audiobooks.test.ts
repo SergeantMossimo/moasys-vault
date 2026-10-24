@@ -16,8 +16,14 @@ function doc(title: string, authors: string[], subtitle?: string): OpenLibraryDo
   return { key: `/works/${title}`, title, subtitle, author_name: authors }
 }
 
-function book(title: string, authors: string[]): BookOutput {
-  return { title, authors, chapter_count: 1, versions: [{ category: 'Audible', quality: 'MP3' }] }
+function book(title: string, authors: string[], authorFolder = authors.join(', ')): BookOutput {
+  return {
+    title,
+    authors,
+    author_folder: authorFolder,
+    chapter_count: 1,
+    versions: [{ category: 'Audible', quality: 'MP3' }],
+  }
 }
 
 /** A client whose search returns `results` for queries containing a given author (or any). */
@@ -214,7 +220,7 @@ describe('validateAudiobooks', () => {
     expect(warnings.all()).toEqual([])
   })
 
-  it('treats a failed search as no result rather than aborting', async () => {
+  it('leaves a book out, without a not-found warning, when its search fails', async () => {
     const client = {
       search: vi.fn(async () => {
         throw new Error('boom')
@@ -227,6 +233,30 @@ describe('validateAudiobooks', () => {
       memoryCache(),
       warnings
     )
-    expect(out[0]!.status).toBe('not_found')
+    expect(out).toEqual([])
+    expect(warnings.all()).toEqual([])
+  })
+
+  it('caches an empty result so the next run does not ask again', async () => {
+    const { client, search } = mockClient(() => [])
+    const cache = memoryCache<OpenLibraryDoc[]>()
+    await validateAudiobooks([book('Unknown Book', ['Nobody'])], rules, client, cache, warnings)
+    const asked = search.mock.calls.length
+    expect(asked).toBeGreaterThan(0)
+
+    await validateAudiobooks([book('Unknown Book', ['Nobody'])], rules, client, cache, warnings)
+    expect(search.mock.calls.length).toBe(asked)
+  })
+
+  it('uses the author folder as named on disk in the warning path', async () => {
+    const { client } = mockClient(() => [])
+    await validateAudiobooks(
+      [book('Relic', ['Douglas Preston', 'Lincoln Child'], 'Douglas Preston & Lincoln Child')],
+      { ...rules, checks: { ...rules.checks, warn_openlibrary_not_found: true } },
+      client,
+      memoryCache(),
+      warnings
+    )
+    expect(warnings.all()[0]?.path).toBe('Audible/Douglas Preston & Lincoln Child/Relic')
   })
 })

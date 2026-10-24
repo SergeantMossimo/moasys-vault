@@ -1,0 +1,20 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# MOASYS-Vault — example personal overrides for music
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Copy to rules/music.local.yaml (gitignored) and edit. Anything here
+# deep-merges over rules/music.yaml — set only what differs.
+#
+# This example is for a library split into two folders:
+#
+#   M:\Audio\
+#     Music\Pink Floyd\The Wall\01 - In the Flesh.flac
+#     Soundtracks\Hans Zimmer\Dune\01 - Dream of Arrakis.flac
+#
+# If your artists sit directly in M:\Audio\ instead, you don't need this file.
+# See docs/CONFIG.md "Choosing a layout".
+# ─────────────────────────────────────────────────────────────────────────────
+
+categories:
+  - { name: Music }
+  - { name: Soundtracks }
