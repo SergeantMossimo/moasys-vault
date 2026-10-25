@@ -29,8 +29,7 @@ describe('typeOutputPaths', () => {
     expect(out.validation).toBe(path.join(out.dir, 'data', 'validation.json'))
   })
 
-  it('puts fix:shows and --no-ignore files in their own subfolders', () => {
-    expect(out.fixesDir).toBe(path.join(out.dir, 'fixes'))
+  it('puts --no-ignore files in their own subfolder', () => {
     expect(out.unfilteredDir).toBe(path.join(out.dir, 'unfiltered'))
   })
 
@@ -103,11 +102,18 @@ describe('legacy output files', () => {
     expect(fs.existsSync(path.join(out.dir, 'probe.json'))).toBe(true)
   })
 
-  it('says to keep undo manifests rather than calling everything safe to delete', () => {
+  it('lists the removed fix:shows folder but not the current subfolders', () => {
+    const out = touch()
+    fs.mkdirSync(path.join(out.dir, 'fixes'))
+    fs.mkdirSync(out.unfilteredDir)
+    expect(findLegacyOutputFiles(out.dir)).toEqual(['fixes/'])
+  })
+
+  it('points undo manifests at the last version that can replay them', () => {
     const out = touch('rename-undo-2026-01-01T00-00-00-000Z.json')
     reportLegacyOutputFiles(out)
     const text = logSpy.mock.calls.map((call: unknown[]) => String(call[0])).join('\n')
-    expect(text).toContain('keep any rename-undo-*.json')
-    expect(text).not.toContain('safe to delete')
+    expect(text).toContain('fix:shows was removed')
+    expect(text).toContain('8e7515a')
   })
 })

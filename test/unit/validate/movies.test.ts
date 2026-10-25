@@ -9,7 +9,8 @@ import type {
   TmdbMovieDetails,
   TmdbMovieSearchResult,
 } from '../../../src/validate/types'
-import { TmdbClient } from '../../../src/validate/tmdb'
+import { TmdbAbortError, TmdbClient } from '../../../src/validate/tmdb'
+import { RECHECK_WARNED_AFTER_DAYS } from '../../../src/validate/helpers'
 
 /**
  * Build an in-memory JsonCache that doesn't read from disk. We pass a
@@ -21,14 +22,30 @@ function memoryCache<T>(seed: Record<string, T> = {}): JsonCache<T> {
   return cache
 }
 
-/** Minimal MovieOutput for validate input — versions is unused here. */
+/** A memoryCache whose entries were fetched `days` days ago. */
+function agedCache<T>(seed: Record<string, T>, days: number): JsonCache<T> {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(Date.now() - days * 24 * 60 * 60 * 1000)
+  const cache = memoryCache(seed)
+  vi.useRealTimers()
+  return cache
+}
+
+/**
+ * Minimal MovieOutput for validate input — versions is unused here. The
+ * folder defaults to the Plex-style name a scan would find for it.
+ */
 function movie(
   title: string,
   year: number,
   edition: string | null = null,
-  tmdbId: number | null = null
+  tmdbId: number | null = null,
+  folder?: string
 ): MovieOutput {
-  return { title, year, edition, tmdb_id: tmdbId, versions: [] }
+  let name = `${title} (${year})`
+  if (edition) name += ` {edition-${edition}}`
+  if (tmdbId !== null) name += ` {tmdb-${tmdbId}}`
+  return { title, year, edition, tmdb_id: tmdbId, folder: folder ?? name, versions: [] }
 }
 
 /**
@@ -366,7 +383,7 @@ describe('validateMovies — confidence scoring', () => {
     expect(result[0]?.tmdb_id).toBeNull()
   })
 
-  it('handles a search exception as confidence "none" without crashing', async () => {
+  it('leaves a title out, without a no-match warning, when its search fails', async () => {
     const client = mockClient({ searchFails: true })
 
     const result = await validateMovies(
@@ -378,8 +395,67 @@ describe('validateMovies — confidence scoring', () => {
       warnings
     )
 
-    expect(result[0]?.confidence).toBe('none')
+    expect(result).toEqual([])
+    expect(warnings.all()).toEqual([])
     expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/Search failed/))
+  })
+
+  it('keeps the previous verdict when a re-check fails', async () => {
+    const client = mockClient({ searchFails: true })
+    const searchCache = agedCache<ResolvedSearch>(
+      { 'movie|x|2000': { best_id: 5, confidence: 'low', candidates: [5] } },
+      RECHECK_WARNED_AFTER_DAYS + 1
+    )
+
+    const result = await validateMovies(
+      [movie('X', 2000)],
+      defaultMoviesRules,
+      client,
+      searchCache,
+      memoryCache(),
+      warnings
+    )
+
+    expect(result[0]?.confidence).toBe('low')
+    expect(result[0]?.tmdb_id).toBe(5)
+  })
+
+  it('stops the run on TmdbAbortError rather than recording no-matches', async () => {
+    const client = mockClient({})
+    vi.mocked(client.searchMovie).mockRejectedValue(new TmdbAbortError('bad key'))
+
+    await expect(
+      validateMovies(
+        [movie('X', 2000), movie('Y', 2001)],
+        defaultMoviesRules,
+        client,
+        memoryCache(),
+        memoryCache(),
+        warnings
+      )
+    ).rejects.toThrow('bad key')
+    expect(client.searchMovie).toHaveBeenCalledTimes(1)
+  })
+
+  it('names the guess by id when its details could not be fetched', async () => {
+    const client = mockClient({
+      // Substring title match (30) + exact year (50) = 80: low confidence.
+      searchResults: [
+        { id: 7, title: 'Xyz Abc Def', original_title: 'Xyz Abc Def', release_date: '2000-01-01' },
+      ],
+    })
+
+    await validateMovies(
+      [movie('Abc', 2000)],
+      defaultMoviesRules,
+      client,
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+
+    const low = warnings.all().find(w => w.type === 'warn_tmdb_low_confidence')
+    expect(low?.issue).toMatch(/^Best TMDB guess is id 7, below/)
   })
 
   it('scores a space-prefix match (subtitle missing) at +60 title points', async () => {
@@ -650,7 +726,7 @@ describe('validateMovies — caching', () => {
     expect((client.searchMovie as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0)
   })
 
-  it('re-queries TMDB when the cached verdict is "none"', async () => {
+  it('re-queries TMDB once a cached "none" verdict is a week old', async () => {
     // A cached no-match is never final: TMDB's search index changes, which is
     // exactly how "Face/Off" stayed a false no-match across many runs.
     const client = mockClient({
@@ -672,9 +748,10 @@ describe('validateMovies — caching', () => {
         },
       },
     })
-    const searchCache = memoryCache<ResolvedSearch>({
-      'movie|faceoff|1997': { best_id: null, confidence: 'none', candidates: [59091] },
-    })
+    const searchCache = agedCache<ResolvedSearch>(
+      { 'movie|faceoff|1997': { best_id: null, confidence: 'none', candidates: [59091] } },
+      RECHECK_WARNED_AFTER_DAYS + 1
+    )
 
     const result = await validateMovies(
       [movie('FaceOff', 1997)],
@@ -690,11 +767,30 @@ describe('validateMovies — caching', () => {
     expect(searchCache.get('movie|faceoff|1997')?.best_id).toBe(754)
   })
 
-  it('re-queries TMDB when the cached verdict is "low"', async () => {
+  it('serves a fresh "none" verdict without calling TMDB again', async () => {
     const client = mockClient({ searchResults: [] })
     const searchCache = memoryCache<ResolvedSearch>({
-      'movie|the crow|1994': { best_id: 100, confidence: 'low', candidates: [100] },
+      'movie|faceoff|1997': { best_id: null, confidence: 'none', candidates: [] },
     })
+
+    await validateMovies(
+      [movie('FaceOff', 1997)],
+      defaultMoviesRules,
+      client,
+      searchCache,
+      memoryCache(),
+      new WarningCollector()
+    )
+
+    expect(client.searchMovie).not.toHaveBeenCalled()
+  })
+
+  it('re-queries TMDB once a cached "low" verdict is a week old', async () => {
+    const client = mockClient({ searchResults: [] })
+    const searchCache = agedCache<ResolvedSearch>(
+      { 'movie|the crow|1994': { best_id: 100, confidence: 'low', candidates: [100] } },
+      RECHECK_WARNED_AFTER_DAYS + 1
+    )
 
     await validateMovies(
       [movie('The Crow', 1994)],
@@ -745,7 +841,7 @@ describe('validateMovies — caching', () => {
     expect(progress).toHaveBeenCalledWith(2, 2, 0)
   })
 
-  it('collects alternates from details cache for review', async () => {
+  it('lists the other search results as alternatives, from the search itself', async () => {
     const client = mockClient({
       searchResults: [
         {
@@ -781,6 +877,48 @@ describe('validateMovies — caching', () => {
       new WarningCollector()
     )
 
+    // Named from the search result: no details fetch needed for an alternative.
+    expect(result[0]?.alternatives).toEqual([{ id: 2, title: 'Heat', year: 1986 }])
+    expect(client.getMovie).toHaveBeenCalledTimes(1)
+  })
+
+  it('files an edition kept in a shared folder under that folder, naming the edition', async () => {
+    const warnings = new WarningCollector()
+    await validateMovies(
+      [movie('The Hobbit', 2014, 'M4 Book Edit', null, 'The Hobbit (2014)')],
+      defaultMoviesRules,
+      mockClient({ searchResults: [] }),
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+    expect(warnings.all().map(w => [w.path, w.issue])).toEqual([
+      [
+        'The Hobbit (2014)',
+        "Edition 'M4 Book Edit': TMDB has nothing matching 'The Hobbit' (2014).",
+      ],
+    ])
+  })
+
+  it('names a bare-id candidate cached before 0.23 from the details cache', async () => {
+    const searchCache = memoryCache<ResolvedSearch>({
+      'movie|heat|1995': { best_id: 1, confidence: 'high', candidates: [1, 2, 3] },
+    })
+    const detailsCache = memoryCache<TmdbMovieDetails>({
+      '1': { id: 1, title: 'Heat', original_title: 'Heat', release_date: '1995-01-01' },
+      '2': { id: 2, title: 'Heat (Old)', original_title: 'Heat', release_date: '1986-01-01' },
+    })
+
+    const result = await validateMovies(
+      [movie('Heat', 1995)],
+      defaultMoviesRules,
+      mockClient({}),
+      searchCache,
+      detailsCache,
+      new WarningCollector()
+    )
+
+    // 3 has no details cached, so it can't be named and is left out.
     expect(result[0]?.alternatives).toEqual([{ id: 2, title: 'Heat (Old)', year: 1986 }])
   })
 })

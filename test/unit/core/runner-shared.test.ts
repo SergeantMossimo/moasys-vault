@@ -94,6 +94,26 @@ describe('parseRunnerArgs', () => {
     expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/unknown flag/i))
   })
 
+  it('exits on a mistyped flag after the type, instead of ignoring it', () => {
+    setArgv('--all', 'external', '--no-ignor')
+    expect(() => parseRunnerArgs(VALID_TYPES, ['--no-ignore'])).toThrow('process.exit called')
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/unknown flag '--no-ignor'/))
+  })
+
+  it("accepts the command's own flags", () => {
+    setArgv('--all', 'external', '--no-ignore')
+    expect(parseRunnerArgs(VALID_TYPES, ['--no-ignore'])).toEqual({
+      kind: 'all',
+      drive: 'external',
+    })
+  })
+
+  it('exits on a second drive name rather than dropping it', () => {
+    setArgv('--type', 'movies', 'external', 'server')
+    expect(() => parseRunnerArgs(VALID_TYPES)).toThrow('process.exit called')
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/unexpected argument 'server'/))
+  })
+
   // npm forwards bare positionals, so `npm run movies external` reaches the
   // script as `--type movies external`.
   it('reads a trailing drive name after --type <value>', () => {
@@ -142,9 +162,9 @@ describe('parseRunnerArgs', () => {
     expect(parsed).toEqual({ kind: 'one', type: 'movies', drive: undefined })
   })
 
-  it('skips flags when looking for the drive positional', () => {
-    setArgv('--type', 'movies', '--refresh-older-than=30d', 'external')
-    expect(parseRunnerArgs(VALID_TYPES)).toEqual({
+  it("skips the command's own flags when looking for the drive positional", () => {
+    setArgv('--type', 'movies', '--no-ignore', 'external')
+    expect(parseRunnerArgs(VALID_TYPES, ['--no-ignore'])).toEqual({
       kind: 'one',
       type: 'movies',
       drive: 'external',

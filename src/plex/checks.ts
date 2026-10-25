@@ -17,6 +17,7 @@ import { PlexRules } from '../core/rules/plex'
 import { isAcceptableCombo } from '../core/rules/helpers'
 import { comparableTitle } from '../probe/audiobook-tags'
 import { normalizeTitleLoose } from '../validate/helpers'
+import { quotedList } from '../core/gaps'
 
 import { agentMatches, isUnmatched } from './catalog'
 import { MediaType, PlexCatalogItem, PlexCatalogOutput, PlexFileRef } from './types'
@@ -102,10 +103,9 @@ const FIX_EDITION_MISMATCH =
   `hasn't re-scanned since the folder was renamed: run "Scan Library Files". Editing the ` +
   `edition in Plex Web also overrides the folder until you clear it.`
 
-/** `a.mkv`, `b.mkv`, `c.mkv` +2 more */
+/** `'a.mkv', 'b.mkv', 'c.mkv', +2 more` — file names only. */
 function listNames(paths: string[], max = 5): string {
-  const names = paths.slice(0, max).map(p => `'${basename(p)}'`)
-  return names.join(', ') + (paths.length > max ? `, +${paths.length - max} more` : '')
+  return quotedList(paths.map(basename), max)
 }
 
 function groupByFolder<T>(entries: T[], pathOf: (e: T) => string): Map<string, T[]> {
@@ -184,7 +184,7 @@ export function stripDisambiguator(title: string, years: Array<number | null> = 
  * different film. Only trusted alongside a matching year: `Mud` and
  * `Mud Lotus` overlap too.
  */
-export function titlesOverlap(
+function titlesOverlap(
   plexTitle: string,
   folderTitle: string,
   years: Array<number | null> = []
@@ -225,6 +225,12 @@ interface PlexFileEntry {
   library: string
 }
 
+/**
+ * Compare one drive's Plex catalogs with its scan output and add the
+ * `warn_plex_*` findings to `input.warnings` — files on one side only,
+ * folders outside every library, unmatched or mismatched items. Returns the
+ * counts for the run summary.
+ */
 export function checkPlex(input: PlexCheckInput): PlexCheckStats {
   const { rules, warnings, drive } = input
   const onDrive = (f: PlexFileRef): f is PlexFileRef & { library_path: string } =>
@@ -272,7 +278,9 @@ export function checkPlex(input: PlexCheckInput): PlexCheckStats {
           break
         }
       }
-      byTop.set(top, [...(byTop.get(top) ?? []), p])
+      const files = byTop.get(top)
+      if (files) files.push(p)
+      else byTop.set(top, [p])
     }
     const folders = covering.map(l => `'${l.plex_path}'`).join(', ')
     for (const [top, files] of byTop) {
@@ -356,6 +364,16 @@ export function checkPlex(input: PlexCheckInput): PlexCheckStats {
   }
 
   // ── Item-level checks ───────────────────────────────────────────────
+  // The first file under each show and album, indexed once rather than
+  // searched for per item.
+  const firstEpisodeOf = new Map<string, (typeof plexFiles)[number]>()
+  const firstTrackOf = new Map<string, (typeof plexFiles)[number]>()
+  for (const entry of plexFiles) {
+    const { grandparent_rating_key: show, parent_rating_key: album } = entry.item
+    if (show !== null && !firstEpisodeOf.has(show)) firstEpisodeOf.set(show, entry)
+    if (album !== null && !firstTrackOf.has(album)) firstTrackOf.set(album, entry)
+  }
+
   /** The folder that represents an item on this drive, or null when it isn't on this drive. */
   const folderOf = (item: PlexCatalogItem): string | null => {
     switch (item.type) {
@@ -366,11 +384,11 @@ export function checkPlex(input: PlexCheckInput): PlexCheckStats {
       case 'show': {
         // A show owns no files; take the show folder from one of its episodes,
         // which sit one level down in a season folder.
-        const episode = plexFiles.find(e => e.item.grandparent_rating_key === item.rating_key)
+        const episode = firstEpisodeOf.get(item.rating_key)
         return episode ? dirname(dirname(episode.file.library_path)) : null
       }
       case 'album': {
-        const track = plexFiles.find(e => e.item.parent_rating_key === item.rating_key)
+        const track = firstTrackOf.get(item.rating_key)
         return track ? dirname(track.file.library_path) : null
       }
       default:

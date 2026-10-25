@@ -25,13 +25,18 @@
           "type": ["integer", "null"],
           "description": "TMDB ID from a {tmdb-N} tag — the file's, else the folder's — or null when neither carries one. validate:movies uses it instead of searching."
         },
+        "folder": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The movie folder as named on disk. Editions kept as files in one folder share it, so it can't be rebuilt from title, year and edition."
+        },
         "versions": {
           "type": "array",
           "items": { "$ref": "common.json#/$defs/Version" },
           "minItems": 1
         }
       },
-      "required": ["title", "year", "edition", "tmdb_id", "versions"],
+      "required": ["title", "year", "edition", "tmdb_id", "folder", "versions"],
       "additionalProperties": false
     }
   }

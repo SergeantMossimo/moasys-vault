@@ -3,23 +3,32 @@
  * --------------
  * ffprobe pass for music — walks the library and records per-track probe data.
  *
- * No quality_mismatch logic: music quality is codec + bitrate + sample rate +
- * bit depth rather than dimensions. The probe pass collects all of those and
- * leaves analysis to the website (or a future warning pass).
+ * Music quality is codec + bitrate + sample rate + bit depth rather than
+ * dimensions, so there's no quality_mismatch here. The probe-side checks are
+ * per album: mixed track quality (warn_quality_inconsistent), mono audio,
+ * missing durations, and the embedded-tag checks — missing tags, track
+ * numbers, folder/tag names, compilations.
  */
 
 import fs from 'fs'
 import path from 'path'
 
+import { DirReader } from '../core/dir-reader'
 import { MusicConfig, WarningCollector } from '../core/types'
-import { hasExtension, isPrimary } from '../core/files'
+import { hasExtension, isPrimary, toComparableFolderName, toRel } from '../core/files'
 import { MusicRules } from '../core/rules/music'
-import { compilePattern, resolveCategories } from '../core/rules/helpers'
-
-import { toComparableFolderName } from '../core/files'
+import {
+  categoryPath,
+  compilePattern,
+  isAcceptableCombo,
+  isRealCategory,
+  resolveCategories,
+} from '../core/rules/helpers'
+import { listWithMore, quotedList } from '../core/gaps'
+import { makeAlbumKey, makeArtistKey, parseTrackStem } from '../media/music'
 
 import { ProbeCache } from './cache'
-import { ProbeTask, ProbedFile, probeBatch } from './helpers'
+import { ProbeTask, ProbedFile, logProbeProgress, probeBatch } from './helpers'
 import { readTags } from './id3'
 import { deriveAudioQuality, summarizeAlbumQuality } from './music-quality'
 import { ArtistProbeOutput, AlbumProbeOutput, TrackProbe, ProbeData, ProbeResult } from './types'
@@ -49,50 +58,13 @@ interface TrackIdentity {
   track: number
 }
 
-function parseTrackStem(
-  stem: string,
-  multiDiscRegex: RegExp,
-  singleDiscRegex: RegExp
-): { disc: number; track: number } | null {
-  const mm = multiDiscRegex.exec(stem)
-  if (mm?.groups) {
-    const { disc, track } = mm.groups
-    if (disc !== undefined && track !== undefined) {
-      return { disc: parseInt(disc, 10), track: parseInt(track, 10) }
-    }
-  }
-  const sm = singleDiscRegex.exec(stem)
-  if (sm?.groups) {
-    const { track } = sm.groups
-    if (track !== undefined) return { disc: 1, track: parseInt(track, 10) }
-  }
-  return null
-}
-
-function artistKey(a: string): string {
-  return a.toLowerCase()
-}
-
-function albumKey(a: string, al: string): string {
-  return `${a.toLowerCase()}|${al.toLowerCase()}`
-}
-
-function toRel(p: string): string {
-  return p.split(path.sep).join('/')
-}
-
 /**
  * Build a warning path for an album-level finding. Prepends the first
  * category from `media_type` so users can locate the album in libraries
- * organized by subfolder. The "default" sentinel (empty categories config)
- * is skipped so flat libraries stay clean. WarningCollector normalizes the
- * backslashes that path.join produces on Windows.
+ * organized by subfolder. A flat library (no categories) gets no prefix.
  */
 function albumWarningPath(mediaType: string[], artist: string, album: string): string {
-  const category = mediaType[0]
-  return category && category !== 'default'
-    ? path.join(category, artist, album)
-    : path.join(artist, album)
+  return categoryPath(mediaType[0], artist, album)
 }
 
 /**
@@ -110,7 +82,7 @@ function albumWarningScope(
   album: string
 ): { categories: string[]; levels: string[] } {
   return {
-    categories: [...new Set(mediaType)].filter(c => c !== 'default'),
+    categories: [...new Set(mediaType)].filter(isRealCategory),
     levels: [artist, album],
   }
 }
@@ -126,9 +98,32 @@ function codecFromQualityEntry(entry: string): string {
   return space === -1 ? entry : entry.slice(0, space)
 }
 
-/** Return true if `codecs` matches one of the acceptable combos (set equality). */
-function isAcceptableCodecCombo(codecs: Set<string>, combos: readonly string[][]): boolean {
-  return combos.some(combo => combo.length === codecs.size && combo.every(c => codecs.has(c)))
+/**
+ * An album's quality summary as a warning can hold it. A VBR album whose
+ * bitrates spread past the tolerance lists one entry per rate — 29 of them for
+ * one soundtrack — so a codec with more than `RANGE_AFTER` lossy rates
+ * becomes a range: `MP3 196–280 (29 bitrates)`.
+ */
+export function describeQualityMix(summary: string[]): string {
+  const RANGE_AFTER = 4
+  const lossy = new Map<string, number[]>()
+  for (const entry of summary) {
+    const m = /^(\S+) ~?(\d+)$/.exec(entry)
+    if (m) lossy.set(m[1]!, [...(lossy.get(m[1]!) ?? []), Number(m[2])])
+  }
+  const parts: string[] = []
+  const ranged = new Set<string>()
+  for (const entry of summary) {
+    const codec = codecFromQualityEntry(entry)
+    const rates = lossy.get(codec)
+    if (!rates || rates.length <= RANGE_AFTER || !/^\S+ ~?\d+$/.test(entry)) {
+      parts.push(entry)
+    } else if (!ranged.has(codec)) {
+      ranged.add(codec)
+      parts.push(`${codec} ${Math.min(...rates)}–${Math.max(...rates)} (${rates.length} bitrates)`)
+    }
+  }
+  return listWithMore(parts, 6)
 }
 
 // ─────────────────────────────────────────────
@@ -137,7 +132,8 @@ function isAcceptableCodecCombo(codecs: Set<string>, combos: readonly string[][]
 
 function collectTasks(
   config: MusicConfig,
-  rules: MusicRules
+  rules: MusicRules,
+  dir: DirReader
 ): Array<{ task: ProbeTask; identity: TrackIdentity }> {
   const multiDiscRegex = compilePattern(rules.patterns.multi_disc)
   const singleDiscRegex = compilePattern(rules.patterns.single_disc)
@@ -146,15 +142,22 @@ function collectTasks(
   for (const cat of resolveCategories(rules.categories)) {
     const folderPath = path.join(config.root_path, cat.folderName)
     // Missing folders are reported once, by the scan pass (core/scanner.ts).
-    if (!fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) continue
+    if (!dir.isDirectory(folderPath)) continue
 
-    for (const artistEntry of fs.readdirSync(folderPath, { withFileTypes: true })) {
+    let topEntries: fs.Dirent[]
+    try {
+      topEntries = dir.readdir(folderPath)
+    } catch {
+      continue // the scan pass reports it as permission_denied
+    }
+
+    for (const artistEntry of topEntries) {
       if (!artistEntry.isDirectory()) continue
       const artistPath = path.join(folderPath, artistEntry.name)
 
       let albumEntries: fs.Dirent[]
       try {
-        albumEntries = fs.readdirSync(artistPath, { withFileTypes: true })
+        albumEntries = dir.readdir(artistPath)
       } catch {
         continue
       }
@@ -165,7 +168,7 @@ function collectTasks(
 
         let files: fs.Dirent[]
         try {
-          files = fs.readdirSync(albumPath, { withFileTypes: true })
+          files = dir.readdir(albumPath)
         } catch {
           continue
         }
@@ -234,14 +237,14 @@ function aggregate(
     const id = identities.get(task.relativePath)
     if (!id) continue
 
-    const aKey = artistKey(id.artist)
+    const aKey = makeArtistKey(id.artist)
     let artist = artists.get(aKey)
     if (!artist) {
       artist = { artist: id.artist, albums: new Map() }
       artists.set(aKey, artist)
     }
 
-    const albKey = albumKey(id.artist, id.album)
+    const albKey = makeAlbumKey(id.artist, id.album)
     let album = artist.albums.get(albKey)
     if (!album) {
       album = { album: id.album, media_type: [], audio_quality_summary: [], tracks: [] }
@@ -250,7 +253,7 @@ function aggregate(
     if (!album.media_type.includes(id.mediaType)) album.media_type.push(id.mediaType)
 
     const track: TrackProbe = {
-      quality: task.category,
+      category: task.category,
       path: task.relativePath,
       disc: id.disc,
       track: id.track,
@@ -294,13 +297,20 @@ function aggregate(
 // Entry point
 // ─────────────────────────────────────────────
 
+/**
+ * Run the music probe pass end-to-end: walk the library, probe each track
+ * (cache-aware, with its embedded tags), summarize each album's audio quality,
+ * and emit the per-album quality and tag warnings. Cache writes are the
+ * caller's responsibility.
+ */
 export async function probeMusic(
   config: MusicConfig,
   rules: MusicRules,
   cache: ProbeCache,
-  warnings: WarningCollector
+  warnings: WarningCollector,
+  dir: DirReader = new DirReader()
 ): Promise<ProbeResult<ArtistProbeOutput[]>> {
-  const collected = collectTasks(config, rules)
+  const collected = collectTasks(config, rules, dir)
   console.log(`    [PROBE] ${collected.length} primary files to probe`)
 
   const identities = new Map<string, TrackIdentity>()
@@ -310,11 +320,7 @@ export async function probeMusic(
   const probed = await probeBatch(
     tasks,
     cache,
-    (done, total, cached) => {
-      if (done === total || done % 100 === 0) {
-        console.log(`    [PROBE] ${done}/${total} (${cached} cached)`)
-      }
-    },
+    logProbeProgress,
     readTags,
     warnings,
     config.probe_concurrency
@@ -336,14 +342,14 @@ export async function probeMusic(
 
         const codecs = new Set(album.audio_quality_summary.map(codecFromQualityEntry))
         const isCodecMix = codecs.size > 1
-        if (isCodecMix && isAcceptableCodecCombo(codecs, rules.acceptable_codec_combos)) {
+        if (isCodecMix && isAcceptableCombo(codecs, rules.acceptable_codec_combos)) {
           continue
         }
 
         warnings.add(
           'warn_quality_inconsistent',
           albumWarningPath(album.media_type, artist.artist, album.album),
-          `Mixed track quality: ${album.audio_quality_summary.join(', ')}.`,
+          `Mixed track quality: ${describeQualityMix(album.audio_quality_summary)}.`,
           {
             fix:
               `Usually a mid-album re-encode, or files added at different bitrates. Re-encode ` +
@@ -398,13 +404,15 @@ export async function probeMusic(
         const withAudio = album.tracks.filter(t => t.audio !== null)
         const missing = withAudio.filter(t => t.duration_seconds === null)
         if (missing.length === 0) continue
-        const names = missing.slice(0, 3).map(t => `'${path.posix.basename(t.path)}'`)
-        const more = missing.length > 3 ? `, +${missing.length - 3} more` : ''
+        const names = quotedList(
+          missing.map(t => path.posix.basename(t.path)),
+          3
+        )
         warnings.add(
           'warn_missing_duration',
           albumWarningPath(album.media_type, artist.artist, album.album),
           `${missing.length}/${withAudio.length} tracks have no length in their header: ` +
-            `${names.join(', ')}${more}.`,
+            `${names}.`,
           {
             fix:
               `The file plays, but its header doesn't record its length, so players can show ` +
@@ -416,8 +424,8 @@ export async function probeMusic(
     }
   }
 
-  // Tag-driven checks — only run when at least one track in any album has
-  // tags. Saves time on libraries without ID3 data (rare but possible).
+  // Tag-driven checks. An album with no readable tags is skipped inside, so
+  // a library without ID3 data costs nothing here.
   analyzeTags(aggregated, rules, warnings)
 
   const byPath = new Map<string, ProbeData>()
@@ -512,14 +520,14 @@ function analyzeTags(
         // album_artist needed.
         const hasArtistish = (t.tags.artist || t.tags.album_artist)?.trim()
         if (!t.tags.title || !t.tags.album || !hasArtistish) {
-          missingTagsTracks.push(t.path)
+          missingTagsTracks.push(path.posix.basename(t.path))
         }
 
         // Track-number mismatch: only flag when the tag is present and
         // differs from the filename track number.
         if (t.tags.track !== null && t.tags.track !== t.track) {
           trackNumberMismatches.push({
-            filename: t.path,
+            filename: path.posix.basename(t.path),
             tag: t.tags.track,
             expected: t.track,
           })
@@ -538,12 +546,11 @@ function analyzeTags(
         albumArtistSet.size > 1 &&
         !isVariousArtists(artist.artist)
       ) {
-        const sample = [...albumArtistSet].slice(0, 5).join(', ')
-        const more = albumArtistSet.size > 5 ? `, ... +${albumArtistSet.size - 5} more` : ''
+        const sample = listWithMore([...albumArtistSet], 5)
         warnings.add(
           'warn_compilation_detected',
           albumPath,
-          `${albumArtistSet.size} distinct AlbumArtist tags (${sample}${more}), but not under ` +
+          `${albumArtistSet.size} distinct AlbumArtist tags (${sample}), but not under ` +
             `'Various Artists'.`,
           {
             ...albumOpts,
@@ -604,15 +611,11 @@ function analyzeTags(
 
       // ── Missing tags ─────────────────────────────────────────────────
       if (rules.checks.warn_missing_tags && missingTagsTracks.length > 0) {
-        const sample = missingTagsTracks
-          .slice(0, 3)
-          .map(p => `'${p}'`)
-          .join(', ')
-        const more = missingTagsTracks.length > 3 ? `, +${missingTagsTracks.length - 3} more` : ''
+        const sample = quotedList(missingTagsTracks, 3)
         warnings.add(
           'warn_missing_tags',
           albumPath,
-          `${missingTagsTracks.length} tracks missing title, album or artist tags: ${sample}${more}.`,
+          `${missingTagsTracks.length} tracks missing title, album or artist tags: ${sample}.`,
           {
             ...albumOpts,
             fix: `Plex falls back to parsing the filename for these. Tag them for cleaner metadata.`,
@@ -622,17 +625,16 @@ function analyzeTags(
 
       // ── Track-number mismatch ────────────────────────────────────────
       if (rules.checks.warn_track_number_mismatch && trackNumberMismatches.length > 0) {
-        const sample = trackNumberMismatches
-          .slice(0, 3)
-          .map(m => `'${m.filename}' (filename=${m.expected}, tag=${m.tag})`)
-          .join('; ')
-        const more =
-          trackNumberMismatches.length > 3 ? `; +${trackNumberMismatches.length - 3} more` : ''
+        const sample = listWithMore(
+          trackNumberMismatches.map(m => `'${m.filename}' (filename=${m.expected}, tag=${m.tag})`),
+          3,
+          '; '
+        )
         warnings.add(
           'warn_track_number_mismatch',
           albumPath,
           `${trackNumberMismatches.length} tracks whose number differs between filename and tag: ` +
-            `${sample}${more}.`,
+            `${sample}.`,
           {
             ...albumOpts,
             fix: `Usually an accidental rename — check the tag is right, then rename the file.`,

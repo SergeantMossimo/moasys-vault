@@ -6,7 +6,13 @@
  * everywhere it's used — no silent mismatches between modules.
  */
 
-import { canonicalName, deriveScope, EMPTY_IGNORE_LIST, isWarningIgnored } from './ignored'
+import {
+  canonicalName,
+  deriveScope,
+  EMPTY_IGNORE_LIST,
+  isWarningIgnored,
+  LIBRARY_ROOT,
+} from './ignored'
 import type { IgnoreList, IgnoreMediaType, WarningScope } from './ignored'
 
 // ─────────────────────────────────────────────
@@ -19,6 +25,9 @@ import type { IgnoreList, IgnoreMediaType, WarningScope } from './ignored'
  */
 import type { Category, ResolvedCategory } from './rules/helpers'
 import type { ProbeData } from '../probe/types'
+import type { DirReader } from './dir-reader'
+import type { z } from 'zod'
+import type { AppConfigSchema } from './config'
 export type { Category, ResolvedCategory }
 
 /**
@@ -65,22 +74,12 @@ export type MusicConfig = BaseMediaConfig
 export type AudiobooksConfig = BaseMediaConfig
 
 /**
- * The full shape of config.json. Each media type is a list of named roots,
- * ordered — the first entry is the default when a run doesn't name a drive.
- * A type you don't have is simply left out; read lists through `rootsFor()`.
+ * The full shape of config.json, inferred from its Zod schema so the two can't
+ * drift. Each media type is a list of named roots, ordered — the first entry
+ * is the default when a run doesn't name a drive. A type you don't have is
+ * simply left out; read lists through `rootsFor()`.
  */
-export interface AppConfig {
-  _notes?: Record<string, string> // Optional documentation keys — ignored by scanner
-  movies?: MediaRootConfig[]
-  shows?: MediaRootConfig[]
-  music?: MediaRootConfig[]
-  audiobooks?: MediaRootConfig[]
-  /** Optional Plex connection settings — see `PlexConfigSchema` in core/config.ts. */
-  plex?: {
-    url: string
-    path_map?: Array<{ plex: string; local: string }>
-  }
-}
+export type AppConfig = z.infer<typeof AppConfigSchema>
 
 // ─────────────────────────────────────────────
 // Warning types
@@ -298,6 +297,12 @@ export interface MovieRecord {
   year: number
   edition: string | null // null = no edition tag, string = edition name
   tmdb_id: number | null // from a {tmdb-N} tag — the file's, else the folder's
+  /**
+   * The movie folder's name as it sits on disk (first one seen), tags and all.
+   * Warnings that span categories use it as the movie level, so an ignore
+   * entry naming the folder reaches them.
+   */
+  folder: string
   versions: Version[] // may contain duplicates; deduped on serialize
 }
 
@@ -307,6 +312,13 @@ export interface MovieOutput {
   year: number
   edition: string | null
   tmdb_id: number | null
+  /**
+   * The movie folder as named on disk. Not always `Title (Year)` plus tags:
+   * an edition is often a file inside a shared folder (`The Hobbit (2014)/
+   * The Hobbit (2014) {edition-M4 Book Edit}.mp4`), so it can't be rebuilt
+   * from the fields above.
+   */
+  folder: string
   versions: Version[] // sorted by category order, then by quality
 }
 
@@ -424,6 +436,8 @@ export interface BookRecord {
 export interface BookOutput {
   title: string
   authors: string[]
+  /** The author folder exactly as named on disk — `authors` is parsed from it. */
+  author_folder: string
   chapter_count: number
   versions: Version[]
 }
@@ -437,7 +451,7 @@ export interface BookOutput {
  * The core scanner calls these functions without knowing which media type it's working with.
  * Adding a new media type means implementing this interface in a new file.
  */
-export interface MediaModule<TRecord, TOutput, TConfig extends BaseMediaConfig> {
+export interface MediaModule<TRecord, TOutput> {
   /**
    * Return the effective categories for this module. The factory resolves
    * this from rules.categories, synthesizing a single-entry list pointing
@@ -446,6 +460,9 @@ export interface MediaModule<TRecord, TOutput, TConfig extends BaseMediaConfig> 
    */
   getCategories(): ResolvedCategory[]
 
+  /** Whether the scanner runs `warn_unlisted_folder` — the type's rules toggle. */
+  warnUnlistedFolders: boolean
+
   /**
    * Walk one category folder and return a map of records found.
    *
@@ -453,12 +470,15 @@ export interface MediaModule<TRecord, TOutput, TConfig extends BaseMediaConfig> 
    * slashes) so video modules can derive a `quality` for each version from
    * the file's dimensions. Audio modules generally ignore it and key off
    * the file extension instead.
+   *
+   * List folders through `dir` rather than `fs` — the probe pass has already
+   * listed most of them, and `dir` hands those listings back from memory.
    */
   scanCategory(
     folderPath: string,
     folderName: string,
     category: string,
-    config: TConfig,
+    dir: DirReader,
     warnings: WarningCollector,
     probeByPath: Map<string, ProbeData>
   ): Map<string, TRecord>
@@ -504,7 +524,7 @@ function folderOf(scope: WarningScope): {
   const prefix = [category, scope.levels[0]].filter(s => s !== undefined && s !== '').join('/')
   const fold = (s: string): string => s.trim().toLowerCase()
   return {
-    key: `${fold(category ?? '')} ${fold(name)}`,
+    key: `${fold(category ?? '')}\u0000${fold(name)}`,
     prefix,
   }
 }
@@ -519,11 +539,32 @@ function folderOf(scope: WarningScope): {
  * `Firefly (2002) — Season 1` becomes the folder `HD/Firefly (2002)` plus the
  * row `Season 1`, losing nothing.
  */
+/**
+ * A warning's path with forward slashes. The top of a library with no
+ * categories has no name of its own relative to `root_path`, so it becomes
+ * `LIBRARY_ROOT` rather than an empty string nothing could point at.
+ */
+function libraryPath(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  return normalized === '' ? LIBRARY_ROOT : normalized
+}
+
 function relativePath(fullPath: string, prefix: string, scope: WarningScope): string | undefined {
   if (prefix !== '' && fullPath === prefix) return undefined
   if (prefix !== '' && fullPath.startsWith(`${prefix}/`)) return fullPath.slice(prefix.length + 1)
   const tail = scope.levels.slice(1).join('/')
   return tail === '' ? undefined : tail
+}
+
+/**
+ * What the collector actually stores: a `Warning` plus the scope `add()`
+ * derived for it. The scope is kept because the folder grouping needs the same
+ * `{categories, levels}` split the ignore matcher uses — re-deriving it later
+ * would let the two drift apart. It never leaves the collector: `all()` strips
+ * it, and nothing on disk carries it.
+ */
+interface CollectedWarning extends Warning {
+  scope: WarningScope
 }
 
 /**
@@ -537,17 +578,6 @@ function relativePath(fullPath: string, prefix: string, scope: WarningScope): st
  * fix. Silenced warnings are still counted via `silencedCount()` so the
  * runner can surface "N silenced" in its summary.
  */
-/**
- * What the collector actually stores: a `Warning` plus the scope `add()`
- * derived for it. The scope is kept because the folder grouping needs the same
- * `{categories, levels}` split the ignore matcher uses — re-deriving it later
- * would let the two drift apart. It never leaves the collector: `all()` strips
- * it, and nothing on disk carries it.
- */
-interface CollectedWarning extends Warning {
-  scope: WarningScope
-}
-
 export class WarningCollector {
   private warnings: CollectedWarning[] = []
   private silenced = 0
@@ -557,12 +587,12 @@ export class WarningCollector {
    * null when no list was supplied, in which case ordering falls back to a
    * plain case-fold.
    */
-  private readonly suggestFor: IgnoreMediaType | null
+  private readonly foldNamesAs: IgnoreMediaType | null
 
   /**
-   * @param ignored       loaded ignore list for this drive + media type. When
-   *                      given (even empty), each row also carries a
-   *                      ready-to-paste `ignore` entry for that media type.
+   * @param ignored       loaded ignore list for this drive + media type. Its
+   *                      media type also decides how rows are ordered within
+   *                      a folder (`Season 1` beside `Season 01`).
    * @param hasCategories false when `rules.categories` is empty. Such a
    *                      library has no category segment, so every warning
    *                      path is one level shallower and scope derivation
@@ -576,7 +606,7 @@ export class WarningCollector {
     private hasCategories: boolean = true
   ) {
     this.ignored = ignored ?? EMPTY_IGNORE_LIST
-    this.suggestFor = ignored?.mediaType ?? null
+    this.foldNamesAs = ignored?.mediaType ?? null
   }
 
   /** Add a warning. type, path, and issue are required; `options` is optional.
@@ -588,11 +618,11 @@ export class WarningCollector {
    *            differ row to row. The remedy goes in `options.fix`, not here.
    *  - options: `extension`, `scope` and `fix` — see `WarningOptions`. */
   add(type: string, path: string, issue: string, options: WarningOptions = {}): void {
-    const normalizedPath = path.replace(/\\/g, '/')
+    const normalizedPath = libraryPath(path)
     // Always derived, even with no ignore list: the folder grouping keys on it,
     // so it can't be conditional or two collectors would produce two different
     // on-disk shapes. It's one split per warning — the cost is nil.
-    const scope = options.scope ?? deriveScope(normalizedPath, this.hasCategories)
+    const scope = options.scope ?? this.scopeOf(normalizedPath)
     if (this.ignored.entries.length > 0 && isWarningIgnored(scope, this.ignored)) {
       this.silenced++
       return
@@ -612,8 +642,17 @@ export class WarningCollector {
    */
   isIgnored(path: string, scope?: WarningScope): boolean {
     if (this.ignored.entries.length === 0) return false
-    const normalizedPath = path.replace(/\\/g, '/')
-    return isWarningIgnored(scope ?? deriveScope(normalizedPath, this.hasCategories), this.ignored)
+    return isWarningIgnored(scope ?? this.scopeOf(libraryPath(path)), this.ignored)
+  }
+
+  /**
+   * The scope of a warning at `normalizedPath`. The top of a library with no
+   * categories is `LIBRARY_ROOT`, standing in as its category, so a
+   * `folders: ['.']` entry can silence what's found there.
+   */
+  private scopeOf(normalizedPath: string): WarningScope {
+    if (normalizedPath === LIBRARY_ROOT) return { categories: [LIBRARY_ROOT], levels: [] }
+    return deriveScope(normalizedPath, this.hasCategories)
   }
 
   /**
@@ -663,20 +702,22 @@ export class WarningCollector {
     const sortPath = (w: CollectedWarning, prefix: string): string => {
       const rel = relativePath(w.path, prefix, w.scope)
       if (rel === undefined) return '' // folder-level rows sort first
-      if (this.suggestFor === null) return rel.toLowerCase()
+      if (this.foldNamesAs === null) return rel.toLowerCase()
       // Segment i of the relative path sits at level 2 + i: the folder itself
       // is level 1. That is what routes a shows season through the season fold.
       return rel
         .split('/')
-        .map((seg, i) => canonicalName(this.suggestFor!, 2 + i, seg))
+        .map((seg, i) => canonicalName(this.foldNamesAs!, 2 + i, seg))
         .join('/')
     }
 
     return [...groups.values()]
       .map(({ meta, rows }) => {
+        // Keys computed once per row rather than on every comparison.
+        const keys = new Map(rows.map(w => [w, sortPath(w, meta.prefix)]))
         const ordered = [...rows].sort((a, b) => {
-          const ka = sortPath(a, meta.prefix)
-          const kb = sortPath(b, meta.prefix)
+          const ka = keys.get(a)!
+          const kb = keys.get(b)!
           if (ka !== kb) return ka.localeCompare(kb)
           if (a.type !== b.type) return a.type.localeCompare(b.type)
           return a.issue.localeCompare(b.issue)

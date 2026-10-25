@@ -118,6 +118,23 @@ describe('libraryPathFinder', () => {
     expect(findPath(`Could not read '${ep}': bad data`)).toBe(ep)
     expect(findPath(`Updating part with ID=1 [${ep}]`)).toBe(ep)
   })
+
+  it("finds a Windows-hosted server's backslash paths from forward-slash prefixes", () => {
+    const find = libraryPathFinder(['E:/Media/Shows'])
+    const ep = 'E:\\Media\\Shows\\Firefly (2002)\\Season 01\\Firefly (2002) - s01e01.mkv'
+    expect(find(`[MI] Opening input file: "${ep}"`)).toBe(ep)
+    expect(find(`Media part analysis: ${ep.toLowerCase()}`)).toBe(ep.toLowerCase())
+  })
+})
+
+describe('normalizeSignature — Windows paths', () => {
+  it('groups the same problem on two Windows paths under one signature', () => {
+    // Unquoted, a path ends at the first space — the same rule as `/…` paths.
+    expect(normalizeSignature('Failed to open E:\\Media\\Shows\\Alpha\\a.mkv')).toBe(
+      normalizeSignature('Failed to open E:\\Media\\Movies\\Beta\\b.mkv')
+    )
+    expect(normalizeSignature('Failed to open "E:\\Media\\a b.mkv"')).toBe('Failed to open <path>')
+  })
 })
 
 describe('extractEvents', () => {

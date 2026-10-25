@@ -68,6 +68,30 @@ async function duplicateKeys(client: PlexClient, section: PlexSection): Promise<
   return keys
 }
 
+/**
+ * How many collections' contents are fetched at once. Enough to overlap the
+ * server's response time; few enough that a NAS-hosted Plex doesn't notice.
+ */
+const COLLECTION_CONCURRENCY = 4
+
+/** `items.map(fn)` with at most `limit` calls in flight, results in input order. */
+export async function mapConcurrent<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const i = next++
+      results[i] = await fn(items[i]!)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker))
+  return results
+}
+
 async function pullLibrary(
   client: PlexClient,
   mapper: PathMapper,
@@ -95,11 +119,12 @@ async function pullLibrary(
     for (const meta of raw) items.push(toCatalogItem(meta, type, mapper, duplicates))
   }
 
+  // One request per collection's contents — most of a pull's requests — so a
+  // few run at once. Results keep the collections' order.
   const rawCollections = await client.collections(section.key)
-  const collections = []
-  for (const meta of rawCollections) {
-    collections.push(toCollection(meta, await client.collectionItems(meta.ratingKey)))
-  }
+  const collections = await mapConcurrent(rawCollections, COLLECTION_CONCURRENCY, async meta =>
+    toCollection(meta, await client.collectionItems(meta.ratingKey))
+  )
 
   summary.item_count = items.length
   summary.collection_count = collections.length
@@ -247,7 +272,9 @@ function writeIndex(
   writeJsonOutput(path.join(PLEX_OUTPUT_DIR, 'libraries.json'), index)
 }
 
-main().catch(err => {
-  console.error(err)
-  process.exit(1)
-})
+if (require.main === module) {
+  main().catch(err => {
+    console.error(err)
+    process.exit(1)
+  })
+}

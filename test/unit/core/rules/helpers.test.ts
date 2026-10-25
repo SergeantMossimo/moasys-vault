@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 import {
   PatternSchema,
   CategorySchema,
+  CategoryListSchema,
   canonicalEpisodeCode,
   compilePattern,
   detectQuality,
@@ -36,14 +37,20 @@ describe('PatternSchema', () => {
   })
 
   it('accepts each valid flag letter', () => {
-    for (const flag of ['d', 'g', 'i', 'm', 's', 'u', 'y']) {
+    for (const flag of ['d', 'i', 'm', 's', 'u']) {
       expect(() => PatternSchema.parse({ pattern: 'x', flags: flag })).not.toThrow()
     }
   })
 
   it('accepts combined flag letters', () => {
-    const parsed = PatternSchema.parse({ pattern: 'x', flags: 'gim' })
-    expect(parsed.flags).toBe('gim')
+    const parsed = PatternSchema.parse({ pattern: 'x', flags: 'im' })
+    expect(parsed.flags).toBe('im')
+  })
+
+  it('rejects g and y, which make a reused pattern skip every other name', () => {
+    for (const flags of ['g', 'y', 'gi']) {
+      expect(() => PatternSchema.parse({ pattern: 'x', flags })).toThrow(/g and y are not allowed/)
+    }
   })
 })
 
@@ -77,6 +84,22 @@ describe('CategorySchema', () => {
 
   it('rejects a category missing the name field', () => {
     expect(() => CategorySchema.parse({})).toThrow()
+  })
+
+  it('rejects the reserved name used for an uncategorized library', () => {
+    expect(() => CategorySchema.parse({ name: 'Default' })).toThrow(/reserved/)
+  })
+})
+
+describe('CategoryListSchema', () => {
+  it('accepts distinct names', () => {
+    expect(CategoryListSchema.parse([{ name: 'UHD' }, { name: 'HD' }])).toHaveLength(2)
+  })
+
+  it('rejects the same folder listed twice, ignoring case', () => {
+    expect(() => CategoryListSchema.parse([{ name: 'HD' }, { name: 'hd' }])).toThrow(
+      /duplicate category 'hd'/
+    )
   })
 })
 

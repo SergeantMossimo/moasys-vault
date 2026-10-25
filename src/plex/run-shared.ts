@@ -24,7 +24,8 @@ import { loadTypeRules } from '../core/rules/registry'
 import { PROJECT_ROOT } from '../core/project'
 import { warningBreakdown, writeWarnings } from '../core/runner-shared'
 
-import { MediaType } from './types'
+import { PLEX_OUTPUT_DIR } from './setup'
+import { MediaType, PlexCatalogOutput, PlexLibrariesOutput, PlexLibrarySummary } from './types'
 
 export { MEDIA_TYPES } from '../core/project'
 
@@ -32,8 +33,46 @@ export { MEDIA_TYPES } from '../core/project'
 // Scan output
 // ─────────────────────────────────────────────
 
-function readJson<T>(p: string): T {
+export function readJson<T>(p: string): T {
   return JSON.parse(fs.readFileSync(p, 'utf-8')) as T
+}
+
+// ─────────────────────────────────────────────
+// Plex pull output
+// ─────────────────────────────────────────────
+
+/**
+ * output/plex/libraries.json from the last `plex:pull`. Exits with a pointer
+ * to the pull when it hasn't been run.
+ */
+export function readLibraries(): PlexLibrariesOutput {
+  const librariesPath = path.join(PLEX_OUTPUT_DIR, 'libraries.json')
+  if (!fs.existsSync(librariesPath)) {
+    console.error(`\n  Error: ${librariesPath} not found. Run \`npm run plex:pull\` first.`)
+    process.exit(1)
+  }
+  return readJson<PlexLibrariesOutput>(librariesPath)
+}
+
+/**
+ * One library's pulled catalog, or null with a `[SKIP]` line saying what's
+ * lost (`consequence`) when it hasn't been pulled.
+ */
+export function readPulledCatalog(
+  library: PlexLibrarySummary,
+  consequence: string
+): PlexCatalogOutput | null {
+  const catalogPath = path.join(PLEX_OUTPUT_DIR, library.slug, 'catalog.json')
+  if (!fs.existsSync(catalogPath)) {
+    console.log(`    [SKIP] '${library.title}' hasn't been pulled — ${consequence}.`)
+    return null
+  }
+  const catalog = readJson<PlexCatalogOutput>(catalogPath)
+  // Per library: a pull of one library leaves the others as old as they were.
+  console.log(
+    `    [INPUT] '${library.title}' pulled ${new Date(catalog.generated).toLocaleString()}`
+  )
+  return catalog
 }
 
 /** Every library-relative file path in a probe.json, whatever the media type's shape. */
@@ -90,8 +129,8 @@ export function plexWarningCollector(
   unfiltered: boolean
 ): WarningCollector {
   const { hasCategories } = typeRules(mediaType)
-  // An empty list rather than none, so unfiltered rows still carry their
-  // ready-to-paste ignore entry.
+  // An empty list rather than none: its media type orders rows within a
+  // folder the same way the filtered file does.
   return unfiltered
     ? new WarningCollector({ mediaType, entries: [] }, hasCategories)
     : new WarningCollector(

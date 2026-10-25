@@ -19,10 +19,19 @@
  *      sub-folder works too: `/volume1/Media/Movies/HD` ↔ `M:\Movies` with
  *      every file landing under `HD/`.
  *
+ * When a location could belong to roots of several media types — one share
+ * holding Movies/ and Shows/ under a common root_path, say — the library's own
+ * type (movie, show, artist) picks between them. Two roots of the SAME type
+ * with the same folder name still need a `path_map` entry to tell apart.
+ *
+ * A root at the top of a drive (`D:\`) has no folder name to match on, so it
+ * needs `path_map` too.
+ *
  * Comparison is case-insensitive: the local side is Windows/SMB, where case
  * never distinguishes two folders.
  */
 
+import { MEDIA_TYPES } from '../core/project'
 import { MediaRootConfig } from '../core/types'
 
 import { MediaType, PlexSection } from './types'
@@ -70,11 +79,26 @@ export function normalizePath(p: string): string {
   return slashed.length > 1 ? slashed.replace(/\/+$/, '') : slashed
 }
 
-/** Path segments, ignoring empty ones and a Windows drive letter's colon. */
+/** Path segments, ignoring empty ones and a Windows drive letter (`D:`). */
 function segments(p: string): string[] {
   return normalizePath(p)
     .split('/')
-    .filter(s => s.length > 0)
+    .filter(s => s.length > 0 && !/^[A-Za-z]:$/.test(s))
+}
+
+/** The media types a Plex library of this type can hold. */
+const SECTION_MEDIA_TYPES: Record<string, MediaType[]> = {
+  movie: ['movies'],
+  show: ['shows'],
+  artist: ['music', 'audiobooks'],
+}
+
+/** Keep the items whose root suits the library type, unless that would leave none. */
+function preferSectionType<T extends { root: RootRef }>(items: T[], sectionType?: string): T[] {
+  const types = sectionType ? SECTION_MEDIA_TYPES[sectionType] : undefined
+  if (!types) return items
+  const suited = items.filter(item => types.includes(item.root.mediaType))
+  return suited.length > 0 ? suited : items
 }
 
 /**
@@ -101,8 +125,7 @@ function joinRelative(a: string, b: string): string {
 
 /** Flatten config.json's per-type root lists into tagged refs. */
 export function rootRefs(config: Partial<Record<MediaType, MediaRootConfig[]>>): RootRef[] {
-  const types: MediaType[] = ['movies', 'shows', 'music', 'audiobooks']
-  return types.flatMap(mediaType =>
+  return MEDIA_TYPES.flatMap(mediaType =>
     (config[mediaType] ?? []).map(root => ({
       mediaType,
       name: root.name,
@@ -111,9 +134,15 @@ export function rootRefs(config: Partial<Record<MediaType, MediaRootConfig[]>>):
   )
 }
 
+function toMapped(root: RootRef, relative: string): MappedPath {
+  return { mediaType: root.mediaType, drive: root.name, relative }
+}
+
 export class PathMapper {
   private readonly locations: LocationEntry[] = []
   private readonly pathMap: PathMapEntry[]
+  /** Most specific root first, so D:\Shows\Move beats D:\Shows. */
+  private readonly rootsBySpecificity: RootRef[]
   /** Library locations that matched no root, for the run summary. */
   readonly unmappedLocations: Array<{ library: string; path: string }> = []
   /** Locations that matched more than one root, where the first was used. */
@@ -124,6 +153,7 @@ export class PathMapper {
     sections: PlexSection[],
     pathMap: Array<{ plex: string; local: string }> = []
   ) {
+    this.rootsBySpecificity = [...roots].sort((a, b) => b.root_path.length - a.root_path.length)
     // Longest prefix first, so a specific entry beats a general one.
     this.pathMap = pathMap
       .map(e => ({ plexPrefix: normalizePath(e.plex), localPrefix: normalizePath(e.local) }))
@@ -131,7 +161,7 @@ export class PathMapper {
 
     for (const section of sections) {
       for (const location of section.Location ?? []) {
-        this.addLocation(section.title, location.path)
+        this.addLocation(section, location.path)
       }
     }
     this.locations.sort((a, b) => b.plexPrefix.length - a.plexPrefix.length)
@@ -141,30 +171,25 @@ export class PathMapper {
    * Work out which root a library location corresponds to. `path_map` is
    * consulted first; otherwise the root whose final folder name occurs in
    * the location path (last occurrence wins, so `/Media/Movies/Movies` maps
-   * the inner one).
+   * the inner one). Either way, roots that suit the library's type win.
    */
-  private addLocation(library: string, plexPath: string): void {
-    const viaMap = this.mapViaPathMap(plexPath)
+  private addLocation(section: PlexSection, plexPath: string): void {
+    const library = section.title
+    const viaMap = this.mapViaPathMap(plexPath, section.type)
     if (viaMap) {
-      const root = this.roots.find(
-        r => r.mediaType === viaMap.mediaType && r.name === viaMap.drive
-      )!
-      this.locations.push({
-        plexPrefix: normalizePath(plexPath),
-        root,
-        relativePrefix: viaMap.relative,
-      })
+      this.locations.push({ plexPrefix: normalizePath(plexPath), ...viaMap })
       return
     }
 
-    const locationSegments = segments(plexPath)
-    const candidates: Array<{ root: RootRef; index: number }> = []
+    const locationSegments = segments(plexPath).map(s => s.toLowerCase())
+    const matches: Array<{ root: RootRef; index: number }> = []
     for (const root of this.roots) {
       const rootName = segments(root.root_path).at(-1)?.toLowerCase()
       if (!rootName) continue
-      const index = locationSegments.map(s => s.toLowerCase()).lastIndexOf(rootName)
-      if (index !== -1) candidates.push({ root, index })
+      const index = locationSegments.lastIndexOf(rootName)
+      if (index !== -1) matches.push({ root, index })
     }
+    const candidates = preferSectionType(matches, section.type)
 
     if (candidates.length === 0) {
       this.unmappedLocations.push({ library, path: plexPath })
@@ -182,41 +207,47 @@ export class PathMapper {
     this.locations.push({
       plexPrefix: normalizePath(plexPath),
       root,
-      relativePrefix: locationSegments.slice(index + 1).join('/'),
+      // Sliced from the original-case segments, so the relative path keeps its spelling.
+      relativePrefix: segments(plexPath)
+        .slice(index + 1)
+        .join('/'),
     })
   }
 
-  /** Translate through `plex.path_map`, then find the root the local path falls under. */
-  private mapViaPathMap(plexPath: string): MappedPath | null {
+  /**
+   * Translate through `plex.path_map`, then find the root the local path
+   * falls under — the most specific one, preferring roots that suit
+   * `sectionType` when several share a path.
+   */
+  private mapViaPathMap(
+    plexPath: string,
+    sectionType?: string
+  ): { root: RootRef; relativePrefix: string } | null {
     for (const entry of this.pathMap) {
       const rest = stripPrefix(plexPath, entry.plexPrefix)
       if (rest === null) continue
       const local = joinRelative(entry.localPrefix, rest)
-      // Most specific root first, so D:\Shows\Move beats D:\Shows.
-      const roots = [...this.roots].sort((a, b) => b.root_path.length - a.root_path.length)
-      for (const root of roots) {
-        const relative = stripPrefix(local, root.root_path)
-        if (relative !== null) return { mediaType: root.mediaType, drive: root.name, relative }
-      }
-      return null
+      const containing = this.rootsBySpecificity
+        .map(root => ({ root, relativePrefix: stripPrefix(local, root.root_path) }))
+        .filter((m): m is { root: RootRef; relativePrefix: string } => m.relativePrefix !== null)
+      return preferSectionType(containing, sectionType)[0] ?? null
     }
     return null
   }
 
-  /** Map one Plex file path, or null when it falls outside every mapped location. */
+  /**
+   * Map one Plex file path, or null when it falls outside every mapped
+   * location. Library locations are tried first — they already chose a root
+   * by library type — and `path_map` covers files outside any of them.
+   */
   map(plexPath: string): MappedPath | null {
-    const viaMap = this.mapViaPathMap(plexPath)
-    if (viaMap) return viaMap
     for (const location of this.locations) {
       const rest = stripPrefix(plexPath, location.plexPrefix)
       if (rest === null) continue
-      return {
-        mediaType: location.root.mediaType,
-        drive: location.root.name,
-        relative: joinRelative(location.relativePrefix, rest),
-      }
+      return toMapped(location.root, joinRelative(location.relativePrefix, rest))
     }
-    return null
+    const viaMap = this.mapViaPathMap(plexPath)
+    return viaMap ? toMapped(viaMap.root, viaMap.relativePrefix) : null
   }
 
   /** The media type a library's folders map to — the first location that maps decides. */

@@ -102,6 +102,7 @@ checks:
   warn_track_gaps: true               # Gap detected in track numbers (per-disc)
   warn_duplicate_album: true          # Same artist + album in more than one media folder
   warn_loose_files: true              # Audio files at unexpected nesting
+  warn_unlisted_folder: true          # Folder under root_path that isn't a listed category
   warn_extra_subfolders: true         # Unexpected subfolders inside an album folder
   warn_unexpected_entries: true       # Non-audio, non-sidecar files
   warn_quality_inconsistent: true     # Album mixes codecs or has a wide bitrate spread

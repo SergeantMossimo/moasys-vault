@@ -171,9 +171,11 @@ export function mergeWarnings(
   const folders = [...groups.values()]
     .map(folder => {
       folder.commands.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0))
+      // Keys computed once per row rather than on every comparison.
+      const keys = new Map(folder.rows.map(row => [row, sortKeyFor(row, opts.mediaType)]))
       folder.rows.sort((a, b) => {
-        const ka = sortKeyFor(a, opts.mediaType)
-        const kb = sortKeyFor(b, opts.mediaType)
+        const ka = keys.get(a)!
+        const kb = keys.get(b)!
         if (ka !== kb) return ka.localeCompare(kb)
         const ca = order.get(a.command) ?? 0
         const cb = order.get(b.command) ?? 0

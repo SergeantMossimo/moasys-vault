@@ -1,11 +1,50 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 
+import { JsonCache } from '../../../src/validate/cache'
 import {
+  cachedFetch,
+  hasCredits,
   stripFilenameIllegalChars,
   normalizeTitle,
   normalizeTitleLoose,
   parseYear,
 } from '../../../src/validate/helpers'
+
+describe('cachedFetch', () => {
+  type Details = { id: number; credits?: { cast: unknown[]; crew: unknown[] } }
+  const credits = { cast: [], crew: [] }
+
+  function cacheWith(seed: Record<string, Details>): JsonCache<Details> {
+    const cache = new JsonCache<Details>('/dev/null-' + Math.random().toString(36))
+    for (const [k, v] of Object.entries(seed)) cache.set(k, v)
+    return cache
+  }
+
+  it('returns a complete cached entry without fetching', async () => {
+    const fetch = vi.fn()
+    const cache = cacheWith({ '1': { id: 1, credits: { ...credits } } })
+    await cachedFetch(cache, '1', fetch, 'x', hasCredits)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('re-fetches an entry cached before its credits were requested', async () => {
+    const fresh = { id: 1, credits: { ...credits } }
+    const cache = cacheWith({ '1': { id: 1 } })
+    await expect(cachedFetch(cache, '1', async () => fresh, 'x', hasCredits)).resolves.toBe(fresh)
+    expect(cache.get('1')).toBe(fresh)
+  })
+
+  it('falls back to the incomplete entry when the re-fetch fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const old = { id: 1 }
+    const cache = cacheWith({ '1': old })
+    const failing = async (): Promise<Details> => {
+      throw new Error('TMDB HTTP 500')
+    }
+    await expect(cachedFetch(cache, '1', failing, 'x', hasCredits)).resolves.toEqual(old)
+    vi.restoreAllMocks()
+  })
+})
 
 describe('stripFilenameIllegalChars', () => {
   it('strips Windows-illegal characters without replacement', () => {

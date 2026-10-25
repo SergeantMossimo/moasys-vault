@@ -131,6 +131,9 @@ describe('loadRules — three-tier merge', () => {
   })
 
   it('resolves the "current" sentinel to the current year', () => {
+    // A fixed clock, so the test can't straddle midnight on New Year's Eve.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2031-06-15T12:00:00Z'))
     writeYaml('test.yaml', 'name: x\ncount: 0\nyear: current\n')
     const rules = loadRules({
       mediaType: 'test',
@@ -138,13 +141,16 @@ describe('loadRules — three-tier merge', () => {
       defaults,
       projectRoot: tmpDir,
     })
-    expect(rules.year).toBe(new Date().getFullYear())
+    vi.useRealTimers()
+    expect(rules.year).toBe(2031)
   })
 
   it('resolves sentinels nested deep in the rules tree', () => {
     const deepSchema = z.object({
       band: z.object({ to: z.union([z.number(), z.literal('current')]) }),
     })
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2031-06-15T12:00:00Z'))
     writeYaml('deep.yaml', 'band: { to: current }\n')
     const rules = loadRules({
       mediaType: 'deep',
@@ -152,7 +158,8 @@ describe('loadRules — three-tier merge', () => {
       defaults: { band: { to: 1900 } },
       projectRoot: tmpDir,
     })
-    expect(rules.band.to).toBe(new Date().getFullYear())
+    vi.useRealTimers()
+    expect(rules.band.to).toBe(2031)
   })
 
   it('treats a comments-only YAML as no overrides', () => {

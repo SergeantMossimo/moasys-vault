@@ -25,9 +25,8 @@ import { TagData } from './types'
  * tags found", which from a warnings perspective means `missing_tags` may
  * fire if enabled.
  *
- * music-metadata accepts options like `duration: false` to skip the
- * (slow) duration calculation, but we never need it from this path since
- * ffprobe already provides it. Default options keep the call fast.
+ * `duration: false` skips music-metadata's duration calculation, which can
+ * mean reading the whole file — ffprobe already provides the duration.
  */
 export async function readTags(filePath: string): Promise<TagData | null> {
   try {

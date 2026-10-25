@@ -11,8 +11,9 @@
  *      check pass.
  */
 
-/** The four config.json media types. */
-export type MediaType = 'movies' | 'shows' | 'music' | 'audiobooks'
+/** The four config.json media types — one definition, in core/project.ts. */
+import type { MediaType } from '../core/project'
+export type { MediaType }
 
 // ─────────────────────────────────────────────
 // Raw Plex shapes

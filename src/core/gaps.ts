@@ -4,7 +4,27 @@
  * Generic numeric gap detection. Used by shows (episodes),
  * music (tracks), and audiobooks (chapters) to surface missing
  * items inside an otherwise sequential set.
+ *
+ * Also home to the `, +N more` convention every warning uses to cap a list:
+ * `formatGaps` for number runs, `listWithMore` for anything else.
  */
+
+/**
+ * The first `max` of `items`, then a count of the rest:
+ * `'a.flac', 'b.flac', +3 more`. `items` arrive already formatted.
+ */
+export function listWithMore(items: string[], max: number, separator = ', '): string {
+  const more = items.length > max ? `${separator}+${items.length - max} more` : ''
+  return items.slice(0, max).join(separator) + more
+}
+
+/** `listWithMore` over quoted names: `'a.mkv', 'b.mkv', +2 more`. */
+export function quotedList(names: string[], max: number): string {
+  return listWithMore(
+    names.map(n => `'${n}'`),
+    max
+  )
+}
 
 /**
  * Return the integers missing between the min and max of `numbers`.

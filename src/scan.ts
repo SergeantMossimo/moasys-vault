@@ -20,16 +20,10 @@
  *   npm run scan:all external      # every type that has an "External" root
  */
 
-import fs from 'fs'
 import path from 'path'
 
-import {
-  AppConfig,
-  BaseMediaConfig,
-  MediaModule,
-  MediaRootConfig,
-  WarningCollector,
-} from './core/types'
+import { AppConfig, MediaModule, MediaRootConfig, WarningCollector } from './core/types'
+import { DirReader } from './core/dir-reader'
 import { driveSlug, loadConfig } from './core/config'
 import { scan, writeJson } from './core/scanner'
 import { loadTypeRules } from './core/rules/registry'
@@ -80,13 +74,14 @@ const CACHE_DIR = path.join(PROJECT_ROOT, 'cache')
  * movies — a typo in rules/audiobooks.yaml doesn't block an unrelated movies
  * scan, and the boot log prints just one `[RULES] Loaded ...` line.
  */
-interface MediaTypeEntry<TRecord, TOutput, TConfig extends BaseMediaConfig> {
-  module: MediaModule<TRecord, TOutput, TConfig>
+interface MediaTypeEntry<TRecord, TOutput> {
+  module: MediaModule<TRecord, TOutput>
   label: string
   probe: (
-    config: TConfig,
+    config: MediaRootConfig,
     cache: ProbeCache,
-    warnings: WarningCollector
+    warnings: WarningCollector,
+    dir: DirReader
   ) => Promise<{ output: unknown; byPath: Map<string, ProbeData> }>
 }
 
@@ -103,7 +98,7 @@ async function runMediaType(mediaType: MediaType, root: MediaRootConfig): Promis
       return runType(mediaType, root, {
         module: createMoviesModule(rules),
         label: 'Movies',
-        probe: (cfg, cache, warnings) => probeMovies(cfg, rules, cache, warnings),
+        probe: (cfg, cache, warnings, dir) => probeMovies(cfg, rules, cache, warnings, dir),
       })
     }
     case 'shows': {
@@ -111,7 +106,7 @@ async function runMediaType(mediaType: MediaType, root: MediaRootConfig): Promis
       return runType(mediaType, root, {
         module: createShowsModule(rules),
         label: 'Shows',
-        probe: (cfg, cache, warnings) => probeShows(cfg, rules, cache, warnings),
+        probe: (cfg, cache, warnings, dir) => probeShows(cfg, rules, cache, warnings, dir),
       })
     }
     case 'music': {
@@ -119,7 +114,7 @@ async function runMediaType(mediaType: MediaType, root: MediaRootConfig): Promis
       return runType(mediaType, root, {
         module: createMusicModule(rules),
         label: 'Music',
-        probe: (cfg, cache, warnings) => probeMusic(cfg, rules, cache, warnings),
+        probe: (cfg, cache, warnings, dir) => probeMusic(cfg, rules, cache, warnings, dir),
       })
     }
     case 'audiobooks': {
@@ -127,7 +122,7 @@ async function runMediaType(mediaType: MediaType, root: MediaRootConfig): Promis
       return runType(mediaType, root, {
         module: createAudiobooksModule(rules),
         label: 'Audiobooks',
-        probe: (cfg, cache, warnings) => probeAudiobooks(cfg, rules, cache, warnings),
+        probe: (cfg, cache, warnings, dir) => probeAudiobooks(cfg, rules, cache, warnings, dir),
       })
     }
   }
@@ -156,10 +151,10 @@ async function runMediaType(mediaType: MediaType, root: MediaRootConfig): Promis
  * The probe cache makes subsequent runs near-instant: only newly added /
  * modified / removed files trigger a real ffprobe call.
  */
-async function runType<TRecord, TOutput, TConfig extends BaseMediaConfig>(
+async function runType<TRecord, TOutput>(
   mediaType: MediaType,
-  root: TConfig & MediaRootConfig,
-  entry: MediaTypeEntry<TRecord, TOutput, TConfig>
+  root: MediaRootConfig,
+  entry: MediaTypeEntry<TRecord, TOutput>
 ): Promise<void> {
   const slug = driveSlug(root.name)
   const out = typeOutputPaths(PROJECT_ROOT, slug, mediaType)
@@ -169,8 +164,6 @@ async function runType<TRecord, TOutput, TConfig extends BaseMediaConfig>(
   if ((root.probe_concurrency ?? 1) > 1) {
     console.log(`    [PROBE] Up to ${root.probe_concurrency} files at once (probe_concurrency)`)
   }
-
-  fs.mkdirSync(out.dir, { recursive: true })
 
   // A single WarningCollector is shared across both passes so warnings.json
   // collects everything — naming hygiene from scan, quality / ID3 issues from
@@ -192,12 +185,18 @@ async function runType<TRecord, TOutput, TConfig extends BaseMediaConfig>(
   const cache = new ProbeCache(cachePath)
   console.log(`    [CACHE] ${cache.size()} entries loaded from ${cachePath}`)
 
-  const { output: probeOutput, byPath: probeByPath } = await entry.probe(root, cache, warnings)
+  // One listing per folder for the whole run: the scan pass walks the same
+  // folders the probe pass just listed, and reads them back from here.
+  const dir = new DirReader()
+  const { output: probeOutput, byPath: probeByPath } = await entry.probe(root, cache, warnings, dir)
+  // Saved now as well as at the end, so a fresh probe (minutes, on a first
+  // run) survives anything that goes wrong in the scan pass below.
+  cache.save()
 
   // ── Scan pass ─────────────────────────────────────────────────────────
   // Scan reuses the probe results via `probeByPath` so each version's
   // `quality` is populated alongside the structural catalog work.
-  const records = scan(root, entry.module, warnings, probeByPath)
+  const records = scan(root, entry.module, warnings, probeByPath, dir)
 
   // ── Write outputs ─────────────────────────────────────────────────────
   console.log('\n  Writing output...')
@@ -214,7 +213,7 @@ async function runType<TRecord, TOutput, TConfig extends BaseMediaConfig>(
   const missingCategories = entry.module
     .getCategories()
     .map(c => c.folderName)
-    .filter(name => name !== '' && !fs.existsSync(path.join(root.root_path, name)))
+    .filter(name => name !== '' && !dir.isDirectory(path.join(root.root_path, name)))
   const orphans = cache.pruneOrphans(root.root_path, missingCategories, new Set(probeByPath.keys()))
   cache.save()
   const orphanSummary = orphans > 0 ? ` (pruned ${orphans} orphan${orphans === 1 ? '' : 's'})` : ''

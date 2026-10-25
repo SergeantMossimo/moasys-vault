@@ -1,0 +1,24 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# MOASYS-Vault — example personal overrides for audiobooks
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Copy to rules/audiobooks.local.yaml (gitignored) and edit. Anything here
+# deep-merges over rules/audiobooks.yaml — set only what differs.
+#
+# This example is for a library split by source:
+#
+#   M:\Audiobooks\
+#     Audible\Andy Weir\The Martian\01 - Chapter 1.m4b
+#     Book On CD\Terry Pratchett\Mort\101 - Chapter 1.mp3
+#
+# If your authors sit directly in M:\Audiobooks\ instead, you don't need this
+# file. See docs/CONFIG.md "Choosing a layout".
+# ─────────────────────────────────────────────────────────────────────────────
+
+categories:
+  - { name: Audible }
+  - { name: Book On CD }
+
+# The same book from both sources is deliberate — don't warn.
+acceptable_book_combos:
+  - [Audible, Book On CD]

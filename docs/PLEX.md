@@ -121,6 +121,8 @@ Plex reports files as the server sees them — on a NAS, something like `/volume
 
 That last row is how a Music-type Plex library holding audiobooks is recognized as audiobooks: media type follows the folder, not the Plex library type.
 
+When a folder matches roots of different media types — one share whose movies and shows roots both end in `Media`, say — the Plex library's type (Movie, TV Show, Music) picks between them. Two roots of the same type with the same last folder name (`M:\Movies` and `D:\Movies`) can't be told apart that way and need `path_map`. So does a root at the top of a drive (`D:\`), which has no folder name to match.
+
 The pull prints a line for any library folder that matches no root, or matches more than one.
 
 **Explicit.** When your folder names don't line up, add `path_map` entries that translate a Plex path prefix to a local one. The longest matching prefix wins, and `path_map` always takes priority over automatic matching:

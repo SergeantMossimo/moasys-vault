@@ -23,20 +23,16 @@ const DEL_CODE = 127
  *   - the nine printable ones: `< > : " | ? * \ /`
  *   - every ASCII control character (0-31) plus DEL (127)
  *
- * Used in three distinct places:
+ * Used in two places:
  *
  *   1. TMDB validation — derive a copy-pasteable rename target when TMDB's
  *      canonical title contains chars the user can't put in a folder name
- *      (`"3:10 to Yuma"` → `"310 to Yuma"`).
+ *      (`"3:10 to Yuma"` → `"310 to Yuma"`). The control range matters here:
+ *      Windows rejects 0-31 outright, and silently accepts DEL, which would
+ *      sit in a suggested name nobody can see is wrong.
  *   2. Music ID3 comparison — when a track's `AlbumArtist` tag is `AC/DC`
  *      but the folder must be `ACDC` (slash isn't legal in folder names),
  *      both forms should compare equal.
- *   3. `tools/rename-shows.ts` — building a real on-disk filename out of a
- *      TMDB episode title. That's the caller that makes the control range
- *      worth handling: Windows rejects 0-31 outright, so one stray character
- *      in upstream metadata would fail the rename and abort the whole batch,
- *      while DEL it silently accepts, which is worse — it would end up
- *      embedded in a filename nobody can see is wrong.
  *
  * Whitespace control characters (tab, newline, CR) go with the rest; callers
  * that care about readability collapse the remaining whitespace runs.
@@ -254,6 +250,25 @@ function isOSArtifact(name: string): boolean {
 }
 
 /**
+ * Folders an OS or a NAS creates on its own — Windows' recycle bin, a
+ * Synology's `#recycle` and `@eaDir` thumbnails, hidden dot-folders. Never
+ * media, so never reported as an unlisted category.
+ */
+const KNOWN_SYSTEM_FOLDERS = new Set([
+  '$recycle.bin',
+  'system volume information',
+  '#recycle',
+  '#snapshot',
+  '@eadir',
+  'lost+found',
+])
+
+/** True if a folder named `name` is OS or NAS housekeeping rather than media. */
+export function isSystemFolder(name: string): boolean {
+  return name.startsWith('.') || KNOWN_SYSTEM_FOLDERS.has(name.toLowerCase())
+}
+
+/**
  * Identify entries that don't fit any expected category at the current
  * filesystem level. An entry counts as "unexpected" when it is:
  *   - a file that doesn't match the media extensions
@@ -283,4 +298,12 @@ export function findUnexpectedEntries(
     if (sidecarSet.has(ext)) return false
     return true
   })
+}
+
+/**
+ * A path with forward slashes — the form every probe-cache key, probe.json
+ * path and warning path uses, so output reads the same on Windows and Unix.
+ */
+export function toRel(p: string): string {
+  return p.split(path.sep).join('/')
 }

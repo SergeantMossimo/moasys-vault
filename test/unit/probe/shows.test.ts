@@ -87,6 +87,22 @@ describe('probeShows', () => {
     expect(result.output[0]?.seasons[0]?.episodes).toHaveLength(2)
   })
 
+  it('orders three-digit episodes numerically', async () => {
+    const hd = fakeProbe({ video: { codec: 'h264', width: 1920, height: 1080, frame_rate: 24 } })
+    const files = ['S01E100', 'S01E99', 'S01E02'].map(code => `Show (2020) - ${code}.mp4`)
+    const { rules, root, cache, warnings } = setup({
+      spec: { HD: { 'Show (2020)': { 'Season 01': Object.fromEntries(files.map(f => [f, ''])) } } },
+      probes: Object.fromEntries(files.map(f => [`HD/Show (2020)/Season 01/${f}`, hd])),
+    })
+
+    const result = await probeShows({ root_path: root }, rules, cache, warnings)
+    expect(result.output[0]?.seasons[0]?.episodes.map(e => e.episode)).toEqual([
+      'S01E02',
+      'S01E99',
+      'S01E100',
+    ])
+  })
+
   /**
    * Keyed on the edition as well as title+year, matching the scan pass. Fold
    * them together and one edition's season absorbs the other's episodes, which

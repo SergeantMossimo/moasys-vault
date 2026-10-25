@@ -47,7 +47,7 @@ Movies/
 - **The TMDB tag goes after any edition tag.** `{tmdb-78} {edition-Final Cut}` fires `warn_bad_file_name`. If the folder and file both carry one and the IDs differ, that's `warn_tmdb_tag_mismatch`, and the file's ID wins.
 - **Capitalization counts.** A file titled `The crow (1994)` in `The Crow (1994)/` gets its own lower-severity capitalization warning, separate from a genuinely different title.
 - **No subfolders inside a movie folder.** The scanner only reads a movie folder's direct children — video files in a subfolder are **not** added to the catalog. The subfolder is flagged so you know what was skipped.
-- **Quality folders.** If your categories are organized by quality (`UHD/`, `HD/`, `SD/`), the same movie in two tiers is flagged unless you whitelist the pair, and two copies in the _same_ tier (`HD/` + `Other HD/`) always are. See [Three configuration shapes](CONFIG.md#three-configuration-shapes).
+- **Quality folders.** If your categories are organized by quality (`UHD/`, `HD/`, `SD/`), the same movie in two tiers is flagged unless you whitelist the pair, and two copies in the _same_ tier (`HD/` + `Other HD/`) always are. See [Choosing a layout](CONFIG.md#choosing-a-layout).
 
 ---
 
@@ -76,7 +76,7 @@ Movies/
 - **Episode file:** `Show Title (YEAR) - S01E01 - Episode Title.<ext>`
   - The trailing `- Episode Title` portion is optional, but files without it are summarized as missing titles
   - Multi-episode files use `S01E01-E02`
-  - Episode numbers are zero-padded to two digits; three are fine for long-running specials (`S00E201`). An unpadded `S02E4` is flagged, and `fix:shows --fix episode-code` pads it
+  - Episode numbers are zero-padded to two digits; three are fine for long-running specials (`S00E201`). An unpadded `S02E4` is flagged
   - Plex reads `s01e01` and `S01E01` alike. To keep your library consistent, set a house style with [`episode_code_case`](CONFIG.md#episode_code_case)
 
 **Special seasons:**
@@ -134,7 +134,6 @@ Shows/
 - **`Season 1` isn't `Season 01`.** Season folders must be zero-padded, unless the name is listed in `ignored_season_names`.
 - **Episodes need a season folder.** Files directly in a show folder are **not** added to the catalog, and neither are files in a subfolder inside a season.
 - **Gap detection counts multi-episode files fully** — `S01E01-E02` covers episodes 1 and 2. It only sees gaps _between_ episodes you have; a missing final episode needs the [TMDB episode count](SCANS.md#what-it-catches) check.
-- **Too many files to rename by hand?** [`npm run fix:shows`](SCANS.md#fixing-filenames--npm-run-fixshows) can repair show prefixes, add episode titles, and normalize episode codes.
 
 ---
 

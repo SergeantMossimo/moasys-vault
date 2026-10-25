@@ -114,8 +114,6 @@ const PlexConfigSchema = z.object({
     .optional(),
 })
 
-export type PlexConfig = z.infer<typeof PlexConfigSchema>
-
 /**
  * A media type's list of roots: at least one, with unique names. Names are
  * compared case-insensitively because they resolve to folder names, and

@@ -27,20 +27,25 @@ JSON Schema (Draft 2020-12) definitions for everything the scanner writes under 
 Plug them into [ajv](https://ajv.js.org/), [zod](https://zod.dev/) (via [json-schema-to-zod](https://github.com/StefanTerdell/json-schema-to-zod)), or whatever validator your stack prefers:
 
 ```ts
-import Ajv from 'ajv'
+// Draft 2020-12 schemas need ajv's 2020 build, not its default export.
+import Ajv2020 from 'ajv/dist/2020'
 import addFormats from 'ajv-formats'
 import warningsSchema from './schemas/warnings.json'
 
-const ajv = new Ajv()
+const ajv = new Ajv2020()
 addFormats(ajv)
 const validate = ajv.compile(warningsSchema)
 if (!validate(yourWarningsJson)) console.error(validate.errors)
 ```
 
-Note that `ajv` is not a dependency of this repo — the snippet is for your consumer, and Draft 2020-12 needs ajv's `Ajv2020` export (`ajv/dist/2020`) rather than the default one.
+The repo has `ajv` only as a dev dependency, for the test described under [Drift](#drift) — add it to your own project to use the snippet.
+
+`data/probe.json` has no schema on purpose: it's the inspection data other commands read back, and its shape follows ffprobe and the tag reader, so treat it as internal. Build on the catalogs and `data/validation.json` instead.
 
 Output files don't carry a `$schema` key of their own (every schema sets `additionalProperties: false`, which would reject one), so point your IDE at these by mapping the filenames in your editor settings.
 
 ## Drift
 
 These schemas are hand-maintained alongside the TypeScript types in [src/core/types.ts](../src/core/types.ts), [src/validate/types.ts](../src/validate/types.ts), [src/plex/types.ts](../src/plex/types.ts), and [src/plex/log-checks.ts](../src/plex/log-checks.ts) (`PlexLogSummaryOutput`). If you change a catalog shape, update the matching schema here in the same PR. The tradeoff vs. generating schemas from Zod: simpler dependencies and zero build step, at the cost of needing one extra file touch per shape change. Shape changes are rare.
+
+[test/unit/schemas.test.ts](../test/unit/schemas.test.ts) keeps them honest: it builds each output with the real code from a small fixture and validates it against its schema, so a shape change that misses its schema fails `npm test`. Ajv is a dev dependency for that test only.

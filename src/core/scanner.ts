@@ -9,10 +9,12 @@
  * creating a new file in media/ and registering it in scan.ts — not changing this.
  */
 
-import fs from 'fs'
 import path from 'path'
 
 import { writeFileAtomic } from './atomic-write'
+import { DirReader } from './dir-reader'
+import { isSystemFolder } from './files'
+import { detectQuality, ResolvedCategory } from './rules/helpers'
 import { WarningCollector, MediaModule, BaseMediaConfig } from './types'
 import { ProbeData } from '../probe/types'
 
@@ -28,14 +30,18 @@ import { ProbeData } from '../probe/types'
  * from rules.categories, or returns a single synthetic entry pointing at
  * root_path with name "default" when the user hasn't configured any.
  *
+ * Pass the `DirReader` the probe pass used, so folders it already listed
+ * aren't listed again.
+ *
  * Returns a Map of { unique_key -> record } where the record structure
  * is defined by the media module.
  */
-export function scan<TRecord, TOutput, TConfig extends BaseMediaConfig>(
-  config: TConfig,
-  mediaModule: MediaModule<TRecord, TOutput, TConfig>,
+export function scan<TRecord, TOutput>(
+  config: BaseMediaConfig,
+  mediaModule: MediaModule<TRecord, TOutput>,
   warnings: WarningCollector,
-  probeByPath: Map<string, ProbeData>
+  probeByPath: Map<string, ProbeData>,
+  dir: DirReader = new DirReader()
 ): Map<string, TRecord> {
   const records = new Map<string, TRecord>()
   const { root_path } = config
@@ -45,8 +51,17 @@ export function scan<TRecord, TOutput, TConfig extends BaseMediaConfig>(
     const folderPath = path.join(root_path, cat.folderName)
 
     // Skip gracefully if the folder doesn't exist on this machine
-    if (!fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) {
+    if (!dir.isDirectory(folderPath)) {
       console.log(`    [SKIP] Category folder not found: ${folderPath}`)
+      continue
+    }
+
+    // A folder that exists but can't be listed is reported, not fatal — the
+    // same as an unreadable folder deeper down.
+    try {
+      dir.readdir(folderPath)
+    } catch {
+      warnings.add('permission_denied', cat.folderName, 'Permission denied reading folder.')
       continue
     }
 
@@ -63,7 +78,7 @@ export function scan<TRecord, TOutput, TConfig extends BaseMediaConfig>(
       folderPath,
       cat.folderName,
       cat.name,
-      config,
+      dir,
       warnings,
       probeByPath
     )
@@ -75,7 +90,61 @@ export function scan<TRecord, TOutput, TConfig extends BaseMediaConfig>(
   // Post-merge hook: media modules can run checks that need the full records map
   mediaModule.postScan?.(records, warnings)
 
+  if (mediaModule.warnUnlistedFolders) {
+    findUnlistedFolders(root_path, categories, dir, warnings)
+  }
+
   return records
+}
+
+/**
+ * `warn_unlisted_folder`: folders under `root_path` the scan never looked in.
+ *
+ * With categories configured, only the listed folders are walked, so any
+ * other folder at the top — a new `Other SD/` nobody added to the rules, a
+ * title dropped in the wrong place — is silently invisible. Each one is named.
+ *
+ * With no categories, `root_path` is walked as one flat library and every
+ * folder is read as a title. A folder named like a quality category (`HD`,
+ * `Other UHD`) is then almost certainly a categorized library run on the
+ * default rules, so it gets the same warning with a pointer to `categories`.
+ */
+function findUnlistedFolders(
+  rootPath: string,
+  categories: ResolvedCategory[],
+  dir: DirReader,
+  warnings: WarningCollector
+): void {
+  let entries
+  try {
+    entries = dir.readdir(rootPath)
+  } catch {
+    return // reported by the category walk above
+  }
+  const folders = entries.filter(e => e.isDirectory() && !isSystemFolder(e.name))
+  const flat = categories.every(c => c.folderName === '')
+
+  if (flat) {
+    for (const folder of folders) {
+      if (detectQuality(folder.name) === null) continue
+      warnings.add(
+        'warn_unlisted_folder',
+        folder.name,
+        `Named like a category, but no categories are configured, so it is read as a title.`
+      )
+    }
+    return
+  }
+
+  const listed = new Set(categories.map(c => c.folderName.toLowerCase()))
+  for (const folder of folders) {
+    if (listed.has(folder.name.toLowerCase())) continue
+    warnings.add(
+      'warn_unlisted_folder',
+      folder.name,
+      `Not one of the configured categories, so nothing in it is scanned.`
+    )
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -83,12 +152,12 @@ export function scan<TRecord, TOutput, TConfig extends BaseMediaConfig>(
 // ─────────────────────────────────────────────
 
 /**
- * Serialize records to a JSON file using the media module's serializer.
- * JSON.stringify with indent=2 gives readable output matching the Python version.
+ * Serialize records to a JSON file using the media module's serializer,
+ * pretty-printed so diffs between runs stay readable.
  */
-export function writeJson<TRecord, TOutput, TConfig extends BaseMediaConfig>(
+export function writeJson<TRecord, TOutput>(
   records: Map<string, TRecord>,
-  mediaModule: MediaModule<TRecord, TOutput, TConfig>,
+  mediaModule: MediaModule<TRecord, TOutput>,
   outputPath: string
 ): void {
   const data = mediaModule.serialize(records)

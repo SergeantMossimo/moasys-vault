@@ -20,6 +20,9 @@ const OPENLIBRARY_SEARCH = 'https://openlibrary.org/search.json'
 /** Fixed per-request delay (ms). Open Library has no published limit; 1 rps is polite. */
 const MIN_REQUEST_DELAY_MS = 1000
 
+/** A request with no response by now is a hung connection, not a slow API. */
+const REQUEST_TIMEOUT_MS = 30_000
+
 /** Wait used when a 429/503 has no Retry-After header (ms). */
 const DEFAULT_BACKOFF_MS = 10_000
 
@@ -95,6 +98,7 @@ export class OpenLibraryClient {
     try {
       response = await fetch(url.toString(), {
         headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       })
     } catch (err) {
       throw new Error(`Open Library network error: ${(err as Error).message}`, { cause: err })

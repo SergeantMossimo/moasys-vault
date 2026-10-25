@@ -22,7 +22,7 @@ const lossy = (overrides: Partial<AudioProbe> = {}): AudioProbe => ({
 })
 
 const track = (overrides: Partial<TrackProbe> = {}): TrackProbe => ({
-  quality: 'Music',
+  category: 'Music',
   path: 'Music/Artist/Album/01 - Track.flac',
   disc: 1,
   track: 1,
@@ -39,6 +39,13 @@ const track = (overrides: Partial<TrackProbe> = {}): TrackProbe => ({
 describe('deriveAudioQuality', () => {
   it('returns null for null audio', () => {
     expect(deriveAudioQuality(null, null)).toBeNull()
+  })
+
+  it('treats uncompressed PCM (WAV/AIFF) as lossless', () => {
+    expect(deriveAudioQuality(lossless({ codec: 'pcm_s16le' }), 1_411_000)).toBe('PCM 16/44.1')
+    expect(
+      deriveAudioQuality(lossless({ codec: 'pcm_s24be', bit_depth: 24, sample_rate: 96000 }), null)
+    ).toBe('PCM 24/96')
   })
 
   describe('lossless codecs', () => {

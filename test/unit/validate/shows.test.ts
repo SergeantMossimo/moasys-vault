@@ -11,11 +11,21 @@ import type {
   TmdbSeasonDetails,
 } from '../../../src/validate/types'
 import { TmdbClient } from '../../../src/validate/tmdb'
+import { RECHECK_WARNED_AFTER_DAYS } from '../../../src/validate/helpers'
 import { parseIgnoreList } from '../../../src/core/ignored'
 
 function memoryCache<T>(seed: Record<string, T> = {}): JsonCache<T> {
   const cache = new JsonCache<T>('/dev/null-' + Math.random().toString(36))
   for (const [k, v] of Object.entries(seed)) cache.set(k, v)
+  return cache
+}
+
+/** A memoryCache whose entries were fetched `days` days ago. */
+function agedCache<T>(seed: Record<string, T>, days: number): JsonCache<T> {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(Date.now() - days * 24 * 60 * 60 * 1000)
+  const cache = memoryCache(seed)
+  vi.useRealTimers()
   return cache
 }
 
@@ -280,7 +290,7 @@ describe('validateShows — confidence scoring', () => {
     expect(warnings.all().filter(w => w.type === 'warn_tmdb_no_match')).toHaveLength(0)
   })
 
-  it('re-queries TMDB when the cached verdict is "none"', async () => {
+  it('re-queries TMDB once a cached "none" verdict is a week old', async () => {
     const client = mockClient({
       searchResults: [
         {
@@ -303,9 +313,10 @@ describe('validateShows — confidence scoring', () => {
         },
       },
     })
-    const searchCache = memoryCache<ResolvedSearch>({
-      'show|star trek - enterprise|2001': { best_id: null, confidence: 'none', candidates: [] },
-    })
+    const searchCache = agedCache<ResolvedSearch>(
+      { 'show|star trek - enterprise|2001': { best_id: null, confidence: 'none', candidates: [] } },
+      RECHECK_WARNED_AFTER_DAYS + 1
+    )
 
     const result = await validateShows(
       [show('Star Trek - Enterprise', 2001)],
@@ -427,7 +438,7 @@ describe('validateShows — confidence scoring', () => {
     expect(result[0]?.confidence).toBe('low')
   })
 
-  it('logs and falls back to "none" when search throws', async () => {
+  it('logs and leaves the show out when search throws with no earlier verdict', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const client = mockClient({ searchFails: true })
     const result = await validateShows(
@@ -439,7 +450,8 @@ describe('validateShows — confidence scoring', () => {
       memoryCache(),
       warnings
     )
-    expect(result[0]?.confidence).toBe('none')
+    expect(result).toEqual([])
+    expect(warnings.all()).toEqual([])
     expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/Search failed/))
   })
 
@@ -468,10 +480,10 @@ describe('validateShows — confidence scoring', () => {
     )
     expect(result[0]?.confidence).toBe('high') // search still resolved
     expect(result[0]?.tmdb_title).toBeNull() // but details failed
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/Details failed/))
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/Details for show id=100 failed/))
   })
 
-  it('collects alternate candidates from the details cache', async () => {
+  it('lists the other search results as alternatives, from the search itself', async () => {
     const client = mockClient({
       searchResults: [
         {
@@ -523,7 +535,8 @@ describe('validateShows — confidence scoring', () => {
       warnings
     )
 
-    expect(result[0]?.alternatives).toEqual([{ id: 2, title: 'Older Show', year: 2010 }])
+    // The title comes from the search result, not the (differently named) details entry.
+    expect(result[0]?.alternatives).toEqual([{ id: 2, title: 'Show', year: 2010 }])
   })
 
   it('compares per-season episode counts to TMDB', async () => {
@@ -1497,6 +1510,89 @@ describe('validateShows — TMDB episode-name validation', () => {
 
     expect(seasonsCall).not.toHaveBeenCalled()
     expect(warnings.all().filter(w => w.type === 'warn_tmdb_episode_name_mismatch')).toEqual([])
+  })
+
+  const twoSeasons = () =>
+    show(
+      'Show',
+      2020,
+      [1, 2].map(n => ({
+        season: String(n),
+        episode_count: 1,
+        versions: [{ category: 'default', quality: null }],
+        episodes: [{ episode_start: 1, episode_end: 1, title: `Wrong ${n}` }],
+      }))
+    )
+  const twoSeasonDetails: TmdbShowDetails = {
+    ...baseDetails,
+    number_of_seasons: 2,
+    seasons: [1, 2].map(n => ({ season_number: n, episode_count: 1, name: `Season ${n}` })),
+  }
+  const seasonOf = (n: number): TmdbSeasonDetails => ({
+    season_number: n,
+    episodes: [{ episode_number: 1, name: `Right ${n}` }],
+  })
+
+  it('fetches every uncached season in one request', async () => {
+    const batchCall = vi.fn(
+      async (_id: number, seasons: number[]) => new Map(seasons.map(n => [n, seasonOf(n)]))
+    )
+    const singleCall = vi.fn()
+    const client = {
+      searchShow: vi.fn(async () => baseSearch),
+      getShow: vi.fn(async () => twoSeasonDetails),
+      getShowSeasons: batchCall,
+      getShowSeason: singleCall,
+      get totalRequests() {
+        return 0
+      },
+    } as unknown as TmdbClient
+    const seasonsCache = memoryCache<TmdbSeasonDetails>()
+
+    await validateShows(
+      [twoSeasons()],
+      defaultShowsRules,
+      client,
+      memoryCache(),
+      memoryCache(),
+      seasonsCache,
+      warnings
+    )
+
+    expect(batchCall).toHaveBeenCalledWith(100, [1, 2])
+    expect(singleCall).not.toHaveBeenCalled()
+    expect(seasonsCache.has('100:2')).toBe(true)
+    expect(warnings.all().filter(w => w.type === 'warn_tmdb_episode_name_mismatch')).toHaveLength(2)
+  })
+
+  it('falls back to one request per season when the batch fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const singleCall = vi.fn(async (_id: number, n: number) => seasonOf(n))
+    const client = {
+      searchShow: vi.fn(async () => baseSearch),
+      getShow: vi.fn(async () => twoSeasonDetails),
+      getShowSeasons: vi.fn(async () => {
+        throw new Error('TMDB HTTP 503')
+      }),
+      getShowSeason: singleCall,
+      get totalRequests() {
+        return 0
+      },
+    } as unknown as TmdbClient
+
+    await validateShows(
+      [twoSeasons()],
+      defaultShowsRules,
+      client,
+      memoryCache(),
+      memoryCache(),
+      memoryCache(),
+      warnings
+    )
+
+    expect(singleCall).toHaveBeenCalledTimes(2)
+    expect(warnings.all().filter(w => w.type === 'warn_tmdb_episode_name_mismatch')).toHaveLength(2)
+    errorSpy.mockRestore()
   })
 })
 

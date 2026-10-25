@@ -19,15 +19,15 @@
 import fs from 'fs'
 import path from 'path'
 
+import { DirReader } from '../core/dir-reader'
+import { EpisodeOutput, ShowRecord, ShowOutput, WarningCollector, MediaModule } from '../core/types'
 import {
-  EpisodeOutput,
-  ShowsConfig,
-  ShowRecord,
-  ShowOutput,
-  WarningCollector,
-  MediaModule,
-} from '../core/types'
-import { hasExtension, isPrimary, formatPrimaryExts, findUnexpectedEntries } from '../core/files'
+  hasExtension,
+  isPrimary,
+  formatPrimaryExts,
+  findUnexpectedEntries,
+  toRel,
+} from '../core/files'
 import { findNumericGaps, formatGaps } from '../core/gaps'
 import { ShowsRules } from '../core/rules/shows'
 import {
@@ -79,19 +79,17 @@ const FIX = {
   warn_bad_season_folder:
     `Rename to 'Season 01'. If it is a real named season, add the name to ` +
     `ignored_season_names in rules/shows.yaml.`,
-  warn_bad_file_name:
-    `Rename to 'Show Title (YEAR) - S01E01 - Episode Title.ext' (the title is optional). ` +
-    `Fix with: npm run fix:shows -- --fix episode-code <drive> --apply`,
+  warn_bad_file_name: `Rename to 'Show Title (YEAR) - S01E01 - Episode Title.ext' (the title is optional).`,
   warn_missing_episode_title:
     `Rename to include the title, e.g. 'Show (2020) - S01E01 - Pilot.mp4'. ` +
     `Plex catalogues them either way — this is for a tidier library.`,
-  warn_episode_code_case: `Fix with: npm run fix:shows -- --fix episode-code <drive> --apply`,
-  warn_show_year_mismatch:
-    `Rename the file's show/year to match its folder, or move it to the right show. ` +
-    `Fix with: npm run fix:shows -- --fix show-prefix <drive> --apply`,
+  warn_episode_code_case:
+    `Rename the files to the episode_code_case house style in rules/shows.yaml. A bulk ` +
+    `renamer (e.g. Advanced Renamer, FileBot) handles a whole season at once.`,
+  warn_show_year_mismatch: `Rename the file's show/year to match its folder, or move it to the right show.`,
   warn_show_title_case:
     `Match the file's capitalization to the folder, so Plex and your filesystem don't ` +
-    `present the same show two ways. Fix with: npm run fix:shows -- --fix show-prefix <drive> --apply`,
+    `present the same show two ways.`,
   warn_season_mismatch: `Move the file to the season folder its code names, or fix the code.`,
   warn_specials_folder_style:
     `Rename the folder to the specials_folder house style in rules/shows.yaml. Plex reads ` +
@@ -137,7 +135,7 @@ const STACK_SUFFIX = /[\s._-]+(?:cd|dis[ck]|dvd|part|pt)[\s._-]*\d+$/i
  * "" (an empty `{edition-}`), or the trimmed name. `tmdbId` / `tvdbId` are the
  * optional `{tmdb-N}` / `{tvdb-N}` tags, or null.
  */
-function parseShowFolder(
+export function parseShowFolder(
   name: string,
   regex: RegExp
 ): {
@@ -165,7 +163,7 @@ function parseShowFolder(
   return { title: title.trim(), year: parseInt(year, 10), edition, tmdbId, tvdbId }
 }
 
-function parseSeasonFolder(name: string, regex: RegExp): number | null {
+export function parseSeasonFolder(name: string, regex: RegExp): number | null {
   const m = regex.exec(name)
   if (!m?.groups) return null
   const season = m.groups.season
@@ -178,7 +176,7 @@ function parseSeasonFolder(name: string, regex: RegExp): number | null {
  * single-episode files, different for multi-episode files (S01E01-E02 → 1, 2).
  * episode_end is optional in the pattern; absent means single-episode.
  */
-function parseFileStem(
+export function parseFileStem(
   stem: string,
   regex: RegExp
 ): {
@@ -217,7 +215,7 @@ function parseFileStem(
  * keyed on edition so two editions of one series stay separate records —
  * without it they'd merge and their episodes would dedupe against each other.
  */
-function makeShowKey(title: string, year: number, edition: string | null): string {
+export function makeShowKey(title: string, year: number, edition: string | null): string {
   return `${title.toLowerCase()}|${year}|${(edition ?? '').toLowerCase()}`
 }
 
@@ -253,24 +251,30 @@ function showDisplayName(record: {
  * then named seasons alphabetically.
  * e.g. "1", "2", "10", "Champion of Champions", "Specials"
  */
-function seasonSortKey(label: string): [number, number, string] {
+export function seasonSortKey(label: string): [number, number, string] {
   const n = parseInt(label, 10)
   if (!isNaN(n)) return [0, n, '']
   return [1, 0, label.toLowerCase()]
 }
 
-/** Normalize a path to forward slashes — matches the probe-side cache key. */
-function toRel(p: string): string {
-  return p.split(path.sep).join('/')
+/**
+ * Append `incoming` episodes to `target`, skipping any whose episode_start is
+ * already listed — the same episode in several categories is listed once.
+ */
+function addEpisodes(target: EpisodeOutput[], incoming: EpisodeOutput[]): void {
+  const seen = new Set(target.map(ep => ep.episode_start))
+  for (const ep of incoming) {
+    if (seen.has(ep.episode_start)) continue
+    seen.add(ep.episode_start)
+    target.push(ep)
+  }
 }
 
 // ─────────────────────────────────────────────
 // Factory
 // ─────────────────────────────────────────────
 
-export function createShowsModule(
-  rules: ShowsRules
-): MediaModule<ShowRecord, ShowOutput, ShowsConfig> {
+export function createShowsModule(rules: ShowsRules): MediaModule<ShowRecord, ShowOutput> {
   const showFolderRegex = compilePattern(rules.patterns.show_folder)
   const seasonFolderRegex = compilePattern(rules.patterns.season_folder)
   const fileRegex = compilePattern(rules.patterns.file)
@@ -288,18 +292,19 @@ export function createShowsModule(
 
   return {
     getCategories: () => effectiveCategories,
+    warnUnlistedFolders: rules.checks.warn_unlisted_folder,
 
     scanCategory(
       folderPath: string,
       folderName: string,
       category: string,
-      config: ShowsConfig,
+      dir: DirReader,
       warnings: WarningCollector,
       probeByPath: Map<string, ProbeData>
     ): Map<string, ShowRecord> {
       const records = new Map<string, ShowRecord>()
 
-      const rootEntries = fs.readdirSync(folderPath, { withFileTypes: true })
+      const rootEntries = dir.readdir(folderPath)
 
       // Loose video files at media folder level — silently dropped without
       // this check. Plex expects each show inside a Show Title (YEAR)/ folder.
@@ -311,7 +316,7 @@ export function createShowsModule(
           warnings.add(
             'warn_loose_files',
             folderName,
-            `${looseRoot.length} loose video file(s) in the category root.`,
+            `${looseRoot.length} loose video file(s), outside any show folder.`,
             { fix: FIX.warn_loose_files }
           )
         }
@@ -326,12 +331,9 @@ export function createShowsModule(
         )
         if (unexpected.length > 0) {
           const names = unexpected.map(e => `'${e.name}'`).join(', ')
-          warnings.add(
-            'warn_unexpected_entries',
-            folderName,
-            `Unexpected file(s) in the category root: ${names}.`,
-            { fix: FIX.warn_unexpected_entries }
-          )
+          warnings.add('warn_unexpected_entries', folderName, `Unexpected file(s): ${names}.`, {
+            fix: FIX.warn_unexpected_entries,
+          })
         }
       }
 
@@ -368,7 +370,7 @@ export function createShowsModule(
 
         let seasonEntries: fs.Dirent[]
         try {
-          seasonEntries = fs.readdirSync(showPath, { withFileTypes: true })
+          seasonEntries = dir.readdir(showPath)
         } catch {
           warnings.add('permission_denied', showRel, 'Permission denied reading show folder.', {
             fix: FIX.permission_denied,
@@ -482,7 +484,7 @@ export function createShowsModule(
           // ── Read episode files ───────────────────────────────────────────
           let allFiles: fs.Dirent[]
           try {
-            allFiles = fs.readdirSync(seasonPath, { withFileTypes: true })
+            allFiles = dir.readdir(seasonPath)
           } catch {
             warnings.add(
               'permission_denied',
@@ -560,6 +562,8 @@ export function createShowsModule(
           // split episode (`- pt1`, `- pt2`) share an identity, so they count once.
           const filesPerEpisode = new Map<number, Set<string>>()
           const episodes: EpisodeOutput[] = []
+          // Files that parsed — the only ones that become catalog versions.
+          const cataloguedFiles: string[] = []
           // Episode code → its files' identities and file count. Several files
           // sharing a code with one identity are the parts of one split episode.
           const partsPerCode = new Map<string, { files: number; identities: Set<string> }>()
@@ -665,6 +669,7 @@ export function createShowsModule(
               episode_end: lastEpisode,
               title: episodeTitle,
             })
+            cataloguedFiles.push(f.name)
 
             const identity = stem.replace(STACK_SUFFIX, '').toLowerCase()
             const codeKey = `${firstEpisode}-${lastEpisode}`
@@ -798,19 +803,14 @@ export function createShowsModule(
 
           const season = show.seasons.get(seasonKey)!
           season.episode_count += seasonEpCount
-          for (const ep of episodes) {
-            // Skip duplicate episode_start values — the same episode showing
-            // up in multiple categories should not be double-listed.
-            if (!season.episodes.some(existing => existing.episode_start === ep.episode_start)) {
-              season.episodes.push(ep)
-            }
-          }
-          // Push one version per probed episode file. dedupVersions collapses
-          // identical (category, quality) entries at serialize time, so a
-          // uniform-quality season produces one version while a mixed-quality
-          // one produces multiple — accurate to what's on disk.
-          for (const f of primaryFiles) {
-            const probePath = toRel(path.join(seasonRel, f.name))
+          addEpisodes(season.episodes, episodes)
+          // Push one version per catalogued episode file. dedupVersions
+          // collapses identical (category, quality) entries at serialize time,
+          // so a uniform-quality season produces one version while a
+          // mixed-quality one produces multiple — accurate to what's on disk.
+          // A file that didn't parse isn't in the catalog, so it adds none.
+          for (const name of cataloguedFiles) {
+            const probePath = toRel(path.join(seasonRel, name))
             const probe = probeByPath.get(probePath)
             const quality = probe?.video
               ? deriveQuality(probe.video.width, probe.video.height, rules.quality_thresholds)
@@ -855,15 +855,7 @@ export function createShowsModule(
               existingSeason.episode_count,
               newSeason.episode_count
             )
-            for (const ep of newSeason.episodes) {
-              if (
-                !existingSeason.episodes.some(
-                  existing => existing.episode_start === ep.episode_start
-                )
-              ) {
-                existingSeason.episodes.push(ep)
-              }
-            }
+            addEpisodes(existingSeason.episodes, newSeason.episodes)
           }
         }
       }
@@ -950,7 +942,7 @@ export function createShowsModule(
               warnings.add(
                 'warn_duplicate_quality',
                 warningPath,
-                `Duplicate ${quality} copies in ${cats.length} folders: ${cats.join(', ')}.`,
+                `${quality} copies in ${cats.length} categories: ${cats.join(', ')}.`,
                 {
                   fix: FIX.warn_duplicate_quality,
                   scope: { categories: cats, levels: seasonLevels },

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
 import { WarningCollector } from '../../../src/core/types'
-import type { WarningScope } from '../../../src/core/ignored'
+import { parseIgnoreList, type WarningScope } from '../../../src/core/ignored'
 
 /**
  * Folder grouping — the on-disk shape of every warnings file.
@@ -132,12 +132,23 @@ describe('groupedByFolder', () => {
       expect(folder?.rows[0]?.path).toBe('The Wall')
     })
 
-    it('handles a warning at the library root without throwing', () => {
+    it('names the library root "." so the entry has a path to point at', () => {
       const wc = flat()
       wc.add('permission_denied', '', 'cannot read root')
       const folder = wc.groupedByFolder()[0]
-      expect(folder?.path).toBe('')
+      expect(folder?.path).toBe('.')
       expect(folder?.rows[0]?.issue).toBe('cannot read root')
+    })
+
+    it("lets `folders: ['.']` silence what's found at the library root", () => {
+      const wc = new WarningCollector(
+        parseIgnoreList({ folders: ['.'] }, 'movies', 'test.yaml'),
+        false
+      )
+      wc.add('warn_loose_files', '', '2 loose video file(s), outside any movie folder.')
+      wc.add('warn_bad_folder_name', 'Junk', 'not a movie')
+      expect(wc.all().map(w => w.path)).toEqual(['Junk'])
+      expect(wc.silencedCount()).toBe(1)
     })
   })
 

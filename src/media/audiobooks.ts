@@ -15,24 +15,26 @@
  * Chapter patterns come from src/core/rules/audiobooks.ts (with optional
  * YAML overrides in rules/audiobooks.yaml).
  *
- * Author folder parsing lives in code below — see parseAuthors().
+ * Author folders are split into names by `splitAuthors()` (probe/audiobook-tags.ts),
+ * the same splitter the embedded-tag comparison uses.
  */
 
 import fs from 'fs'
 import path from 'path'
 
-import {
-  AudiobooksConfig,
-  BookRecord,
-  BookOutput,
-  WarningCollector,
-  MediaModule,
-} from '../core/types'
+import { DirReader } from '../core/dir-reader'
+import { BookRecord, BookOutput, WarningCollector, MediaModule } from '../core/types'
 import { hasExtension, isPrimary, formatPrimaryExts, findUnexpectedEntries } from '../core/files'
 import { findNumericGaps, formatGaps } from '../core/gaps'
 import { AudiobooksRules } from '../core/rules/audiobooks'
-import { compilePattern, resolveCategories } from '../core/rules/helpers'
+import {
+  compilePattern,
+  isAcceptableCombo,
+  isRealCategory,
+  resolveCategories,
+} from '../core/rules/helpers'
 import { finalizeVersions, distinctCategories } from '../core/versions'
+import { splitAuthors } from '../probe/audiobook-tags'
 import { ProbeData } from '../probe/types'
 
 import { NamedBook, bookWarningPath, findNameIssues } from './audiobook-names'
@@ -76,28 +78,11 @@ const FIX = {
 // ─────────────────────────────────────────────
 
 /**
- * Parse an author folder name into a list of individual author names.
- * Handles three formats:
- *   "J.R.R. Tolkien"                    -> ["J.R.R. Tolkien"]
- *   "Terry Pratchett, Neil Gaiman"       -> ["Terry Pratchett", "Neil Gaiman"]
- *   "Author 1, Author 2, and Author 3"  -> ["Author 1", "Author 2", "Author 3"]
- *
- * Strategy: strip " and " before the last author, then split on commas.
- */
-function parseAuthors(folderName: string): string[] {
-  const cleaned = folderName.replace(/,?\s+and\s+/gi, ', ')
-  return cleaned
-    .split(',')
-    .map(a => a.trim())
-    .filter(a => a.length > 0)
-}
-
-/**
  * Parse a chapter file stem into { disc, chapter, name } or null.
  * Tries the multi-disc pattern first (more specific), then single-disc as fallback.
  * Single-disc files (e.g. "01 - Chapter Name") are treated as disc 1.
  */
-function parseChapterStem(
+export function parseChapterStem(
   stem: string,
   multiDiscRegex: RegExp,
   singleDiscRegex: RegExp
@@ -119,8 +104,12 @@ function parseChapterStem(
   return null
 }
 
-function makeBookKey(title: string): string {
-  return title.toLowerCase()
+/**
+ * A book is its author folder plus its title: two authors can each have a
+ * `Collected Stories`, and they're different books.
+ */
+export function bookKey(authorFolder: string, title: string): string {
+  return `${authorFolder.toLowerCase()}|${title.toLowerCase()}`
 }
 
 // ─────────────────────────────────────────────
@@ -129,7 +118,7 @@ function makeBookKey(title: string): string {
 
 export function createAudiobooksModule(
   rules: AudiobooksRules
-): MediaModule<BookRecord, BookOutput, AudiobooksConfig> {
+): MediaModule<BookRecord, BookOutput> {
   const multiDiscRegex = compilePattern(rules.patterns.multi_disc)
   const singleDiscRegex = compilePattern(rules.patterns.single_disc)
 
@@ -138,18 +127,19 @@ export function createAudiobooksModule(
 
   return {
     getCategories: () => effectiveCategories,
+    warnUnlistedFolders: rules.checks.warn_unlisted_folder,
 
     scanCategory(
       folderPath: string,
       folderName: string,
       category: string,
-      config: AudiobooksConfig,
+      dir: DirReader,
       warnings: WarningCollector,
       _probeByPath: Map<string, ProbeData>
     ): Map<string, BookRecord> {
       const records = new Map<string, BookRecord>()
 
-      const rootEntries = fs.readdirSync(folderPath, { withFileTypes: true })
+      const rootEntries = dir.readdir(folderPath)
 
       // Loose audio files at media folder level — silently dropped without
       // this check. Expected structure: Author/Book/chapters.
@@ -161,7 +151,7 @@ export function createAudiobooksModule(
           warnings.add(
             'warn_loose_files',
             folderName,
-            `${looseRoot.length} loose audio file(s) in the category root.`,
+            `${looseRoot.length} loose audio file(s), outside any author folder.`,
             { fix: FIX.warn_loose_files }
           )
         }
@@ -176,12 +166,9 @@ export function createAudiobooksModule(
         )
         if (unexpected.length > 0) {
           const names = unexpected.map(e => `'${e.name}'`).join(', ')
-          warnings.add(
-            'warn_unexpected_entries',
-            folderName,
-            `Unexpected file(s) in the category root: ${names}.`,
-            { fix: FIX.warn_unexpected_entries }
-          )
+          warnings.add('warn_unexpected_entries', folderName, `Unexpected file(s): ${names}.`, {
+            fix: FIX.warn_unexpected_entries,
+          })
         }
       }
 
@@ -190,11 +177,11 @@ export function createAudiobooksModule(
 
         const authorPath = path.join(folderPath, authorEntry.name)
         const authorRel = path.join(folderName, authorEntry.name)
-        const authors = parseAuthors(authorEntry.name)
+        const authors = splitAuthors(authorEntry.name)
 
         let bookEntries: fs.Dirent[]
         try {
-          bookEntries = fs.readdirSync(authorPath, { withFileTypes: true })
+          bookEntries = dir.readdir(authorPath)
         } catch {
           warnings.add('permission_denied', authorRel, 'Permission denied reading author folder.', {
             fix: FIX.permission_denied,
@@ -241,11 +228,11 @@ export function createAudiobooksModule(
 
           const bookPath = path.join(authorPath, bookEntry.name)
           const bookRel = path.join(authorRel, bookEntry.name)
-          const bookKey = makeBookKey(bookEntry.name)
+          const key = bookKey(authorEntry.name, bookEntry.name)
 
           let allFiles: fs.Dirent[]
           try {
-            allFiles = fs.readdirSync(bookPath, { withFileTypes: true })
+            allFiles = dir.readdir(bookPath)
           } catch {
             warnings.add('permission_denied', bookRel, 'Permission denied reading book folder.', {
               fix: FIX.permission_denied,
@@ -358,8 +345,8 @@ export function createAudiobooksModule(
             }
           }
 
-          if (!records.has(bookKey)) {
-            records.set(bookKey, {
+          if (!records.has(key)) {
+            records.set(key, {
               title: bookEntry.name,
               authors,
               author_folder: authorEntry.name,
@@ -367,8 +354,8 @@ export function createAudiobooksModule(
               versions: [],
             })
           } else {
-            records.get(bookKey)!.chapter_count = Math.max(
-              records.get(bookKey)!.chapter_count,
+            records.get(key)!.chapter_count = Math.max(
+              records.get(key)!.chapter_count,
               chapterCount
             )
           }
@@ -381,7 +368,7 @@ export function createAudiobooksModule(
           for (const f of audioFiles) {
             codecs.add(path.extname(f.name).slice(1).toUpperCase())
           }
-          const book = records.get(bookKey)!
+          const book = records.get(key)!
           for (const codec of codecs) {
             book.versions.push({ category, quality: codec })
           }
@@ -392,11 +379,11 @@ export function createAudiobooksModule(
     },
 
     merge(existing: Map<string, BookRecord>, incoming: Map<string, BookRecord>): void {
-      for (const [bookKey, newBook] of incoming) {
-        if (!existing.has(bookKey)) {
-          existing.set(bookKey, newBook)
+      for (const [key, newBook] of incoming) {
+        if (!existing.has(key)) {
+          existing.set(key, newBook)
         } else {
-          const existingBook = existing.get(bookKey)!
+          const existingBook = existing.get(key)!
           existingBook.versions.push(...newBook.versions)
           existingBook.chapter_count = Math.max(existingBook.chapter_count, newBook.chapter_count)
         }
@@ -405,10 +392,15 @@ export function createAudiobooksModule(
 
     serialize(records: Map<string, BookRecord>): BookOutput[] {
       return [...records.values()]
-        .sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()))
+        .sort(
+          (a, b) =>
+            a.title.toLowerCase().localeCompare(b.title.toLowerCase()) ||
+            a.author_folder.toLowerCase().localeCompare(b.author_folder.toLowerCase())
+        )
         .map(book => ({
           title: book.title,
           authors: book.authors,
+          author_folder: book.author_folder,
           chapter_count: book.chapter_count,
           versions: finalizeVersions(book.versions, categoryOrder),
         }))
@@ -432,7 +424,7 @@ export function createAudiobooksModule(
         warnings.add(finding.type, bookWarningPath(book), finding.issue, {
           fix: finding.fix,
           scope: {
-            categories: book.categories.filter(c => c !== 'default'),
+            categories: book.categories.filter(isRealCategory),
             levels: [book.authorFolder, book.title],
           },
         })
@@ -443,30 +435,23 @@ export function createAudiobooksModule(
       for (const book of records.values()) {
         const cats = distinctCategories(book.versions)
         if (cats.length <= 1) continue
-        const catSet = new Set(cats)
-        if (isAcceptableComboSet(catSet, rules.acceptable_book_combos)) continue
+        if (isAcceptableCombo(new Set(cats), rules.acceptable_book_combos)) continue
         const ordered = categoryOrder.filter(c => cats.includes(c))
         // Path uses Author/Book Title for parity with music's Artist/Album
-        // duplicate-album path. authors[] is comma-separated for multi-author
-        // books to mirror the on-disk folder convention.
+        // duplicate-album path, with the author folder exactly as on disk.
         warnings.add(
           'warn_duplicate_book',
-          path.join(book.authors.join(', '), book.title),
-          `Also in ${ordered.length} other categories: ${ordered.join(', ')}.`,
+          path.join(book.author_folder, book.title),
+          `Copies in ${ordered.length} categories: ${ordered.join(', ')}.`,
           // The path carries no category — this check spans them by
           // definition — so scope derivation would read the author as one.
           // Spelling it out is also what lets a `folders:` entry reach here.
           {
             fix: FIX.warn_duplicate_book,
-            scope: { categories: ordered, levels: [book.authors.join(', '), book.title] },
+            scope: { categories: ordered, levels: [book.author_folder, book.title] },
           }
         )
       }
     },
   }
-}
-
-/** Return true if `set` matches one of the acceptable category combos. */
-function isAcceptableComboSet(set: Set<string>, combos: readonly string[][]): boolean {
-  return combos.some(combo => combo.length === set.size && combo.every(c => set.has(c)))
 }

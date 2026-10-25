@@ -9,7 +9,7 @@
 
 import { z } from 'zod'
 
-import { PatternSchema, CategorySchema } from './helpers'
+import { PatternSchema, CategoryListSchema } from './helpers'
 
 export const MusicRulesSchema = z.object({
   /**
@@ -35,7 +35,7 @@ export const MusicRulesSchema = z.object({
   }),
 
   /** Subfolders under root_path to walk. Empty = walk root_path directly with "default" label. */
-  categories: z.array(CategorySchema),
+  categories: CategoryListSchema,
 
   /**
    * Expected primary file format(s) for music. Lossless-only libraries
@@ -94,6 +94,13 @@ export const MusicRulesSchema = z.object({
      * silently dropped from the catalog without this warning enabled.
      */
     warn_loose_files: z.boolean(),
+    /**
+     * A folder directly under root_path that isn't one of `categories`, so
+     * nothing in it is scanned. In a library with no categories, flags a
+     * top-level folder named like a quality category (UHD/HD/SD) instead —
+     * a sign `categories` should be set.
+     */
+    warn_unlisted_folder: z.boolean(),
     /**
      * Subfolders inside an album folder, where Plex expects a flat track
      * layout. Multi-disc albums should use disc-prefixed numbers (101, 201)
@@ -221,6 +228,7 @@ export const defaultMusicRules: MusicRules = MusicRulesSchema.parse({
     warn_track_gaps: true,
     warn_duplicate_album: true,
     warn_loose_files: true,
+    warn_unlisted_folder: true,
     warn_extra_subfolders: true,
     warn_unexpected_entries: true,
     warn_quality_inconsistent: true,

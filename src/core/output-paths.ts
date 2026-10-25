@@ -17,7 +17,6 @@
  *   ├── data/                       detail other commands read
  *   │   ├── probe.json
  *   │   └── validation.json
- *   ├── fixes/                      fix:shows plans + undo manifests
  *   └── unfiltered/                 --no-ignore reviews
  */
 
@@ -25,8 +24,16 @@ import fs from 'fs'
 import path from 'path'
 
 export const DATA_DIR = 'data'
-export const FIXES_DIR = 'fixes'
 export const UNFILTERED_DIR = 'unfiltered'
+
+/**
+ * The folder the removed `fix:shows` command kept its rename plans and undo
+ * manifests in. Only looked for, so the user hears it's no longer used.
+ */
+const FIXES_DIR = 'fixes'
+
+/** The last commit that still had `fix:shows`, for replaying an old undo manifest. */
+const LAST_FIX_SHOWS_COMMIT = '8e7515a'
 
 export interface TypeOutputPaths {
   /** output/<drive>/<type>/ */
@@ -48,10 +55,8 @@ export interface TypeOutputPaths {
   allWarnings: string
   /** data/probe.json — written by the scan, read by validate and plex:check. */
   probe: string
-  /** data/validation.json — written by validate, read by plex:check and fix:shows. */
+  /** data/validation.json — written by validate, read by plex:check. */
   validation: string
-  /** fixes/ — rename-plan.json and rename-undo-<timestamp>.json. */
-  fixesDir: string
   /** unfiltered/ — `--no-ignore` copies of warnings files. */
   unfilteredDir: string
 }
@@ -73,43 +78,43 @@ export function typeOutputPaths(
     allWarnings: path.join(dir, 'all-warnings.json'),
     probe: path.join(dir, DATA_DIR, 'probe.json'),
     validation: path.join(dir, DATA_DIR, 'validation.json'),
-    fixesDir: path.join(dir, FIXES_DIR),
     unfilteredDir: path.join(dir, UNFILTERED_DIR),
   }
 }
 
 // ─────────────────────────────────────────────
-// Files from the old flat layout
+// Files from older versions
 // ─────────────────────────────────────────────
 
 /**
- * Files an older version wrote at the top of the type folder, before the
- * subfolders existed. Nothing reads them any more, so a stale `probe.json`
- * would otherwise sit there looking current.
+ * Files an older version wrote that nothing reads any more: the flat layout's
+ * top-level data files, so a stale `probe.json` doesn't sit there looking
+ * current, and the removed `fix:shows` command's `fixes/` folder and plans.
  */
 export function findLegacyOutputFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) return []
   return fs
     .readdirSync(dir, { withFileTypes: true })
-    .filter(entry => entry.isFile())
-    .map(entry => entry.name)
-    .filter(
-      name =>
+    .flatMap(entry => {
+      if (entry.isDirectory()) return entry.name === FIXES_DIR ? [`${FIXES_DIR}/`] : []
+      const name = entry.name
+      const legacy =
         name === 'probe.json' ||
         name === 'validation.json' ||
         name === 'rename-plan.json' ||
         /^rename-undo-.+\.json$/.test(name) ||
         name.endsWith('.unfiltered.json')
-    )
+      return legacy ? [name] : []
+    })
     .sort()
 }
 
 const reported = new Set<string>()
 
 /**
- * Print a one-time note (per folder, per run) listing old-layout files that
- * are safe to delete. Never deletes anything itself — undo manifests in
- * particular may still be wanted.
+ * Print a one-time note (per folder, per run) listing files from older
+ * versions that are safe to delete. Never deletes anything itself — undo
+ * manifests in particular may still be wanted.
  */
 export function reportLegacyOutputFiles(paths: TypeOutputPaths): void {
   if (reported.has(paths.dir)) return
@@ -119,15 +124,15 @@ export function reportLegacyOutputFiles(paths: TypeOutputPaths): void {
   if (legacy.length === 0) return
 
   console.log(
-    `    [NOTE] ${paths.displayDir}/ has files from the old layout that are no longer read: ${legacy.join(', ')}.`
+    `    [NOTE] ${paths.displayDir}/ has files from an older version that are no longer read: ${legacy.join(', ')}.`
   )
   console.log(
-    `           Probe and validation data now live in ${DATA_DIR}/, fix:shows files in ${FIXES_DIR}/, and --no-ignore output in ${UNFILTERED_DIR}/.`
+    `           Probe and validation data now live in ${DATA_DIR}/ and --no-ignore output in ${UNFILTERED_DIR}/.`
   )
-  const undo = legacy.some(name => name.startsWith('rename-undo-'))
+  const undo = legacy.some(name => name === `${FIXES_DIR}/` || name.startsWith('rename-undo-'))
   console.log(
     undo
-      ? `           Delete the rest; keep any rename-undo-*.json you may still need (move it into ${FIXES_DIR}/ if you like — --undo takes any path).`
+      ? `           fix:shows was removed; to replay a rename-undo-*.json, check out commit ${LAST_FIX_SHOWS_COMMIT}. Otherwise they are safe to delete.`
       : '           They are safe to delete.'
   )
 }

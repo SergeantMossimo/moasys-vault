@@ -190,7 +190,8 @@ describe('music module — warnings', () => {
         },
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Also in \d+ other categories/))).toBe(true)
+    const dup = result.warnings.find(w => w.type === 'warn_duplicate_album')
+    expect(dup?.issue).toBe('Copies in 2 categories: Music, Soundtracks.')
   })
 
   it('warn_duplicate_album: an `albums:` entry silences it', () => {
@@ -232,7 +233,7 @@ describe('music module — warnings', () => {
         acceptable_album_combos: [['Music', 'Soundtracks']],
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Also in \d+ other categories/))).toBe(false)
+    expect(result.warnings.some(w => w.type === 'warn_duplicate_album')).toBe(false)
   })
 
   it('warn_duplicate_album: fires when category set does not match any acceptable combo', () => {
@@ -251,7 +252,7 @@ describe('music module — warnings', () => {
         acceptable_album_combos: [['Music', 'Other']],
       },
     })
-    expect(result.warnings.some(w => w.issue.match(/Also in \d+ other categories/))).toBe(true)
+    expect(result.warnings.some(w => w.type === 'warn_duplicate_album')).toBe(true)
   })
 
   it('warn_loose_files: tracks directly in artist folder (no album wrapper)', () => {

@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
+import fs from 'fs'
+import path from 'path'
 
+import { PROJECT_ROOT } from '../../src/core/project'
 import { planSteps } from '../../src/run-all'
 
 const configured = { plexConfigured: true, plexToken: true }
@@ -68,8 +71,9 @@ describe('planSteps', () => {
     ])
   })
 
-  it('never includes the fix:shows rename tool', () => {
-    const steps = planSteps(on, configured)
-    expect(steps.some(s => s.script.includes('rename'))).toBe(false)
+  it('only names scripts that exist', () => {
+    for (const step of planSteps(on, configured)) {
+      expect(fs.existsSync(path.join(PROJECT_ROOT, step.script)), step.script).toBe(true)
+    }
   })
 })

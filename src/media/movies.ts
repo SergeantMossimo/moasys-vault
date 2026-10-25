@@ -18,14 +18,15 @@
 import fs from 'fs'
 import path from 'path'
 
+import { DirReader } from '../core/dir-reader'
+import { MovieRecord, MovieOutput, WarningCollector, MediaModule } from '../core/types'
 import {
-  MoviesConfig,
-  MovieRecord,
-  MovieOutput,
-  WarningCollector,
-  MediaModule,
-} from '../core/types'
-import { hasExtension, isPrimary, formatPrimaryExts, findUnexpectedEntries } from '../core/files'
+  hasExtension,
+  isPrimary,
+  formatPrimaryExts,
+  findUnexpectedEntries,
+  toRel,
+} from '../core/files'
 import { MoviesRules } from '../core/rules/movies'
 import {
   buildCategoryQualityMap,
@@ -120,7 +121,7 @@ function parseTmdbId(raw: string | undefined): number | null {
  * The pattern is expected to use named capture groups `title`, `year`, and
  * optionally `edition` and `tmdb`.
  */
-function parseFileStem(
+export function parseFileStem(
   stem: string,
   fileRegex: RegExp
 ): { title: string; year: number; edition: string | null; tmdbId: number | null } | null {
@@ -144,19 +145,8 @@ function parseFileStem(
  * Build a unique Map key for a movie record.
  * Lowercased so "The Crow" and "the crow" are treated as the same title.
  */
-function makeKey(title: string, year: number, edition: string | null): string {
+export function makeKey(title: string, year: number, edition: string | null): string {
   return `${title.toLowerCase()}|${year}|${(edition ?? '').toLowerCase()}`
-}
-
-/** Build the Plex-style movie name used as the warning path */
-function movieDisplayName(record: MovieRecord): string {
-  const base = `${record.title} (${record.year})`
-  return record.edition ? `${base} {edition-${record.edition}}` : base
-}
-
-/** Normalize a path to forward slashes — matches the probe-side cache key. */
-function toRel(p: string): string {
-  return p.split(path.sep).join('/')
 }
 
 // ─────────────────────────────────────────────
@@ -168,12 +158,9 @@ function toRel(p: string): string {
  * Called once at startup by scan.ts after rules are loaded and validated.
  *
  * Rules are captured in closure rather than read from module-level state,
- * so the module is reusable and testable without globals (apart from the
- * qualityOrder slot already established by initTagOrder).
+ * so the module is reusable and testable without globals.
  */
-export function createMoviesModule(
-  rules: MoviesRules
-): MediaModule<MovieRecord, MovieOutput, MoviesConfig> {
+export function createMoviesModule(rules: MoviesRules): MediaModule<MovieRecord, MovieOutput> {
   // Compile pattern entries to RegExp objects once at boot. The rules schema
   // already validated that pattern and flags are well-formed, so no try/catch.
   const folderRegex = compilePattern(rules.patterns.folder)
@@ -198,6 +185,7 @@ export function createMoviesModule(
 
   return {
     getCategories: () => effectiveCategories,
+    warnUnlistedFolders: rules.checks.warn_unlisted_folder,
 
     /**
      * Walk one category folder (e.g. UHD/) and return a Map of movie records.
@@ -207,13 +195,13 @@ export function createMoviesModule(
       folderPath: string,
       folderName: string,
       category: string,
-      config: MoviesConfig,
+      dir: DirReader,
       warnings: WarningCollector,
       probeByPath: Map<string, ProbeData>
     ): Map<string, MovieRecord> {
       const records = new Map<string, MovieRecord>()
 
-      const rootEntries = fs.readdirSync(folderPath, { withFileTypes: true })
+      const rootEntries = dir.readdir(folderPath)
 
       // Loose video files at media folder level — silently dropped without
       // this check. Plex expects each movie inside a Title (YEAR)/ folder.
@@ -225,7 +213,7 @@ export function createMoviesModule(
           warnings.add(
             'warn_loose_files',
             folderName,
-            `${looseRoot.length} loose video file(s) in the category root.`,
+            `${looseRoot.length} loose video file(s), outside any movie folder.`,
             { fix: FIX.warn_loose_files }
           )
         }
@@ -240,12 +228,9 @@ export function createMoviesModule(
         )
         if (unexpected.length > 0) {
           const names = unexpected.map(e => `'${e.name}'`).join(', ')
-          warnings.add(
-            'warn_unexpected_entries',
-            folderName,
-            `Unexpected file(s) in the category root: ${names}.`,
-            { fix: FIX.warn_unexpected_entries }
-          )
+          warnings.add('warn_unexpected_entries', folderName, `Unexpected file(s): ${names}.`, {
+            fix: FIX.warn_unexpected_entries,
+          })
         }
       }
 
@@ -258,7 +243,7 @@ export function createMoviesModule(
 
         let allFiles: fs.Dirent[]
         try {
-          allFiles = fs.readdirSync(movieFolderPath, { withFileTypes: true })
+          allFiles = dir.readdir(movieFolderPath)
         } catch {
           warnings.add('permission_denied', folderRel, 'Permission denied reading folder.', {
             fix: FIX.permission_denied,
@@ -326,6 +311,18 @@ export function createMoviesModule(
           }
         }
 
+        // Once per folder, whether or not any file in it parses.
+        if (!parsedFolder && rules.checks.warn_bad_folder_name) {
+          warnings.add(
+            'warn_bad_folder_name',
+            folderRel,
+            `Folder name is not 'Movie Title (YEAR)'.`,
+            {
+              fix: FIX.warn_bad_folder_name,
+            }
+          )
+        }
+
         // Track seen editions in this folder to detect duplicates
         const seenEditions = new Map<string, string>()
 
@@ -371,16 +368,7 @@ export function createMoviesModule(
             }
           }
 
-          if (!parsedFolder) {
-            if (rules.checks.warn_bad_folder_name) {
-              warnings.add(
-                'warn_bad_folder_name',
-                folderRel,
-                `Folder name is not 'Movie Title (YEAR)'.`,
-                { fix: FIX.warn_bad_folder_name }
-              )
-            }
-          } else {
+          if (parsedFolder) {
             const { title: folderTitle, year: folderYear } = parsedFolder
 
             // Split by severity — see the matching comment in media/shows.ts.
@@ -459,6 +447,7 @@ export function createMoviesModule(
               year: fileYear,
               edition,
               tmdb_id: tmdbId,
+              folder: entry.name,
               versions: [],
             })
           } else {
@@ -498,6 +487,7 @@ export function createMoviesModule(
           year: r.year,
           edition: r.edition,
           tmdb_id: r.tmdb_id,
+          folder: r.folder,
           versions: finalizeVersions(r.versions, categoryOrder),
         }))
         .sort((a, b) => {
@@ -537,15 +527,15 @@ export function createMoviesModule(
             if (cats.length <= 1) continue
             warnings.add(
               'warn_duplicate_quality',
-              movieDisplayName(record),
-              `Duplicate ${quality} copies in ${cats.length} folders: ${cats.join(', ')}.`,
+              record.folder,
+              `${quality} copies in ${cats.length} categories: ${cats.join(', ')}.`,
               {
                 fix: FIX.warn_duplicate_quality,
-                // The path here is a display label, not a library path — this
+                // The path is the bare folder name, not a library path — this
                 // check spans categories by definition, so there's no single
                 // one to anchor to. Spell the scope out or no ignore entry
                 // could ever reach it.
-                scope: { categories: cats, levels: [movieDisplayName(record)] },
+                scope: { categories: cats, levels: [record.folder] },
               }
             )
           }
@@ -559,14 +549,14 @@ export function createMoviesModule(
           ) {
             warnings.add(
               'warn_multi_quality',
-              movieDisplayName(record),
+              record.folder,
               `Exists in multiple qualities: ${sortQualities(qualities).join(', ')}.`,
-              // Display label, not a library path — see warn_duplicate_quality.
+              // Bare folder name, not a library path — see warn_duplicate_quality.
               {
                 fix: FIX.warn_multi_quality,
                 scope: {
                   categories: distinctCategories(record.versions),
-                  levels: [movieDisplayName(record)],
+                  levels: [record.folder],
                 },
               }
             )

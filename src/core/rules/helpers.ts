@@ -16,7 +16,7 @@
 import { z } from 'zod'
 
 /** String that must compile as a JavaScript regular expression. */
-export const RegexString = z.string().refine(
+const RegexString = z.string().refine(
   s => {
     try {
       new RegExp(s)
@@ -36,8 +36,11 @@ export const RegexString = z.string().refine(
  * After parsing, the value is always `{ pattern, flags }` with `flags`
  * defaulting to `''` — so callsites can just do `new RegExp(p.pattern, p.flags)`.
  *
- * `flags` is validated against the set of letters JavaScript actually accepts
- * so a typo like `flags: 'x'` fails at boot instead of throwing inside RegExp.
+ * `flags` is validated against the set of letters JavaScript accepts, so a typo
+ * like `flags: 'x'` fails at boot instead of throwing inside RegExp. `g` and
+ * `y` are refused too: they make a RegExp remember where its last match ended
+ * (`lastIndex`), and every compiled pattern is reused across thousands of
+ * names, so every other folder would silently fail to match.
  */
 export const PatternSchema = z.preprocess(
   v => (typeof v === 'string' ? { pattern: v, flags: '' } : v),
@@ -45,9 +48,9 @@ export const PatternSchema = z.preprocess(
     pattern: RegexString,
     flags: z
       .string()
-      .regex(/^[dgimsuy]*$/, {
+      .regex(/^[dimsu]*$/, {
         message:
-          'flags must be a combination of JavaScript regex flag letters (d, g, i, m, s, u, y)',
+          'flags must be a combination of d, i, m, s, u (g and y are not allowed — patterns are reused for every name)',
       })
       .default(''),
   })
@@ -61,20 +64,67 @@ export function compilePattern(p: Pattern): RegExp {
   return new RegExp(p.pattern, p.flags)
 }
 
+/** The label records get when `categories` is empty and `root_path` is walked directly. */
+export const DEFAULT_CATEGORY = 'default'
+
 /**
  * One entry in the `categories` rules array — a subfolder under root_path
  * that the scanner walks. The `name` is the folder name on disk AND the
  * label used in output (`category` field on each version).
  *
  * Leaving `categories` empty (or unset) is supported — the scanner falls
- * back to walking `root_path` directly and labelling records with `"default"`.
+ * back to walking `root_path` directly and labelling records with
+ * `DEFAULT_CATEGORY`, which is why no real category may use that name.
  */
 export const CategorySchema = z.object({
   /** Subfolder name on disk under root_path, e.g. "UHD". Also used as the output label. */
-  name: z.string().min(1),
+  name: z
+    .string()
+    .min(1)
+    .refine(
+      name => name.toLowerCase() !== DEFAULT_CATEGORY,
+      `'${DEFAULT_CATEGORY}' is reserved for a library with no categories — rename the folder or leave categories empty`
+    ),
 })
 
 export type Category = z.infer<typeof CategorySchema>
+
+/**
+ * A type's `categories` list. Names must be unique, compared case-insensitively
+ * because Windows folder names are: `HD` and `hd` are the same folder, and
+ * listing it twice would scan it twice and report every title in it as a
+ * duplicate of itself.
+ */
+export const CategoryListSchema = z.array(CategorySchema).superRefine((cats, ctx) => {
+  const seen = new Set<string>()
+  cats.forEach((cat, i) => {
+    const key = cat.name.toLowerCase()
+    if (seen.has(key)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [i, 'name'],
+        message: `duplicate category '${cat.name}' — each folder may be listed once`,
+      })
+    }
+    seen.add(key)
+  })
+})
+
+/**
+ * Whether a category label names a real folder. `DEFAULT_CATEGORY` stands for
+ * `root_path` itself, so it never appears in a path or an ignore scope.
+ */
+export function isRealCategory(category: string | undefined): category is string {
+  return category !== undefined && category !== '' && category !== DEFAULT_CATEGORY
+}
+
+/**
+ * A forward-slash warning path under a category — `Category/a/b` — or just
+ * `a/b` in a library with no categories.
+ */
+export function categoryPath(category: string | undefined, ...segments: string[]): string {
+  return (isRealCategory(category) ? [category, ...segments] : segments).join('/')
+}
 
 /**
  * Resolved internal form of a category — separates "what subfolder to walk"
@@ -105,7 +155,7 @@ export interface ResolvedCategory {
  * field on the rules schema; until then, keeping it constant means the
  * detection rule is dead-simple to document and reason about.
  */
-export const KNOWN_QUALITIES = ['UHD', 'HD', 'SD'] as const
+const KNOWN_QUALITIES = ['UHD', 'HD', 'SD'] as const
 
 /**
  * Sort an iterable of quality strings into a canonical order. Known qualities
@@ -152,7 +202,7 @@ export function detectQuality(categoryName: string): string | null {
  */
 export function resolveCategories(configured: Category[]): ResolvedCategory[] {
   if (configured.length === 0) {
-    return [{ folderName: '', name: 'default', quality: null }]
+    return [{ folderName: '', name: DEFAULT_CATEGORY, quality: null }]
   }
   return configured.map(c => ({
     folderName: c.name,
@@ -179,16 +229,17 @@ export function buildCategoryQualityMap(cats: ResolvedCategory[]): Map<string, s
 }
 
 /**
- * Return true if the quality set matches one of the acceptable combos.
- * Set-based: order inside a combo doesn't matter, but the sizes must match
- * exactly, so `[UHD, HD]` accepts `{UHD, HD}` and nothing wider.
+ * Return true if a set of values — quality tiers, categories, or codecs —
+ * matches one of the acceptable combos from the rules. Set-based: order inside
+ * a combo doesn't matter, but the sizes must match exactly, so `[UHD, HD]`
+ * accepts `{UHD, HD}` and nothing wider.
  *
- * Combos describe which quality tiers may legitimately coexist — they say
+ * Quality combos describe which tiers may legitimately coexist — they say
  * nothing about how many copies live inside one tier, which is why
  * `warn_duplicate_quality` deliberately ignores them.
  */
-export function isAcceptableCombo(qualities: Set<string>, combos: readonly string[][]): boolean {
-  return combos.some(combo => combo.length === qualities.size && combo.every(q => qualities.has(q)))
+export function isAcceptableCombo(values: Set<string>, combos: readonly string[][]): boolean {
+  return combos.some(combo => combo.length === values.size && combo.every(v => values.has(v)))
 }
 
 // ─────────────────────────────────────────────
@@ -201,9 +252,9 @@ export function isAcceptableCombo(qualities: Set<string>, combos: readonly strin
  * multi-episode suffix (`s01e01-e02`, never the bare `s01e01-02`, which reads
  * as a range of two different things depending on who's looking).
  *
- * Shared by `warn_episode_code_case` in media/shows.ts and the `episode-code`
- * fix mode in tools/rename-shows.ts, so the warning and the fix can never
- * disagree about what "canonical" means.
+ * Shared by `warn_episode_code_case` in media/shows.ts and the episode-level
+ * ignore matching in core/ignored.ts, so the two can never disagree about
+ * what "canonical" means.
  */
 export function canonicalEpisodeCode(
   parts: { seasonNumber: number; episodeStart: number; episodeEnd: number },

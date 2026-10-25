@@ -81,6 +81,31 @@ describe('PathMapper — automatic', () => {
     expect(mapper.ambiguousLocations).toHaveLength(1)
     expect(mapper.map('/volume1/Movies/HD/a.mkv')?.drive).toBe('Server')
   })
+
+  it('never matches on a drive letter, so a root at the top of a drive is unmapped', () => {
+    const driveRoot = rootRefs({ movies: [{ root_path: 'D:\\', name: 'External' }] })
+    const mapper = new PathMapper(driveRoot, [section('Movies', 'movie', 'D:\\')])
+    expect(mapper.unmappedLocations).toHaveLength(1)
+  })
+
+  it('uses the library type to choose between roots of different types', () => {
+    // One share, every type under it: each root's last folder is "Media".
+    const shared = rootRefs({
+      movies: [{ root_path: 'D:\\Media', name: 'NAS' }],
+      shows: [{ root_path: 'D:\\Media', name: 'NAS' }],
+    })
+    const mapper = new PathMapper(shared, [
+      section('Movies', 'movie', '/share/Media/Movies'),
+      section('TV', 'show', '/share/Media/TV'),
+    ])
+    expect(mapper.ambiguousLocations).toEqual([])
+    expect(mapper.map('/share/Media/TV/Firefly (2002)/Season 01/ep.mkv')).toEqual({
+      mediaType: 'shows',
+      drive: 'NAS',
+      relative: 'TV/Firefly (2002)/Season 01/ep.mkv',
+    })
+    expect(mapper.map('/share/Media/Movies/Heat (1995)/Heat (1995).mkv')?.mediaType).toBe('movies')
+  })
 })
 
 describe('PathMapper — path_map', () => {
@@ -118,5 +143,32 @@ describe('PathMapper — path_map', () => {
     )
     expect(mapper.map('/volume1/usb/Movies/HD/a.mkv')?.drive).toBe('External')
     expect(mapper.map('/volume1/Movies/HD/a.mkv')?.drive).toBe('Server')
+  })
+
+  it('maps a drive-root root through path_map', () => {
+    const driveRoot = rootRefs({ movies: [{ root_path: 'D:\\', name: 'External' }] })
+    const mapper = new PathMapper(
+      driveRoot,
+      [section('Movies', 'movie', '/mnt/usb')],
+      [{ plex: '/mnt/usb', local: 'D:\\' }]
+    )
+    expect(mapper.map('/mnt/usb/Heat (1995)/Heat (1995).mkv')).toEqual({
+      mediaType: 'movies',
+      drive: 'External',
+      relative: 'Heat (1995)/Heat (1995).mkv',
+    })
+  })
+
+  it('uses the library type when several roots share one root_path', () => {
+    const shared = rootRefs({
+      movies: [{ root_path: 'D:\\Media', name: 'NAS' }],
+      music: [{ root_path: 'D:\\Media', name: 'NAS' }],
+    })
+    const mapper = new PathMapper(
+      shared,
+      [section('Music', 'artist', '/share')],
+      [{ plex: '/share', local: 'D:\\Media' }]
+    )
+    expect(mapper.map('/share/Music/Artist/Album/01 - Song.flac')?.mediaType).toBe('music')
   })
 })

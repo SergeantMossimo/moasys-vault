@@ -1,0 +1,34 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# MOASYS-Vault — example personal overrides for movies
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Copy to rules/movies.local.yaml (gitignored) and edit. Anything here
+# deep-merges over rules/movies.yaml — set only what differs.
+#
+# This example is for a library split into quality folders:
+#
+#   M:\Movies\
+#     UHD\Dune (2021)\Dune (2021).mkv
+#     HD\Heat (1995)\Heat (1995).mp4
+#     SD\Casablanca (1942)\Casablanca (1942).mp4
+#
+# If your movies sit directly in M:\Movies\ instead, you don't need this file.
+# See docs/CONFIG.md "Choosing a layout".
+# ─────────────────────────────────────────────────────────────────────────────
+
+# The subfolders of root_path to scan, in the order you rank them. A name
+# containing UHD, HD, or SD as a whole word turns on the quality checks for it.
+categories:
+  - { name: UHD }
+  - { name: HD }
+  - { name: SD }
+
+# Keeping a UHD and an HD copy of the same film is deliberate — don't warn.
+acceptable_quality_combos:
+  - [UHD, HD]
+
+# What resolution each quality folder should hold, by the long edge in pixels.
+quality_thresholds:
+  - { name: UHD, min_width: 3840 }
+  - { name: HD, min_width: 1270, max_width: 3840 }
+  - { name: SD, max_width: 1270 }

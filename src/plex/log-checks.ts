@@ -16,6 +16,7 @@
 import { WarningCollector } from '../core/types'
 import { PlexRules } from '../core/rules/plex'
 
+import { quotedList } from '../core/gaps'
 import { normalizePath, stripPrefix } from './paths'
 import { LogEvent, LogLevel } from './log-parser'
 import { MediaType, PlexCatalogItem, PlexCatalogOutput } from './types'
@@ -100,7 +101,9 @@ export class LogItemIndex {
           this.byPath.set(normalizePath(file.plex_path).toLowerCase(), target)
           for (const parent of [item.parent_rating_key, item.grandparent_rating_key]) {
             if (parent === null) continue
-            this.childFiles.set(parent, [...(this.childFiles.get(parent) ?? []), target])
+            const children = this.childFiles.get(parent)
+            if (children) children.push(target)
+            else this.childFiles.set(parent, [target])
           }
         }
       }
@@ -281,8 +284,7 @@ const PROBLEM_CLAUSE_LIMIT = 3
 
 /** Up to `max` quoted file names, then a count of the rest. */
 function listNames(paths: string[], max = 5): string {
-  const names = paths.slice(0, max).map(p => `'${basename(p)}'`)
-  return names.join(', ') + (paths.length > max ? `, +${paths.length - max} more` : '')
+  return quotedList(paths.map(basename), max)
 }
 
 /** Trim a sample line to something readable inside logs-summary.json. */

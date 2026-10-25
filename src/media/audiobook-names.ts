@@ -22,7 +22,8 @@
  * without building a fixture library.
  */
 
-import path from 'path'
+import { categoryPath } from '../core/rules/helpers'
+import { quotedList } from '../core/gaps'
 
 // ─────────────────────────────────────────────
 // Types
@@ -63,9 +64,9 @@ export interface NameFinding {
 }
 
 /**
- * The remedy for each name check. Kept in one map so every `findings.push`
- * of a given type relays the same text — `WarningCollector.groupedByType()`
- * takes the first it sees and warns if a bucket disagrees with itself.
+ * The remedy for each name check. Not written to the warnings files — its
+ * home is the warning tables in docs/OUTPUT.md — but kept in one map so every
+ * `findings.push` of a type documents the same wording.
  */
 const FIX: Record<NameCheck, string> = {
   warn_series_name_case: `Rename so one spelling wins — Plex sorts the two apart otherwise.`,
@@ -326,17 +327,15 @@ function classify(variant: string, canonical: string): 'case' | 'punctuation' | 
 
 /** `Category/Author/Title` for a book, dropping the synthetic `default` category. */
 export function bookWarningPath(book: NamedBook): string {
-  const category = book.categories[0]
-  return category && category !== 'default'
-    ? path.join(category, book.authorFolder, book.title)
-    : path.join(book.authorFolder, book.title)
+  return categoryPath(book.categories[0], book.authorFolder, book.title)
 }
 
 /** Quote a short list of book titles for a message, truncating long lists. */
 function listTitles(books: NamedBook[], max = 3): string {
-  const titles = books.slice(0, max).map(b => `'${b.title}'`)
-  const more = books.length > max ? `, +${books.length - max} more` : ''
-  return titles.join(', ') + more
+  return quotedList(
+    books.map(b => b.title),
+    max
+  )
 }
 
 /** `n book(s)` */

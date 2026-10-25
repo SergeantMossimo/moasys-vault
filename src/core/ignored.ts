@@ -50,7 +50,7 @@ import path from 'path'
 import jsYaml from 'js-yaml'
 import { z } from 'zod'
 
-import { canonicalEpisodeCode, extractEpisodeCode } from './rules/helpers.js'
+import { canonicalEpisodeCode, extractEpisodeCode } from './rules/helpers'
 
 // ─────────────────────────────────────────────
 // Levels
@@ -64,6 +64,13 @@ import { canonicalEpisodeCode, extractEpisodeCode } from './rules/helpers.js'
  * Key names are what the user calls the thing, not what the scanner calls it,
  * so the file reads like a sentence: `shows: Firefly (2002)`.
  */
+/**
+ * The path of a warning about the top folder of a library with no categories
+ * (loose files sitting directly in `root_path`, say). `folders: ['.']` in an
+ * ignore file silences them.
+ */
+export const LIBRARY_ROOT = '.'
+
 export const LEVEL_KEYS = {
   movies: ['folders', 'movies', 'files'],
   shows: ['folders', 'shows', 'seasons', 'episodes'],
@@ -136,7 +143,7 @@ export interface WarningScope {
 }
 
 /** One parsed entry. The last name sits at `level`; the rest qualify it. */
-export interface IgnoreEntry {
+interface IgnoreEntry {
   /** 0 = folders, 1 = movies/shows/artists/authors, and so on down. */
   level: number
   /**
@@ -206,9 +213,8 @@ function canonicalSeasonName(name: string): string {
  *
  * Reuses `extractEpisodeCode` (year-anchored, so it stays correct for shows
  * whose own title contains a ' - S..' sequence) and `canonicalEpisodeCode`
- * from core/rules/helpers, the same pair warn_episode_code_case and
- * tools/rename-shows.ts use — so the ignore list can never disagree with them
- * about what a code looks like. Routing through `canonicalEpisodeCode` also
+ * from core/rules/helpers, the same pair warn_episode_code_case uses — so the
+ * ignore list can never disagree with it about what a code looks like. Routing through `canonicalEpisodeCode` also
  * folds the bare multi-episode suffix `S01E01-02` onto `S01E01-E02`.
  */
 function episodeCodeOf(name: string): string | null {
@@ -339,52 +345,6 @@ export function isWarningIgnored(scope: WarningScope, list: IgnoreList): boolean
     }
     return true
   })
-}
-
-// ─────────────────────────────────────────────
-// Suggestions
-// ─────────────────────────────────────────────
-
-/** Quote a name when YAML would otherwise misread it as a list item. */
-function yamlListItem(name: string): string {
-  const needsQuotes = /^[\s'"&*!|>%@`#{[\]},?:-]/.test(name) || /: |\s#|\s$/.test(name)
-  return needsQuotes ? JSON.stringify(name) : name
-}
-
-/**
- * The narrowest ignore-list entry that silences this warning, written the way
- * it goes in `ignored/<drive>/<type>.yaml`: `shows: Firefly (2002)`, meaning
- * add `- Firefly (2002)` under `shows:`. Null when nothing reaches it (a
- * category-root warning in a library with no categories).
- *
- * Narrowest, because an entry silences everything at or below its level — a
- * suggestion for one episode's warning must not quietly silence the whole
- * show. Deeper entries carry a parent qualifier so they can't match the same
- * name elsewhere: a season names its show, an album its artist, and a shows
- * episode is written as `Show (YEAR)/S01E05`, which covers the scan and TMDB
- * passes alike.
- */
-export function suggestIgnoreEntry(scope: WarningScope, mediaType: IgnoreMediaType): string | null {
-  const keys = LEVEL_KEYS[mediaType]
-  const levels = scope.levels.slice(0, keys.length - 1)
-
-  if (levels.length === 0) {
-    return scope.categories.length === 1 ? `folders: ${yamlListItem(scope.categories[0]!)}` : null
-  }
-
-  const level = levels.length
-  const key = keys[level]!
-  let names: string[]
-  if (level === 1) {
-    names = [levels[0]!]
-  } else if (mediaType === 'shows' && level === 3) {
-    names = [levels[0]!, episodeCodeOf(levels[2]!) ?? levels[2]!]
-  } else {
-    // Qualify with every level above, within the key's limit — the fullest
-    // chain is the least likely to match something it shouldn't.
-    names = levels.slice(Math.max(0, level - NAME_COUNTS[key]!.max))
-  }
-  return `${key}: ${yamlListItem(names.join('/'))}`
 }
 
 // ─────────────────────────────────────────────

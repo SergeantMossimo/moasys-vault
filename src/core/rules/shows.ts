@@ -10,7 +10,7 @@
 
 import { z } from 'zod'
 
-import { PatternSchema, CategorySchema } from './helpers'
+import { PatternSchema, CategoryListSchema } from './helpers'
 
 export const ShowsRulesSchema = z.object({
   /**
@@ -44,7 +44,7 @@ export const ShowsRulesSchema = z.object({
   }),
 
   /** Subfolders under root_path to walk. Empty = walk root_path directly with "default" label. */
-  categories: z.array(CategorySchema),
+  categories: CategoryListSchema,
 
   /** Expected primary file format(s) for episodes. */
   primary_extension: z.array(z.string()).min(1),
@@ -72,9 +72,7 @@ export const ShowsRulesSchema = z.object({
    * out (`s01e01-e02`, not the bare `s01e01-02`), since the bare form reads
    * as a range of two different things depending on who's looking.
    *
-   * Drives `warn_episode_code_case` and the `episode-code` fix mode in
-   * `src/tools/rename-shows.ts`, which share `canonicalEpisodeCode()` so the
-   * warning and the fix can never disagree.
+   * Drives `warn_episode_code_case`, via `canonicalEpisodeCode()`.
    */
   episode_code_case: z.enum(['lower', 'upper', 'any']),
 
@@ -206,6 +204,13 @@ export const ShowsRulesSchema = z.object({
      */
     warn_loose_files: z.boolean(),
     /**
+     * A folder directly under root_path that isn't one of `categories`, so
+     * nothing in it is scanned. In a library with no categories, flags a
+     * top-level folder named like a quality category (UHD/HD/SD) instead —
+     * a sign `categories` should be set.
+     */
+    warn_unlisted_folder: z.boolean(),
+    /**
      * Subfolders inside a season folder. The scanner expects a flat episode
      * layout. Files in subfolders are silently dropped without this warning.
      */
@@ -332,6 +337,7 @@ export const defaultShowsRules: ShowsRules = ShowsRulesSchema.parse({
     warn_duplicate_quality: true,
     warn_multi_quality: true,
     warn_loose_files: true,
+    warn_unlisted_folder: true,
     warn_extra_subfolders: true,
     warn_unexpected_entries: true,
     warn_tmdb_no_match: true,

@@ -17,6 +17,7 @@
  */
 
 import { WarningCollector } from '../core/types'
+import { progressLogger } from '../core/runner-shared'
 
 import { probeFile } from './ffprobe'
 import { ProbeCache } from './cache'
@@ -67,18 +68,19 @@ export interface ProbedFile {
  * The audiobooks probe does the same, to compare album/artist tags against
  * book/author folders. Movies and shows skip this.
  */
-export type TagReader = (absolutePath: string) => Promise<TagData | null>
+type TagReader = (absolutePath: string) => Promise<TagData | null>
 
 /**
  * Return cached probe data when fresh, otherwise spawn ffprobe and cache the result.
  * If `readTags` is provided, also populate ProbeData.tags from the same file.
+ * `cached` says which happened, for the progress count.
  * Errors propagate — callers decide whether to warn or abort.
  */
 export async function probeOrCache(
   task: ProbeTask,
   cache: ProbeCache,
   readTags?: TagReader
-): Promise<ProbeData> {
+): Promise<{ data: ProbeData; cached: boolean }> {
   const cached = cache.get(task.relativePath, task.mtime, task.size)
   if (cached) {
     // Backfill tags onto an entry cached before this pass read them — a tag
@@ -90,7 +92,7 @@ export async function probeOrCache(
       cached.tags_read = true
       cache.set(task.relativePath, task.mtime, task.size, cached)
     }
-    return cached
+    return { data: cached, cached: true }
   }
   const data = await probeFile(task.absolutePath)
   if (readTags) {
@@ -98,8 +100,11 @@ export async function probeOrCache(
     data.tags_read = true
   }
   cache.set(task.relativePath, task.mtime, task.size, data)
-  return data
+  return { data, cached: false }
 }
+
+/** The progress callback every probe pass uses. */
+export const logProbeProgress = progressLogger('PROBE')
 
 /**
  * Probe a list of files sequentially, reporting progress via callback.
@@ -142,10 +147,8 @@ export async function probeBatch(
   const probeOne = async (i: number): Promise<void> => {
     const task = tasks[i]!
     try {
-      // Detect cache hit before calling probeOrCache so we can count it.
-      const wasCached = cache.get(task.relativePath, task.mtime, task.size) !== null
-      const data = await probeOrCache(task, cache, readTags)
-      if (wasCached) cachedCount++
+      const { data, cached } = await probeOrCache(task, cache, readTags)
+      if (cached) cachedCount++
       results[i] = { task, data }
     } catch (err) {
       const message = (err as Error).message
@@ -202,7 +205,7 @@ export interface QualityBucket {
  * `fits` indicates whether the file's long edge falls in the bucket's range.
  * The caller decides whether `!fits` should emit a warning.
  */
-export interface QualityClassification {
+interface QualityClassification {
   bucket: QualityBucket | null
   longEdge: number
   fits: boolean
@@ -270,7 +273,7 @@ export function deriveQuality(
 }
 
 /** A file over its quality's bitrate ceiling — see `findOversizedFile`. */
-export interface OversizedFile {
+interface OversizedFile {
   bucket: QualityBucket & { max_mbps: number }
   mbps: number
 }

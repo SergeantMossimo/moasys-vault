@@ -14,7 +14,7 @@
 
 import { z } from 'zod'
 
-import { PatternSchema, CategorySchema } from './helpers'
+import { PatternSchema, CategoryListSchema } from './helpers'
 
 export const MoviesRulesSchema = z.object({
   /** Regex patterns for folder and file names. Must use named capture groups. */
@@ -31,7 +31,7 @@ export const MoviesRulesSchema = z.object({
    * (or omitted) means the scanner walks root_path itself and labels records
    * with "default" — useful for flat libraries without quality buckets.
    */
-  categories: z.array(CategorySchema),
+  categories: CategoryListSchema,
 
   /**
    * Expected primary file format(s) for movies in this library. Files with
@@ -190,6 +190,13 @@ export const MoviesRulesSchema = z.object({
      */
     warn_loose_files: z.boolean(),
     /**
+     * A folder directly under root_path that isn't one of `categories`, so
+     * nothing in it is scanned. In a library with no categories, flags a
+     * top-level folder named like a quality category (UHD/HD/SD) instead —
+     * a sign `categories` should be set.
+     */
+    warn_unlisted_folder: z.boolean(),
+    /**
      * Subfolders inside a movie folder. The scanner does not recurse, so
      * video files in subfolders are silently dropped without this warning.
      */
@@ -294,6 +301,7 @@ export const defaultMoviesRules: MoviesRules = MoviesRulesSchema.parse({
     warn_short_duration: false,
     warn_large_file: true,
     warn_loose_files: true,
+    warn_unlisted_folder: true,
     warn_extra_subfolders: true,
     warn_unexpected_entries: true,
     warn_tmdb_no_match: true,
