@@ -5,8 +5,9 @@ MOASYS-Vault can read your Plex Media Server to pull library catalogs and collec
 - **`npm run plex:pull`** downloads every library's catalog and collections into `output/plex/`.
 - **`npm run plex:check`** compares that pull with your latest scan and writes Plex hygiene warnings next to your other warnings.
 - **`npm run plex:logs`** downloads the server's logs and turns the errors Plex logged about your files into warnings on those files.
+- **`npm run collections`** applies a collection-review file to one library: creates collections and adds or removes their items.
 
-> **Read-only, like the rest of the scanner.** The Plex client can only send GET requests — it has no way to refresh a library, fix a match, empty the trash, or delete anything. Every warning tells you what to do in Plex; you do it.
+> **Read-only, with one exception: collections.** The Plex client that pulls, checks and reads logs can only send GET requests. It has no way to refresh a library, fix a match, empty the trash, or delete anything. `npm run collections` is the one command that changes Plex, and it can only create collections and add or remove their items. Collections live in Plex's database, not in your media files, so no file is ever touched. See [the safeguards](#safeguards).
 
 ---
 
@@ -283,3 +284,76 @@ Every distinct ERROR and WARN problem in the logs, grouped by a signature with i
 ```
 
 `totals` counts errors, warnings, lines tied to the library, and lines naming items the pull doesn't know; `covers` gives the time of the first and last problem line. Times are the server's local time, as Plex writes them. Samples are log lines as Plex wrote them, so they can include local IP addresses and your Plex username — the file stays in the gitignored `output/`. Its schema is [`schemas/plex-logs-summary.json`](../schemas/plex-logs-summary.json).
+
+## `npm run collections <library>`
+
+Applies `output/plex/<library>/collection-review.md` to one Plex library. It's a dry run unless you add `-- --apply`.
+
+```bash
+npm run collections movies                # show what would change
+npm run collections movies -- --apply     # make the changes
+npm run collections music -- --file test.md          # use another file
+npm run collections movies -- --undo output/plex/movies/collection-changes/<time>.json
+```
+
+`<library>` is the Plex library's title or its folder under `output/plex/` (`movies`, `movies-4k`, `shows`, `music`, `audiobooks`). One library per run.
+
+### The review file
+
+Each library has two files under `output/plex/<library>/`:
+
+- **`collection-review.md`** is the instructions. Every item line in it is acted on.
+- **`collection-ideas.md`** holds judgment calls and suggestions. The command never reads it; move a line into the review file to have it applied.
+
+```markdown
+# Create
+
+## Toy Story
+
+- Toy Story (1995)
+- Toy Story 2 (1999)
+
+# Add
+
+## Pixar
+
+- Hoppers (2026)
+
+# Remove
+
+## Pixar
+
+- Feast (2014)
+```
+
+- **`# Create`** — collections that don't exist yet. Refused if the name already exists, or is almost the same as one that does (`The X-Files` next to `The X Files`).
+- **`# Add`** — collections that already exist. Items already in it are skipped.
+- **`# Remove`** — takes items out of a collection. Items not in it are skipped. The media itself stays in the library.
+- **`## Name`** is the collection, exactly as Plex shows it. **`- Title (Year)`** is one item; for music and audiobooks, `- Album — Artist (Year)`. The year is optional but settles titles that share a name. Plex's own title or TMDB's spelling both work. You can type lines yourself.
+
+Section names don't care about case, and `#Remove` without a space works. Anything else in the file — the title, notes — is ignored.
+
+### What a run does
+
+1. Reads the library's items and collections **live** from Plex, not from the last pull.
+2. Checks every line and every collection. Any problem — a line that matches nothing or more than one title, a `# Create` for an existing name, an `# Add` or `# Remove` for a collection that doesn't exist, a smart collection — stops the run with every problem listed and **nothing changed**.
+3. Prints the plan: what each collection gains or loses, and what's already done.
+4. With `--apply`, writes a journal to `output/plex/<library>/collection-changes/<time>.json` before the first change, then makes the changes one at a time, stopping at the first error.
+5. Takes the finished lines out of the review file, so what's left is what still needs doing.
+6. Pulls the library again, so `output/plex/` matches Plex.
+
+### Undo
+
+`--undo <journal>` reverses a run from its journal: it takes out what the run added and puts back what it removed. It's a dry run until you add `--apply`, and it only reverses steps that are still the way the run left them. Collections the run created are left in place, possibly empty — delete them in Plex if you don't want them. The journal's shape is in [`schemas/plex-collection-changes.json`](../schemas/plex-collection-changes.json).
+
+### Safeguards
+
+The command can change collections and nothing else. That's enforced in code, in `src/plex/collections-writer.ts`: every request passes one check that allows exactly three shapes, and throws for anything else before it's sent.
+
+| Request                                           | Does                                    |
+| ------------------------------------------------- | --------------------------------------- |
+| `POST /library/collections`                       | Create a regular (non-smart) collection |
+| `PUT /library/collections/<id>/items`             | Add items to a collection               |
+| `DELETE /library/collections/<id>/items/<itemId>` | Take one item out of a collection       |
+
+Every id is checked too: items must be on this server and in the library you named, and a collection must be one that library has (or that the run just created). There's no request that could refresh a library, edit metadata, delete a collection, or touch a file. The token is the same server-owner token the other commands use, sent only as a header.

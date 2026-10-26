@@ -2,6 +2,11 @@
 
 What's landed, newest first. Not formal release notes — pointers to what's new if you're returning after time away. Entries marked _(breaking)_ change a file format or setting you may need to update.
 
+## v0.24
+
+- **New `npm run collections <library>` — apply a collection review to Plex.** It reads `output/plex/<library>/collection-review.md`, with sections `# Create`, `# Add` and `# Remove`, each holding `## Collection` headings and `- Title (Year)` lines. It then creates those collections and adds or removes their items. It's a dry run unless you add `--apply`. Everything is checked live against Plex before anything changes: a line matching nothing or more than one title, a Create for a name that exists (or nearly does, like `The X-Files` beside `The X Files`), or an Add for a collection that doesn't exist stops the run with nothing touched. A journal is written before the first change, `--undo <journal>` reverses a run, finished lines come out of the review file, and the library is pulled again afterwards. See [the collections command](docs/PLEX.md#npm-run-collections-library).
+- **The first command that changes Plex — and only collections.** Collections live in Plex's database, not your media files, so this sits outside the never-touch-media rule. It's held to collections in code: every request passes one check that allows only creating a collection, adding items to one, and taking one item out, with every id checked against the library you named. Nothing can refresh a library, edit metadata, delete a collection, or reach a file. The read-only client the other Plex commands use is unchanged. See [Safeguards](docs/PLEX.md#safeguards).
+
 ## v0.23
 
 - _(breaking)_ **`fix:shows` is gone — nothing writes to a media library any more.** The renaming tool was the one exception to the read-only rule; it's been removed with its npm script, docs, and `output/<drive>/shows/fixes/` folder. Every warning it used to fix is still reported, with the remedy in [the warning tables](docs/OUTPUT.md#warning-tables). A leftover `fixes/` folder is pointed out when a command runs; to replay an old `rename-undo-*.json`, check out commit `8e7515a`. On top of that, every file the app writes now goes through one function that refuses any path outside the project folder.

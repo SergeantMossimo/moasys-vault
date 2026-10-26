@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moasys.local/vault/schemas/plex-collection-changes.json",
+  "title": "MOASYS-Vault — output/plex/<library>/collection-changes/<time>.json",
+  "description": "The journal `npm run collections -- --apply` writes before its first change and updates after each one. `--undo <this file>` reverses the steps marked done.",
+  "type": "object",
+  "properties": {
+    "generated": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp of the run."
+    },
+    "mode": {
+      "enum": ["apply", "undo"],
+      "description": "`apply` worked from a review file; `undo` reversed an earlier journal."
+    },
+    "library": {
+      "type": "object",
+      "properties": {
+        "key": { "type": "string" },
+        "title": { "type": "string" },
+        "slug": { "type": "string" }
+      },
+      "required": ["key", "title", "slug"],
+      "additionalProperties": false
+    },
+    "server": {
+      "type": "string",
+      "description": "The Plex server's machine identifier. An undo refuses a journal from another server."
+    },
+    "source": {
+      "type": "string",
+      "description": "The review file (apply) or journal (undo) the run worked from, relative to the project."
+    },
+    "operations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Operation" }
+    }
+  },
+  "required": ["generated", "mode", "library", "server", "source", "operations"],
+  "additionalProperties": false,
+  "$defs": {
+    "Operation": {
+      "type": "object",
+      "description": "One request to Plex.",
+      "properties": {
+        "kind": {
+          "enum": ["create", "add", "remove"],
+          "description": "Create a collection, add items to one, or take one item out."
+        },
+        "collection": { "type": "string" },
+        "collection_key": {
+          "type": ["string", "null"],
+          "description": "The collection's rating key. Null for a create that hasn't run yet."
+        },
+        "rating_keys": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The items this request adds or removes."
+        },
+        "items": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The review-file lines (or item titles, for an undo) behind this request."
+        },
+        "status": {
+          "enum": ["planned", "done", "failed"],
+          "description": "`planned` until it runs. A run stops at the first `failed`."
+        },
+        "error": { "type": "string" }
+      },
+      "required": ["kind", "collection", "collection_key", "rating_keys", "items", "status"],
+      "additionalProperties": false
+    }
+  }
+}

@@ -10,6 +10,10 @@
  * a new method, which is exactly the kind of change the repo's read-only
  * rule (CLAUDE.md) asks to be deliberate.
  *
+ * The one deliberate exception lives elsewhere: plex/collections-writer.ts
+ * can create collections and add or remove their items, and nothing else.
+ * Keep writes out of this file.
+ *
  * Token handling:
  *   - Sent ONLY as the `X-Plex-Token` header, never in the URL, so it can't
  *     leak into logged URLs, error messages, or output files.
@@ -40,13 +44,13 @@ export const PAGE_SIZE = 500
 export const COLLECTION_PAGE_SIZE = 100
 
 /** A slow NAS can take a while on a big first page; anything past this is a hung connection. */
-const REQUEST_TIMEOUT_MS = 60_000
+export const REQUEST_TIMEOUT_MS = 60_000
 
 /** Small gap between requests so a pull never hammers the server. */
 const MIN_REQUEST_DELAY_MS = 50
 
 /** Identifies this tool in Plex's "Devices" list and logs. */
-const CLIENT_HEADERS = {
+export const CLIENT_HEADERS = {
   'X-Plex-Product': 'MOASYS-Vault',
   'X-Plex-Client-Identifier': 'moasys-vault',
   'X-Plex-Version': '1.0',
