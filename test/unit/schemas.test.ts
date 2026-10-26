@@ -27,6 +27,7 @@ import { createShowsModule } from '../../src/media/shows'
 import { toCatalogItem, toCollection } from '../../src/plex/catalog'
 import { LogItemIndex, summarizeLogs } from '../../src/plex/log-checks'
 import { normalizeSignature } from '../../src/plex/log-parser'
+import type { CollectionJournal } from '../../src/plex/collections'
 import { PathMapper, rootRefs } from '../../src/plex/paths'
 import type {
   PlexCatalogOutput,
@@ -422,6 +423,36 @@ describe('Plex schemas', () => {
       ],
     }
     expectValid('plex-collections.json', collections)
+  })
+
+  it('plex-collection-changes.json', () => {
+    const journal: CollectionJournal = {
+      generated,
+      mode: 'apply',
+      library: { key: summary.key, title: summary.title, slug: summary.slug },
+      server: 'abc123',
+      source: 'output/plex/tv-shows/collection-review.md',
+      operations: [
+        {
+          kind: 'create',
+          collection: 'Whedon',
+          collection_key: '600',
+          rating_keys: ['100'],
+          items: ['Firefly (2002)'],
+          status: 'done',
+        },
+        {
+          kind: 'remove',
+          collection: 'Whedon',
+          collection_key: null,
+          rating_keys: ['101'],
+          items: ['Dollhouse (2009)'],
+          status: 'failed',
+          error: 'Plex HTTP 500',
+        },
+      ],
+    }
+    expectValid('plex-collection-changes.json', journal)
   })
 
   it('plex-logs-summary.json', () => {

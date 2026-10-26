@@ -19,11 +19,34 @@ What this means for you when working in this repo:
 
 Project files (source code, rules YAMLs, `config.json`, README, etc.) are fair game — that constraint only applies to the user's media library.
 
-### No exceptions
+### No exceptions for media files
 
 There used to be one: `npm run fix:shows` (`src/tools/rename-shows.ts`), a renaming tool for batches too large to fix by hand. It was removed in 0.23 at the user's request so that the app is read-only without qualification. **Do not reintroduce a writer — not a rename helper, not a "dry run by default" tool — unless the user explicitly asks.** If they do, the old tool (last at commit `8e7515a`) shows the safety model it needed: dry run unless `--apply`, a mandatory drive name, an undo manifest written before the first rename, all-or-nothing validation, and a two-step rename for case-only changes on case-insensitive filesystems.
 
 The rule is enforced in code, not only here: every file the app writes goes through `writeFileAtomic()` (`src/core/atomic-write.ts`), which throws for any path outside the project folder (or the OS temp folder the tests use). Don't write files any other way.
+
+### Exception: Plex collections (approved by the user in 0.24)
+
+`npm run collections <library>` (`src/plex/collections.ts`) is the one command that changes anything outside the project, and it changes only **Plex collections**. The user approved it on the reasoning that a collection lives in Plex's database, not in the media files, and asked that it be held strictly to collections. The limits:
+
+- **Every write goes through `src/plex/collections-writer.ts`**, whose `assertCollectionWrite()` allows exactly three request shapes and throws for anything else before it's sent:
+  - `POST /library/collections` (create a non-smart collection)
+  - `PUT /library/collections/<id>/items` (add items)
+  - `DELETE /library/collections/<id>/items/<itemId>` (take one item out)
+
+  Every id is checked against the run's live listing of the named library and this server's machine identifier.
+
+- **`src/plex/client.ts` stays GET-only.** Never add a write method there.
+- **Never widen the allowlist** without the user's explicit approval. That means no metadata edits, library refreshes, match fixes, collection deletes, or anything near a file. Removing an item from a collection is allowed: the media stays in the library.
+- **Safety model, keep it:** dry run unless `--apply`, one library per run, everything validated live before the first change (all-or-nothing), a journal written before the first change with `--undo` to reverse it, stop at the first error, re-pull afterwards. `test/unit/plex/collections.test.ts` covers the refusals; extend it with any change to the writer.
+
+**Collection reviews are a recurring workflow.** When the user asks for one:
+
+1. Run `npm run all` so the pull is fresh.
+2. Write `output/plex/<library>/collection-review.md` per library: `# Create` / `# Add` / `# Remove` sections, `## Collection` headings, `- Title (Year)` lines (albums: `- Album — Artist (Year)`), A–Z ignoring a leading article, nothing else. Only clear fits go there.
+3. Put judgment calls and suggestions in `collection-ideas.md` beside it. The command never reads that file.
+
+The user edits the review files, then you dry-run and apply them one library at a time. See docs/PLEX.md for the format.
 
 ### Naming warnings vs. capitalization warnings
 
@@ -131,6 +154,8 @@ npm run plex:pull                  # Plex libraries → output/plex/<library>/ (
 npm run plex:check                 # Compare the pull with scan output → output/<drive>/<type>/plex-warnings.json
 npm run plex:logs                  # Download Plex's logs, tie errors to files → plex-log-warnings.json + output/plex/logs-summary.json
 npm run plex:check -- --no-ignore  # Either Plex command without ignore lists → unfiltered/
+npm run collections movies         # Dry run of output/plex/movies/collection-review.md against Plex
+npm run collections movies -- --apply  # Create/add/remove collection items (collections only — see the exception above)
 
 npm run report                     # Fold every warnings file into all-warnings.json, one entry per folder
 npm run report external

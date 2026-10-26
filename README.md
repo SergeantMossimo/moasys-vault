@@ -12,7 +12,7 @@ Built for **MOASYS** _(Mossimo's Oasis System)_ and designed to be shared.
 - **One command for everything routine** — `npm run all` scans, validates, and compares with Plex, skipping whatever you haven't set up.
 - **Problems you'd never spot by hand** — episode gaps, duplicate copies across quality folders, a 480p file in your HD folder, album tags that fragment an artist in Plex.
 - **Optional cross-checks** against [TheMovieDB](https://www.themoviedb.org/) (free API key) and [Open Library](https://openlibrary.org/) (no key) for title typos, wrong years, and missing episodes.
-- **Optional Plex tools** — find files Plex never picked up, stale entries, wrong matches, and errors from Plex's own logs. Read-only against Plex too.
+- **Optional Plex tools** — find files Plex never picked up, stale entries, wrong matches, and errors from Plex's own logs. Read-only against Plex, except one command that manages collections (never media).
 - **Configurable without code** — rules files per media type, and ignore lists to silence what you've decided to live with.
 
 ## Requirements
@@ -50,30 +50,31 @@ Then open `output/<drive>/<type>/all-warnings.json`, fix what you want to fix, a
 
 ## Commands
 
-| Command                        | What it does                                                                                   |
-| ------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `npm run all [drive]`          | Everything routine: scan → validate → Plex pull → Plex check → report                          |
-| `npm run scan:all [drive]`     | Scan all four media types                                                                      |
-| `npm run <type> [drive]`       | Scan one type: `movies`, `shows`, `music`, `audiobooks`                                        |
-| `npm run validate:all [drive]` | Cross-check against TMDB (movies, shows) and Open Library (audiobooks); also `validate:<type>` |
-| `npm run plex:pull`            | Download every Plex library's catalog and collections                                          |
-| `npm run plex:check [drive]`   | Compare the Plex pull with your scans                                                          |
-| `npm run plex:logs [drive]`    | Turn errors from Plex's logs into warnings on the files they concern                           |
-| `npm run report [drive]`       | Fold every warnings file into `all-warnings.json`, one entry per folder                        |
+| Command                         | What it does                                                                                                                                    |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run all [drive]`           | Everything routine: scan → validate → Plex pull → Plex check → report                                                                           |
+| `npm run scan:all [drive]`      | Scan all four media types                                                                                                                       |
+| `npm run <type> [drive]`        | Scan one type: `movies`, `shows`, `music`, `audiobooks`                                                                                         |
+| `npm run validate:all [drive]`  | Cross-check against TMDB (movies, shows) and Open Library (audiobooks); also `validate:<type>`                                                  |
+| `npm run plex:pull`             | Download every Plex library's catalog and collections                                                                                           |
+| `npm run plex:check [drive]`    | Compare the Plex pull with your scans                                                                                                           |
+| `npm run plex:logs [drive]`     | Turn errors from Plex's logs into warnings on the files they concern                                                                            |
+| `npm run collections <library>` | Apply a collection-review file: create Plex collections and add or remove their items (the one command that changes Plex, and only collections) |
+| `npm run report [drive]`        | Fold every warnings file into `all-warnings.json`, one entry per folder                                                                         |
 
 `[drive]` is a root's `name` from `config.json`; leave it off to use the first root for each type.
 
 ## Documentation
 
-| Guide                              | Covers                                                                                    |
-| ---------------------------------- | ----------------------------------------------------------------------------------------- |
-| [Scans](docs/SCANS.md)             | The workflow, what each pass does, scan times, and validation                             |
-| [Configuration](docs/CONFIG.md)    | Choosing a layout, `config.json`, rules files, ignore lists, and `.secrets.json`          |
-| [Conventions](docs/CONVENTIONS.md) | How Plex expects folders and files to be named, per media type                            |
-| [Output](docs/OUTPUT.md)           | Every output file, its shape, and every warning the scanner can emit                      |
-| [Plex](docs/PLEX.md)               | Connecting to Plex, pulling libraries, comparing with your scans, and reading Plex's logs |
-| [Changelog](CHANGELOG.md)          | What's changed between versions                                                           |
-| [Schemas](schemas/README.md)       | JSON Schemas for every output file, for building on top of the catalog                    |
+| Guide                              | Covers                                                                                                          |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| [Scans](docs/SCANS.md)             | The workflow, what each pass does, scan times, and validation                                                   |
+| [Configuration](docs/CONFIG.md)    | Choosing a layout, `config.json`, rules files, ignore lists, and `.secrets.json`                                |
+| [Conventions](docs/CONVENTIONS.md) | How Plex expects folders and files to be named, per media type                                                  |
+| [Output](docs/OUTPUT.md)           | Every output file, its shape, and every warning the scanner can emit                                            |
+| [Plex](docs/PLEX.md)               | Connecting to Plex, pulling libraries, comparing with your scans, reading Plex's logs, and managing collections |
+| [Changelog](CHANGELOG.md)          | What's changed between versions                                                                                 |
+| [Schemas](schemas/README.md)       | JSON Schemas for every output file, for building on top of the catalog                                          |
 
 ## Project folders
 
